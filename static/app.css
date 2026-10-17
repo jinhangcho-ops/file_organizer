@@ -4,7 +4,7 @@
   --side: #1f2a3a; --side-text: #e8ecf2; --side-muted: #94a0b2; --side-on: #34445a;
   --bg: #eef0f3; --card: #ffffff; --head: #f7f8fa; --line: #e3e6eb; --text: #1b2330; --muted: #6b7482;
   --picked: #dce6f6; --hover: #f3f5f8; --chip-on: #1b2330; --chip-on-text: #ffffff;
-  --tag: #fbefc4; --tag-text: #6f5300; --count: #f2c94c; --count-text: #2a2000;
+  --tag: #fbefc4; --tag-text: #6f5300; --count: #f2c94c;
   --detail: #f9f9f8; --danger: #c2372d; --ok: #1f7a46; --notice: #fdf3d3; --notice-text: #6b4e00;
 }
 @media (prefers-color-scheme: dark) {
@@ -13,7 +13,7 @@
     --side: #10151d; --side-text: #e5e9ef; --side-muted: #8590a0; --side-on: #263243;
     --bg: #161b22; --card: #1d232c; --head: #222a35; --line: #2c3440; --text: #e6e9ee; --muted: #9aa4b2;
     --picked: #24395a; --hover: #232b36; --chip-on: #e6e9ee; --chip-on-text: #11161d;
-    --tag: #4a3c12; --tag-text: #f3d888; --count: #e0b93f; --count-text: #1c1600;
+    --tag: #4a3c12; --tag-text: #f3d888; --count: #e0b93f;
     --detail: #1a2028; --danger: #f07167; --ok: #5bd18b; --notice: #3b3014; --notice-text: #f1d98e;
   }
 }
@@ -39,11 +39,10 @@ code { font-family: Consolas, monospace; padding: 0 4px; border-radius: 4px; bac
 .side-list span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .side-list .n { color: var(--side-muted); font-size: 13px; font-weight: normal; }
 .side-list .on .n { color: var(--side-text); }
-.side-list .dot { min-width: 22px; height: 22px; border-radius: 11px; padding: 0 6px; background: var(--count); color: var(--count-text);
-  font-size: 12px; font-weight: bold; display: inline-flex; align-items: center; justify-content: center; }
 .side-foot { margin-top: auto; }
 .side-foot .side-list { margin-bottom: 6px; }
 .side-status { color: var(--side-muted); font-size: 12px; margin: 0 10px; word-break: break-all; }
+.link { background: none; border: 0; padding: 0; color: var(--side-text); text-decoration: underline; font-size: 12px; }
 
 /* 가운데 */
 main { overflow: auto; padding: 26px 32px 32px; }
@@ -99,6 +98,13 @@ td.where { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
 .error { color: var(--danger); }
 
 /* 정리·설정 */
+.view-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+.view-cards button { text-align: left; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+.view-cards button:hover { background: var(--hover); }
+.view-cards .label { display: block; color: var(--muted); font-size: 13px; }
+.view-cards .count { display: block; font-size: 26px; font-weight: bold; margin-top: 4px; }
+.view-cards .count small { font-size: 14px; font-weight: normal; color: var(--muted); margin-left: 2px; }
+.view-cards .mark { display: inline-block; width: 8px; height: 8px; border-radius: 4px; background: var(--count); margin-right: 6px; vertical-align: middle; }
 .form-card { padding: 18px 20px; margin-bottom: 16px; }
 .field { margin-bottom: 16px; }
 .field:last-child { margin-bottom: 0; }

@@ -13,11 +13,11 @@ let menuPath = null;              // 오른쪽 클릭한 파일
 let source = "", dest = "";       // 정리할 곳, 놓을 곳
 let listed = 0;                   // 늦게 온 목록 응답을 버리기 위한 번호
 
-const VIEWS = {
-  duplicates: {title: "중복 의심", date: "수정한 날짜", dot: true},
-  stale: {title: () => `${state.settings.stale_days}일 넘게 안 연 파일`, date: "마지막으로 연 날짜", dot: true},
-  downloaded: {title: "최근 받은 파일", date: "받은 날짜"},
-  modified: {title: "최근 수정한 파일", date: "수정한 날짜"},
+const VIEWS = {  // 설정 화면 맨 위의 카드(이 순서). mark: 정리할 거리라 노란 점을 붙인다.
+  duplicates: {title: "중복 의심", date: "수정한 날짜", mark: true},
+  downloaded: {title: "최근 다운로드", date: "받은 날짜"},
+  modified: {title: "최근 수정", date: "수정한 날짜"},
+  stale: {title: () => `${state.settings.stale_days}일 넘게 안 본 파일`, date: "마지막으로 연 날짜", mark: true},
 };
 // 확장자 배지 색(라이트·다크 같음, 글자는 흰색)
 const BADGES = [
@@ -107,9 +107,8 @@ async function loadState() {
   showSetup();
 }
 
-function sideButton(label, count, on, onClick, dot = false) {
-  const button = el("button", {className: on ? "on" : ""}, el("span", {textContent: label}),
-    dot && count ? el("span", {className: "dot", textContent: count.toLocaleString()}) : el("span", {className: "n", textContent: count.toLocaleString()}));
+function sideButton(label, count, on, onClick) {
+  const button = el("button", {className: on ? "on" : ""}, el("span", {textContent: label}), el("span", {className: "n", textContent: count.toLocaleString()}));
   button.addEventListener("click", onClick);
   return el("li", {}, button);
 }
@@ -120,9 +119,7 @@ function showSide() {
     sideButton("모든 파일", state.counts.all, files && scope.all, () => openScope({all: true})),
     ...state.places.map((p) => sideButton(p.name, p.files, files && scope.folder && lower(scope.folder) === lower(p.path),
       () => openScope({folder: p.path, name: p.name}))));
-  $("views").replaceChildren(...Object.keys(VIEWS).map((view) =>
-    sideButton(viewTitle(view), state.counts[view], files && scope.view === view, () => openScope({view}), VIEWS[view].dot)));
-  document.querySelectorAll(".side-foot button").forEach((b) => b.classList.toggle("on", b.dataset.page === page));
+  document.querySelectorAll(".side-foot [data-page]").forEach((b) => b.classList.toggle("on", b.dataset.page === page));
 }
 
 function showIndex(status) {
@@ -130,9 +127,20 @@ function showIndex(status) {
     ? `색인하는 중… ${status.done.toLocaleString()}개 확인`
     : status.error ? "색인 실패: " + status.error
     : status.finished ? `색인 갱신 ${fullDate(status.finished)}` : "";
+  if (status.stopped && !status.running) $("index-status").textContent = `색인을 멈췄습니다 (${status.done.toLocaleString()}개까지 반영)`;
   $("index-progress").textContent = status.running ? status.current : "";
   $("reindex").disabled = status.running;
+  document.querySelectorAll("[data-stop]").forEach((b) => b.classList.toggle("hidden", !status.running));
 }
+
+document.querySelectorAll("[data-stop]").forEach((button) => button.addEventListener("click", async () => {
+  button.disabled = true;
+  try {
+    showIndex(await api("/api/index/stop", {}));
+  } finally {
+    button.disabled = false;
+  }
+}));
 
 async function pollIndex() {
   const status = await api("/api/index");
@@ -151,7 +159,7 @@ function showPage(name) {
   showSide();
 }
 
-document.querySelectorAll(".side-foot button").forEach((b) => b.addEventListener("click", () => showPage(b.dataset.page)));
+document.querySelectorAll(".side-foot [data-page]").forEach((b) => b.addEventListener("click", () => showPage(b.dataset.page)));
 
 // ---------- 목록 ----------
 function openScope(next) {
@@ -485,6 +493,13 @@ function removable(text, onRemove) {
 }
 
 function showSetup() {
+  $("views").replaceChildren(...Object.keys(VIEWS).map((view) => {
+    const button = el("button", {},
+      el("span", {className: "label"}, VIEWS[view].mark && state.counts[view] ? el("span", {className: "mark"}) : null, viewTitle(view)),
+      el("span", {className: "count"}, state.counts[view].toLocaleString(), el("small", {textContent: "개"})));
+    button.addEventListener("click", () => openScope({view}));
+    return button;
+  }));
   $("access-off").classList.toggle("hidden", state.last_access);
   const roots = state.settings.roots;
   $("roots").replaceChildren(...roots.map((root) => removable(root, () => saveSettings({roots: roots.filter((r) => r !== root)}, "index-progress"))));

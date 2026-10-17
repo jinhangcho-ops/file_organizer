@@ -306,6 +306,45 @@ def test_duplicates():
     check("중복: 바뀌면 다시 비교", names(search.listing({"view": "duplicates", "folder": str(root)})["rows"]) == {"큰1.bin", "큰2.bin"})
 
 
+def test_stop():
+    paths = index.roots(settings.load())
+    gone = TEMP / "root" / "sub2" / "b.txt"
+    os.remove(gone)
+    places = tree.places()
+    index.stop.set()
+    try:
+        index.build(paths)
+    finally:
+        index.stop.clear()
+    check("멈춤: 끝까지 못 훑었으면 사라진 파일을 지우지 않음", "b.txt" in names(search.listing({"folder": str(gone.parent)})["rows"]))
+    check("멈춤: 위치(폴더 목록)는 그대로", tree.places() == places)
+    index.build(paths)
+    check("멈춤 뒤 다시 하면 정리됨", "b.txt" not in names(search.listing({"folder": str(gone.parent)})["rows"]))
+    write(gone, "옆 폴더")
+
+    real = index.walk
+
+    def walk_then_stop(root):  # 첫 폴더를 넘겨준 뒤 [멈추기]를 누른 것처럼 한다.
+        for n, item in enumerate(real(root)):
+            if n == 1:
+                client.post("/api/index/stop", json={})  # 열쇠 쿠키를 받은 클라이언트
+            yield item
+
+    client = server.app.test_client()
+    client.get("/?key=" + server.KEY)
+    index.walk = walk_then_stop
+    try:
+        client.post("/api/index", json={})
+        for _ in range(100):
+            if not index.status["running"]:
+                break
+            time.sleep(0.1)
+    finally:
+        index.walk = real
+    check("멈춤: 화면의 [멈추기]", index.status["stopped"] and not index.status["running"] and not index.status["error"])
+    index.build(paths)
+
+
 def find_in(folder):
     return names(search.listing({"folder": str(folder)})["rows"])
 
@@ -400,6 +439,7 @@ try:
     test_recent()
     test_duplicates()
     test_actions()
+    test_stop()
     test_server()
 finally:
     shutil.rmtree(TEMP, ignore_errors=True)

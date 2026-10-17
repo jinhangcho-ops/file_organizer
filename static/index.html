@@ -10,14 +10,12 @@
   <h1>파일 정리</h1>
   <p class="side-label">위치</p>
   <ul id="places" class="side-list"></ul>
-  <p class="side-label">정리할 만한 파일</p>
-  <ul id="views" class="side-list"></ul>
   <div class="side-foot">
     <ul class="side-list">
       <li><button data-page="organize"><span>다운로드 정리하기</span></button></li>
       <li><button data-page="setup"><span>설정</span></button></li>
     </ul>
-    <p id="index-status" class="side-status"></p>
+    <p class="side-status"><span id="index-status"></span> <button data-stop class="link hidden">멈추기</button></p>
   </div>
 </nav>
 
@@ -86,8 +84,9 @@
   <section id="page-setup" class="page hidden">
     <h2>설정</h2>
     <p class="sub">목록과 검색은 색인을 읽습니다. 폴더를 바꾸거나 파일이 바뀌면 [색인 갱신]을 누르세요.</p>
+    <div id="views" class="view-cards"></div>
     <div id="access-off" class="notice hidden">
-      이 PC는 파일을 연 시각을 기록하지 않습니다. 그래서 '오래 안 연 파일'은 수정한 시각으로 판단합니다.
+      이 PC는 파일을 연 시각을 기록하지 않습니다. 그래서 '안 본 파일'은 수정한 시각으로 판단합니다.
       기록을 켜려면 관리자 권한 PowerShell에서 <code>fsutil behavior set disablelastaccess 0</code>을 실행한 뒤 다시 시작하세요.
     </div>
     <div class="card form-card">
@@ -98,14 +97,14 @@
         <div class="button-row"><button data-pick="root" class="ghost small">폴더 추가</button></div>
         <p class="hint">놓을 곳은 따로 넣지 않아도 색인합니다. Windows, Program Files, AppData, 숨김·시스템 폴더는 들어가지 않습니다.</p>
       </div>
-      <div class="button-row"><button id="reindex" class="dark">색인 갱신</button><span id="index-progress" class="hint"></span></div>
+      <div class="button-row"><button id="reindex" class="dark">색인 갱신</button><button data-stop class="ghost hidden">멈추기</button><span id="index-progress" class="hint"></span></div>
     </div>
     <div class="card form-card">
       <div class="field">
         <p class="field-label">기간</p>
         <div class="days">
-          <label>최근 받은·수정한 파일: 최근 <input id="recent_days" type="number" min="1" max="3650"> 일</label>
-          <label>오래 안 연 파일: <input id="stale_days" type="number" min="1" max="3650"> 일 넘게</label>
+          <label>최근 다운로드·최근 수정: 최근 <input id="recent_days" type="number" min="1" max="3650"> 일</label>
+          <label>안 본 파일: <input id="stale_days" type="number" min="1" max="3650"> 일 넘게</label>
           <button id="days-save" class="ghost small">저장</button>
         </div>
         <p id="days-message" class="message"></p>
@@ -113,7 +112,7 @@
     </div>
     <div class="card form-card">
       <div class="field">
-        <p class="field-label">예외 (정리할 만한 파일 목록에서 빼기)</p>
+        <p class="field-label">예외 (위 네 목록에서 빼기)</p>
         <ul id="excludes" class="rows"></ul>
         <p id="excludes-empty" class="hint">예외가 없습니다. 목록에서 파일을 오른쪽 클릭하고 [예외로]를 고르세요.</p>
       </div>

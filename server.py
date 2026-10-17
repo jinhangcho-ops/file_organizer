@@ -110,6 +110,13 @@ def build_index():
     return jsonify(index.status)
 
 
+@app.post("/api/index/stop")
+def stop_index():
+    """돌고 있는 색인을 지금 파일까지만 하고 멈추게 한다. 돌고 있지 않으면 아무 일도 하지 않는다."""
+    index.stop.set()
+    return jsonify(index.status)
+
+
 @app.post("/api/files")
 def files():
     return jsonify(search.listing(body()))

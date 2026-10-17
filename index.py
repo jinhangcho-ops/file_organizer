@@ -35,8 +35,9 @@ create index if not exists files_hash on files(hash);
 """
 ADDED = {"hash": "text", "hashed": "integer"}  # 예전 색인 파일에 없는 칸
 
-status = {"running": False, "done": 0, "current": "", "error": "", "finished": None}  # 화면이 2초마다 읽는다.
+status = {"running": False, "done": 0, "current": "", "error": "", "finished": None, "stopped": False}  # 화면이 1초마다 읽는다.
 lock = threading.Lock()
+stop = threading.Event()  # 켜지면 색인이 지금 파일까지만 하고 멈춘다.
 
 
 def connect():
@@ -113,7 +114,8 @@ def save_file(db, path, st):
 
 def add_folder(db, path, parent):
     key = exclude.key(path)
-    db.execute("insert into folders(key, path, parent, name) values(?,?,?,?) on conflict(key) do nothing",
+    db.execute("""insert into folders(key, path, parent, name) values(?,?,?,?)
+                  on conflict(key) do update set path=excluded.path, parent=excluded.parent, name=excluded.name""",
                (key, path, parent and exclude.key(parent), os.path.basename(path.rstrip("\\")) or path))
 
 
@@ -132,39 +134,53 @@ def totals(db):
 
 
 def build(paths):
-    """paths 아래를 모두 훑어 색인을 새로 맞춘다. 사라진 파일·폴더는 지운다."""
+    """paths 아래를 모두 훑어 색인을 새로 맞춘다. 사라진 파일·폴더는 지운다.
+    멈추면(stop) 그때까지 읽은 것은 남기고, 끝까지 훑지 못했으니 사라진 것 지우기와 중복 비교는 하지 않는다."""
     db = connect()
     try:
         old = {row["key"]: (row["size"], row["stamp"]) for row in db.execute("select key, size, stamp from files")}
-        seen = set()
-        db.execute("delete from folders")
-        for root in paths:
-            for folder, entries in walk(root):
-                add_folder(db, folder, None if folder == root else os.path.dirname(folder))
-                for entry in entries:
-                    try:  # 폴더 목록(DirEntry)의 시각은 늦게 고쳐질 때가 있어 파일에 직접 묻는다.
-                        st = os.stat(entry.path)
-                    except OSError:
-                        continue
-                    key = exclude.key(entry.path)
-                    seen.add(key)
-                    if old.get(key) == (st.st_size, st.st_mtime_ns):  # 바뀌지 않았다: 연 시각과 종류(종류 표가 바뀌었을 수 있다)만 고친다.
-                        ext = os.path.splitext(entry.name)[1].lower()
-                        db.execute("update files set accessed = ?, kind = ? where key = ?", (int(st.st_atime), kinds.of(ext), key))
-                    else:
-                        status["current"] = entry.path
-                        save_file(db, entry.path, st)
-                    status["done"] += 1
-                    if status["done"] % COMMIT_EVERY == 0:
-                        db.commit()
-        gone = [(key,) for key in old if key not in seen]
-        db.executemany("delete from body where rowid = (select id from files where key = ?)", gone)
-        db.executemany("delete from files where key = ?", gone)
+        seen, folders = set(), set()
+        done = scan(db, paths, old, seen, folders)
+        if done:
+            gone = [(key,) for key in old if key not in seen]
+            db.executemany("delete from body where rowid = (select id from files where key = ?)", gone)
+            db.executemany("delete from files where key = ?", gone)
+            db.executemany("delete from folders where key = ?", [(key,) for (key,) in db.execute("select key from folders") if key not in folders])
         totals(db)
         db.commit()
-        fingerprints(db)
+        if done:
+            fingerprints(db)
     finally:
         db.close()
+
+
+def scan(db, paths, old, seen, folders):
+    """paths 아래의 파일을 색인에 맞춘다. 본 파일·폴더의 key를 seen·folders에 모은다. 끝까지 했으면 True, 멈췄으면 False."""
+    for root in paths:
+        for folder, entries in walk(root):
+            if stop.is_set():
+                return False
+            add_folder(db, folder, None if folder == root else os.path.dirname(folder))
+            folders.add(exclude.key(folder))
+            for entry in entries:
+                if stop.is_set():
+                    return False
+                try:  # 폴더 목록(DirEntry)의 시각은 늦게 고쳐질 때가 있어 파일에 직접 묻는다.
+                    st = os.stat(entry.path)
+                except OSError:
+                    continue
+                key = exclude.key(entry.path)
+                seen.add(key)
+                if old.get(key) == (st.st_size, st.st_mtime_ns):  # 바뀌지 않았다: 연 시각과 종류(종류 표가 바뀌었을 수 있다)만 고친다.
+                    ext = os.path.splitext(entry.name)[1].lower()
+                    db.execute("update files set accessed = ?, kind = ? where key = ?", (int(st.st_atime), kinds.of(ext), key))
+                else:
+                    status["current"] = entry.path
+                    save_file(db, entry.path, st)
+                status["done"] += 1
+                if status["done"] % COMMIT_EVERY == 0:
+                    db.commit()
+    return True
 
 
 def fingerprint(path, size):
@@ -187,6 +203,8 @@ def fingerprints(db):
     rows = db.execute("""select id, path, size from files where size > 0 and (hashed is null or hashed <> stamp)
                          and size in (select size from files where size > 0 group by size having count(*) > 1)""").fetchall()
     for n, row in enumerate(rows, 1):
+        if stop.is_set():
+            break
         status["current"] = "중복 확인 " + row["path"]
         try:
             value = fingerprint(row["path"], row["size"])
@@ -203,7 +221,8 @@ def start(paths):
     with lock:
         if status["running"]:
             return False
-        status.update(running=True, done=0, current="", error="")
+        status.update(running=True, done=0, current="", error="", stopped=False)
+        stop.clear()
 
     def work():
         try:
@@ -211,7 +230,7 @@ def start(paths):
         except Exception as e:  # 화면에 알리고 끝낸다.
             status["error"] = str(e)
         finally:
-            status.update(running=False, current="", finished=int(time.time()))
+            status.update(running=False, current="", finished=int(time.time()), stopped=stop.is_set())
 
     threading.Thread(target=work, daemon=True).start()
     return True
