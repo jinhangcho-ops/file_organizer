@@ -1,5 +1,5 @@
 "use strict";
-// 화면: 왼쪽 사이드바(위치, 정리할 만한 파일, 정리하기·설정), 가운데 목록(또는 정리·설정), 오른쪽 상세. 서버는 server.py.
+// 화면: 왼쪽 사이드바(위치, 정리하기·설정), 가운데 목록(또는 정리·설정), 오른쪽 상세. 서버는 server.py.
 
 const $ = (id) => document.getElementById(id);
 let state = null;                 // /api/state의 답
