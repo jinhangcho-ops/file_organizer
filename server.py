@@ -124,7 +124,14 @@ def files():
 
 @app.get("/api/chain")
 def chain():
-    return jsonify(folders=tree.chain(request.args["path"]))
+    """파일(folder=1이면 그 폴더 자신)까지의 폴더들."""
+    return jsonify(folders=tree.chain(request.args["path"], request.args.get("folder") == "1"))
+
+
+@app.get("/api/tree")
+def folder_tree():
+    """폴더의 바로 아래 폴더들. 왼쪽 폴더 나무가 펼칠 때 부른다."""
+    return jsonify(folders=tree.children(request.args["path"]))
 
 
 @app.post("/api/exclude")

@@ -19,7 +19,7 @@
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
-body { display: grid; grid-template-columns: 240px minmax(0, 1fr) 300px; background: var(--bg); color: var(--text);
+body { display: grid; grid-template-columns: 270px minmax(0, 1fr) 300px; background: var(--bg); color: var(--text);
   font: 14px/1.5 "Pretendard", "Malgun Gothic", "Segoe UI", sans-serif; overflow: hidden; }
 button { font: inherit; color: inherit; cursor: pointer; }
 button:disabled { opacity: .45; cursor: default; }
@@ -39,6 +39,19 @@ code { font-family: Consolas, monospace; padding: 0 4px; border-radius: 4px; bac
 .side-list span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .side-list .n { color: var(--side-muted); font-size: 13px; font-weight: normal; }
 .side-list .on .n { color: var(--side-text); }
+.tree, .tree ul { list-style: none; margin: 0; padding: 0; }
+.tree { margin-bottom: 18px; }
+.tree ul { padding-left: 14px; }
+.tree .row { display: flex; align-items: center; gap: 2px; border-radius: 8px; padding: 5px 8px 5px 2px; cursor: pointer; }
+.tree .row:hover { background: rgba(255, 255, 255, .06); }
+.tree .row.on { background: var(--side-on); font-weight: bold; }
+.tree .row.here { box-shadow: inset 3px 0 0 var(--count); }
+.tree .twist { width: 18px; flex: none; text-align: center; color: var(--side-muted); font-size: 11px; border: 0; background: none; padding: 0; }
+.tree .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.tree .n { color: var(--side-muted); font-size: 12px; font-weight: normal; margin-left: 6px; }
+.tree .top > .row .name { font-size: 15px; }
+.tree .picked-file > .row { background: rgba(242, 201, 76, .16); font-size: 13px; }
+.tree .picked-file .name::before { content: "↳ "; color: var(--side-muted); }
 .side-foot { margin-top: auto; }
 .side-foot .side-list { margin-bottom: 6px; }
 .side-status { color: var(--side-muted); font-size: 12px; margin: 0 10px; word-break: break-all; }
@@ -68,6 +81,7 @@ main { overflow: auto; padding: 26px 32px 32px; }
 .chips button .n { color: var(--muted); margin-left: 4px; }
 .chips button.on { background: var(--chip-on); color: var(--chip-on-text); border-color: var(--chip-on); }
 .chips button.on .n { color: inherit; opacity: .8; }
+.chips button.none:not(.on) { opacity: .45; }
 .filters button { border-style: dashed; }
 .filters button.on { border-style: solid; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; }

@@ -8,8 +8,8 @@
 <body>
 <nav class="side">
   <h1>파일 정리</h1>
-  <p class="side-label">위치</p>
-  <ul id="places" class="side-list"></ul>
+  <p class="side-label">폴더</p>
+  <ul id="tree" class="tree"></ul>
   <div class="side-foot">
     <ul class="side-list">
       <li><button data-page="organize"><span>다운로드 정리하기</span></button></li>
@@ -45,7 +45,7 @@
       <table id="files">
         <thead><tr>
           <th data-sort="name">이름</th><th data-sort="kind" class="col-kind">종류</th>
-          <th data-sort="size" class="col-size">크기</th><th data-sort="date" class="col-date"><span id="date-label">수정한 날짜</span></th>
+          <th data-sort="size" class="col-size">크기</th><th data-sort="date" class="col-date">날짜</th>
         </tr></thead>
         <tbody></tbody>
       </table>
@@ -65,7 +65,7 @@
       <div class="field">
         <p class="field-label">놓을 곳</p>
         <div class="path-line"><span id="dest" class="path"></span><button data-pick="dest" class="ghost small">폴더 고르기</button></div>
-        <p class="hint">이 폴더 안에 문서, 표, PDF, 이미지 … 폴더를 만들어 옮깁니다. 같은 이름이 있으면 '이름 (2)'로 저장합니다.</p>
+        <p class="hint">이 폴더 안에 문서, 표, PDF, 사진, 이미지 … 폴더를 만들어 옮깁니다. 같은 이름이 있으면 '이름 (2)'로 저장합니다.</p>
       </div>
       <div class="button-row">
         <button id="preview" class="ghost">미리보기</button>

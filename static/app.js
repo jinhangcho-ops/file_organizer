@@ -13,12 +13,15 @@ let picked = null;                // 상세에 보이는 파일(목록의 줄)
 let menuPath = null;              // 오른쪽 클릭한 파일
 let source = "", dest = "";       // 정리할 곳, 놓을 곳
 let listed = 0;                   // 늦게 온 목록 응답을 버리기 위한 번호
+const nodes = new Map();          // 왼쪽 폴더 나무의 항목: 경로(소문자) → li
+const opened = new Set();         // 펼쳐 둔 폴더(소문자 경로). 나무를 다시 그려도 펼친 채로 둔다.
 
 const VIEWS = {  // 목록의 필터 칩이자 설정 화면 맨 위의 카드(이 순서). mark: 정리할 거리라 카드에 노란 점을 붙인다.
-  duplicates: {title: "중복 의심", date: "수정한 날짜", mark: true},
-  downloaded: {title: "최근 다운로드", date: "받은 날짜"},
-  modified: {title: "최근 수정", date: "수정한 날짜"},
-  stale: {title: () => `${state.settings.stale_days}일 넘게 안 본 파일`, date: "마지막으로 연 날짜", mark: true},
+  // 날짜 열은 이름이 늘 '날짜'이고 내용은 서버가 고른다(받은 파일은 받은 날짜, 안 본 파일은 마지막으로 연 날짜, 그 밖은 수정한 날짜).
+  duplicates: {title: "중복 의심", mark: true},
+  downloaded: {title: "최근 다운로드"},
+  modified: {title: "최근 수정"},
+  stale: {title: () => `${state.settings.stale_days}일 넘게 안 본 파일`, mark: true},
 };
 // 확장자 배지 색(라이트·다크 같음, 글자는 흰색)
 const BADGES = [
@@ -26,7 +29,8 @@ const BADGES = [
   [["pdf"], "#c4473d"],
   [["doc", "docx", "hwp", "hwpx", "txt", "md", "rtf", "odt"], "#3d64c8"],
   [["ppt", "pptx", "odp"], "#d0712d"],
-  [["jpg", "jpeg", "png", "gif", "bmp", "webp", "heic", "svg", "tif", "tiff", "ico", "raw", "psd"], "#8d5b12"],
+  [["jpg", "jpeg", "heic", "heif", "raw", "cr2", "cr3", "nef", "arw", "dng", "orf", "rw2"], "#8d5b12"],
+  [["png", "gif", "bmp", "webp", "svg", "tif", "tiff", "ico", "psd", "ai"], "#a8572a"],
   [["mp4", "mkv", "avi", "mov", "wmv", "webm", "flv", "m4v", "ts"], "#26808a"],
   [["mp3", "wav", "flac", "aac", "m4a", "ogg", "wma"], "#b0467c"],
   [["zip", "7z", "rar", "tar", "gz", "bz2", "xz", "alz", "egg"], "#7a55c4"],
@@ -68,11 +72,15 @@ function el(tag, props = {}, ...children) {
 const lower = (path) => path.toLowerCase();
 const two = (n) => String(n).padStart(2, "0");
 
+// Windows 탐색기와 같은 크기 표기: 1,024바이트 미만은 바이트, 그 위는 KB·MB·GB·TB에 유효 숫자 세 자리(버림). 예: 88.0 KB, 1.20 MB, 182 MB
 function size(bytes) {
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let n = bytes || 0, i = 0;
-  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
-  return (i === 0 ? n : n.toFixed(n < 10 ? 1 : 0)) + " " + units[i];
+  const units = ["KB", "MB", "GB", "TB"];
+  if (!bytes || bytes < 1024) return `${bytes || 0}바이트`;
+  let n = bytes / 1024, i = 0;
+  while (n >= 1000 && i < units.length - 1) { n /= 1024; i++; }
+  const digits = n < 10 ? 2 : n < 100 ? 1 : 0;
+  const cut = Math.floor(n * 10 ** digits) / 10 ** digits;
+  return `${cut.toFixed(digits)} ${units[i]}`;
 }
 
 function shortDate(seconds) {
@@ -102,25 +110,82 @@ async function loadState() {
   state = await api("/api/state");
   source = source || state.settings.source;
   dest = dest || state.settings.dest;
-  showSide();
+  await drawTree();
   showIndex(state.index);
   showOrganize();
   showSetup();
 }
 
-function sideButton(label, count, on, onClick) {
-  const button = el("button", {className: on ? "on" : ""}, el("span", {textContent: label}), el("span", {className: "n", textContent: count.toLocaleString()}));
-  button.addEventListener("click", onClick);
-  return el("li", {}, button);
+// ---------- 왼쪽 폴더 나무 ----------
+// 맨 위는 '모든 파일', 그 아래 색인한 폴더들. ▸를 누르면 펼치고, 이름을 누르면 가운데에 그 폴더(하위 포함)의 파일이 나온다.
+// 가운데에서 파일을 고르면 그 파일이 든 폴더까지 펼치고, 폴더 아래에 고른 파일 한 줄을 붙인다(누르면 탐색기에서 연다).
+function folderNode(folder, top = false) {
+  const twist = el("button", {className: "twist", textContent: folder.has_children ? "▸" : ""});
+  const row = el("div", {className: "row", title: folder.path}, twist, el("span", {className: "name", textContent: folder.name}),
+    el("span", {className: "n", textContent: folder.files.toLocaleString()}));
+  const li = el("li", {className: top ? "top" : ""}, row, el("ul", {className: "hidden"}));
+  li.folder = folder;
+  twist.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (folder.has_children) expand(li, li.lastChild.classList.contains("hidden"));
+  });
+  row.addEventListener("click", () => openScope({folder: folder.path, name: folder.name}));
+  nodes.set(lower(folder.path), li);
+  return li;
 }
 
-function showSide() {
+async function expand(li, open = true) {
+  const list = li.lastChild;
+  if (open && !li.loaded) {
+    const {folders} = await api("/api/tree?path=" + encodeURIComponent(li.folder.path));
+    list.replaceChildren(...folders.map((f) => folderNode(f)));
+    li.loaded = true;
+    for (const child of list.children) if (opened.has(lower(child.folder.path))) await expand(child);
+  }
+  list.classList.toggle("hidden", !open);
+  if (li.folder.has_children) li.querySelector(":scope > .row .twist").textContent = open ? "▾" : "▸";
+  open ? opened.add(lower(li.folder.path)) : opened.delete(lower(li.folder.path));
+}
+
+async function drawTree() {
+  nodes.clear();
+  const all = el("div", {className: "row"}, el("span", {className: "twist", textContent: "▾"}), el("span", {className: "name", textContent: "모든 파일"}),
+    el("span", {className: "n", textContent: state.counts.all.toLocaleString()}));
+  all.addEventListener("click", () => openScope({all: true}));
+  const top = el("li", {className: "top"}, all, el("ul", {}, ...state.places.map((p) => folderNode(p, true))));
+  $("tree").replaceChildren(top);
+  for (const li of top.lastChild.children) if (opened.has(lower(li.folder.path))) await expand(li);
+  markTree();
+  if (picked) await showFileInTree(picked);
+}
+
+function markTree() {
   const files = page === "files";
-  $("places").replaceChildren(
-    sideButton("모든 파일", state.counts.all, files && scope.all, () => openScope({all: true})),
-    ...state.places.map((p) => sideButton(p.name, p.files, files && scope.folder && lower(scope.folder) === lower(p.path),
-      () => openScope({folder: p.path, name: p.name}))));
+  $("tree").querySelectorAll(".row.on").forEach((row) => row.classList.remove("on"));
+  const current = files && (scope.folder ? nodes.get(lower(scope.folder))?.firstChild : scope.all && $("tree").querySelector(".top > .row"));
+  if (current) current.classList.add("on");
   document.querySelectorAll(".side-foot [data-page]").forEach((b) => b.classList.toggle("on", b.dataset.page === page));
+}
+
+async function showFileInTree(row) {
+  $("tree").querySelectorAll(".picked-file").forEach((x) => x.remove());
+  $("tree").querySelectorAll(".row.here").forEach((x) => x.classList.remove("here"));
+  if (!row) return;
+  const {folders} = await api("/api/chain?path=" + encodeURIComponent(row.path));
+  let li = null;
+  for (const f of folders) {
+    li = nodes.get(lower(f.path));
+    if (!li) return;
+    await expand(li);
+  }
+  if (!li || picked !== row) return;
+  const file = el("li", {className: "picked-file"}, el("div", {className: "row", title: "탐색기에서 열기: " + row.path},
+    el("span", {className: "twist"}), el("span", {className: "name", textContent: row.name})));
+  file.firstChild.addEventListener("click", () => openPath(row.path, true));
+  li.lastChild.prepend(file);
+  li.lastChild.classList.remove("hidden");
+  li.firstChild.classList.add("here");
+  file.scrollIntoView({block: "nearest"});
 }
 
 function showIndex(status) {
@@ -157,7 +222,7 @@ async function pollIndex() {
 function showPage(name) {
   page = name;
   document.querySelectorAll(".page").forEach((p) => p.classList.toggle("hidden", p.id !== "page-" + name));
-  showSide();
+  markTree();
 }
 
 document.querySelectorAll(".side-foot [data-page]").forEach((b) => b.addEventListener("click", () => showPage(b.dataset.page)));
@@ -169,6 +234,18 @@ function openScope(next, view = "") {
   kind = "";
   showPage("files");
   loadFiles();
+  if (next.folder) openFolderInTree(next.folder);
+}
+
+async function openFolderInTree(path) {
+  // 상세의 경로처럼 나무에서 아직 펼치지 않은 폴더를 골랐을 때: 그 폴더까지 펼쳐 표시한다.
+  const {folders} = await api("/api/chain?folder=1&path=" + encodeURIComponent(path));
+  for (const f of folders.slice(0, -1)) {
+    const li = nodes.get(lower(f.path));
+    if (!li) return;
+    await expand(li);
+  }
+  markTree();
 }
 
 async function loadFiles() {
@@ -200,16 +277,14 @@ function showFiles(found) {
   }));
   const all = found.kinds.reduce((sum, [, n]) => sum + n, 0);
   $("chips").replaceChildren(...[["", "전체", all], ...found.kinds.map(([k, n]) => [k, k, n])].map(([value, label, n]) => {
-    const button = el("button", {className: kind === value ? "on" : ""}, label, el("span", {className: "n", textContent: n.toLocaleString()}));
+    const button = el("button", {className: (kind === value ? "on" : "") + (n ? "" : " none")}, label, el("span", {className: "n", textContent: n.toLocaleString()}));
     button.addEventListener("click", () => { kind = value; loadFiles(); });
     return button;
   }));
-  $("date-label").textContent = filter ? VIEWS[filter].date : "수정한 날짜";
   document.querySelectorAll("#files th[data-sort]").forEach((th) => {
     th.classList.toggle("sorted", th.dataset.sort === sort);
     th.dataset.arrow = th.dataset.sort === sort ? (order === "asc" ? " ↑" : " ↓") : "";
-    const label = th.querySelector("span") || th;
-    label.textContent = label.textContent.replace(/ [↑↓]$/, "") + th.dataset.arrow;
+    th.textContent = th.textContent.replace(/ [↑↓]$/, "") + th.dataset.arrow;
   });
   const stale = `${state.settings.stale_days}일 넘게 안 열었어요`;
   $("files").tBodies[0].replaceChildren(...found.rows.map((row) => {
@@ -277,6 +352,7 @@ $("files").addEventListener("contextmenu", (e) => {
 // ---------- 상세 ----------
 async function showDetail(row) {
   picked = row;
+  showFileInTree(row);
   $("detail-empty").classList.toggle("hidden", !!row);
   $("detail-body").classList.toggle("hidden", !row);
   say("detail-message", "");

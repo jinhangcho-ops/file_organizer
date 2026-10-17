@@ -98,6 +98,10 @@ def make_office(root):
     slides.save(root / "발표.pptx")
 
 
+def nonzero(pairs):
+    return {name: n for name, n in pairs if n}
+
+
 def names(rows):
     return {row["name"] for row in rows}
 
@@ -114,9 +118,10 @@ def test_organize():
     to = {Path(m["from"]).name: m["to"] for m in moves}
     check("정리: 옮길 파일 6개(받는 중·숨김·하위 폴더 제외)", sorted(to) == sorted(["보고서.pdf", "사진.JPG", "영상.mp4", "묶음.zip", "setup.exe", "이상한.xyz"]))
     check("정리: 같은 이름은 (2)", to.get("보고서.pdf") == str(dest / "PDF" / "보고서 (2).pdf"))
-    check("정리: 종류별 폴더(대문자 확장자 포함)", to.get("사진.JPG") == str(dest / "이미지" / "사진.JPG")
+    check("정리: 종류별 폴더(대문자 확장자 포함)", to.get("사진.JPG") == str(dest / "사진" / "사진.JPG")
           and to.get("setup.exe") == str(dest / "설치파일" / "setup.exe") and to.get("이상한.xyz") == str(dest / "기타" / "이상한.xyz"))
-    check("종류: 표·PDF·문서 나누기", kinds.of(".CSV") == "표" and kinds.of(".pdf") == "PDF" and kinds.of(".hwp") == "문서")
+    check("종류: 표·PDF·문서 나누기", kinds.of(".CSV") == "표" and kinds.of(".pdf") == "PDF" and kinds.of(".hwp") == "문서"
+          and kinds.of(".JPG") == "사진" and kinds.of(".png") == "이미지")
     check("정리: 미리보기는 옮기지 않음", (src / "영상.mp4").exists())
 
     result = organize.run(str(src), str(dest))
@@ -212,7 +217,7 @@ def test_index_search():
     check("검색: 폴더 이름", find(name="deep") == {"a.txt"})
     check("검색: 종류", find(kind="문서", name="발표") == {"발표.pptx"} and find(kind="압축", name="memo") == set())
     listed = search.listing({"name": "memo"})
-    check("목록: 개수·합계·종류별 개수", listed["total"] == 1 and listed["kinds"] == [["문서", 1]] and listed["bytes"] == os.path.getsize(memo))
+    check("목록: 개수·합계·종류별 개수", listed["total"] == 1 and nonzero(listed["kinds"]) == {"문서": 1} and [k for k, _ in listed["kinds"]] == kinds.NAMES and listed["bytes"] == os.path.getsize(memo))
     check("목록: 위치 이름", {r["place"] for r in listed["rows"]} == {"root"})
     by_size = [r["name"] for r in search.listing({"folder": str(root), "sort": "size", "order": "desc"})["rows"]]
     check("목록: 크기 정렬", by_size[0] == "big.bin")
@@ -222,7 +227,7 @@ def test_index_search():
     check("색인: AppData·숨김 폴더 제외", find(name="skip") == set())
     raises("검색: 잘못된 날짜", lambda: search.listing({"date_from": "2020/01/01"}), "날짜는 2026-10-17 모양으로")
     raises("검색: 음수 크기", lambda: search.listing({"size_min": -1}), "최소 크기는 0 이상")
-    raises("검색: 모르는 종류", lambda: search.listing({"kind": "사진"}), "모르는 종류입니다: 사진")
+    raises("검색: 모르는 종류", lambda: search.listing({"kind": "그림"}), "모르는 종류입니다: 그림")
     raises("목록: 모르는 목록", lambda: search.listing({"view": "all"}), "모르는 목록입니다")
     check("목록: 조건 없으면 전체", search.listing({})["total"] == index.count())
 
@@ -241,6 +246,12 @@ def test_index_search():
     check("위치: 하위 전체 파일 수", root_row["files"] == files_under)
     check("경로: 맨 위 폴더부터", [f["path"] for f in tree.chain(str(root / "sub" / "deep" / "a.txt"))] == [str(root), str(root / "sub"), str(root / "sub" / "deep")])
     check("경로: 색인에 없는 경로", tree.chain(str(TEMP / "없음" / "x.txt")) == [])
+    kids = tree.children(str(root))
+    check("폴더 나무: 바로 아래 폴더만, 이름 순", [f["name"] for f in kids] == ["sub", "sub2"])
+    check("폴더 나무: 하위 폴더 있음 표시", {f["name"]: bool(f["has_children"]) for f in kids} == {"sub": True, "sub2": False}
+          and root_row["has_children"])
+    check("폴더 나무: 폴더 수 세기(하위 포함)", next(f for f in kids if f["name"] == "sub")["files"] == 1)
+    check("경로: 폴더 자신까지", [f["name"] for f in tree.chain(str(root / "sub" / "deep"), folder=True)] == ["root", "sub", "deep"])
 
     src, dest = TEMP / "src", TEMP / "dest"
     organize.run(str(src), str(dest))
@@ -306,7 +317,7 @@ def test_duplicates():
     views = dict(search.listing({"folder": str(root), "kind": "기타"})["views"])
     check("필터 칩 숫자: 고른 종류 안에서", views["duplicates"] == 2)
     both = search.listing({"folder": str(root), "view": "duplicates", "kind": "문서"})
-    check("필터 칩 + 종류 칩 함께", names(both["rows"]) == {"같은1.txt", "같은2.txt"} and dict(both["kinds"]) == {"문서": 2, "기타": 2})
+    check("필터 칩 + 종류 칩 함께", names(both["rows"]) == {"같은1.txt", "같은2.txt"} and nonzero(both["kinds"]) == {"문서": 2, "기타": 2})
     write(root / "같은2.txt", "이제 다른 내용이에요")
     index.build(index.roots(settings.load()))
     check("중복: 바뀌면 다시 비교", names(search.listing({"view": "duplicates", "folder": str(root)})["rows"]) == {"큰1.bin", "큰2.bin"})
@@ -407,6 +418,8 @@ def test_server():
     check("서버: 상태", state.status_code == 200 and state.json["counts"]["all"] > 0 and "기타" in state.json["kinds"] and bool(state.json["places"]))
     found = client.post("/api/files", json={"text": "zebra"})
     check("서버: 목록", found.status_code == 200 and "report.pdf" in names(found.json["rows"]))
+    kids = client.get("/api/tree?path=" + str(TEMP / "root"))
+    check("서버: 폴더 나무", kids.status_code == 200 and "sub" in {f["name"] for f in kids.json["folders"]})
     bad = client.post("/api/rename", json={"path": str(TEMP / "없음.txt"), "name": "x.txt"})
     check("서버: 색인에 없는 경로는 이름 바꾸지 않음", bad.status_code == 400 and "색인에 없는 경로" in bad.json["error"])
     bad = client.post("/api/trash", json={"path": str(TEMP / "src")})
