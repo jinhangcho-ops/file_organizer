@@ -13,11 +13,12 @@ from pathlib import Path
 TEMP = Path(tempfile.mkdtemp(prefix="file_organizer_test_"))
 os.environ["APPDATA"] = str(TEMP / "appdata")
 
-import exclude  # noqa: E402  APPDATA를 바꾼 뒤에 불러온다.
+import actions  # noqa: E402  APPDATA를 바꾼 뒤에 불러온다.
+import exclude  # noqa: E402
 import filetime  # noqa: E402
 import index  # noqa: E402
 import organize  # noqa: E402
-import recent  # noqa: E402
+import kinds  # noqa: E402
 import search  # noqa: E402
 import server  # noqa: E402
 import settings  # noqa: E402
@@ -107,25 +108,26 @@ def test_organize():
     for name in ["사진.JPG", "영상.mp4", "묶음.zip", "setup.exe", "이상한.xyz", "받는중.crdownload", "숨김.txt", "sub/안쪽.txt"]:
         write(src / name, name)
     ctypes.windll.kernel32.SetFileAttributesW(str(src / "숨김.txt"), 2)  # 숨김
-    write(dest / "문서" / "보고서.pdf", "먼저 있던 파일")
+    write(dest / "PDF" / "보고서.pdf", "먼저 있던 파일")
 
     moves = organize.plan(str(src), str(dest))
     to = {Path(m["from"]).name: m["to"] for m in moves}
     check("정리: 옮길 파일 6개(받는 중·숨김·하위 폴더 제외)", sorted(to) == sorted(["보고서.pdf", "사진.JPG", "영상.mp4", "묶음.zip", "setup.exe", "이상한.xyz"]))
-    check("정리: 같은 이름은 (2)", to.get("보고서.pdf") == str(dest / "문서" / "보고서 (2).pdf"))
+    check("정리: 같은 이름은 (2)", to.get("보고서.pdf") == str(dest / "PDF" / "보고서 (2).pdf"))
     check("정리: 종류별 폴더(대문자 확장자 포함)", to.get("사진.JPG") == str(dest / "이미지" / "사진.JPG")
           and to.get("setup.exe") == str(dest / "설치파일" / "setup.exe") and to.get("이상한.xyz") == str(dest / "기타" / "이상한.xyz"))
+    check("종류: 표·PDF·문서 나누기", kinds.of(".CSV") == "표" and kinds.of(".pdf") == "PDF" and kinds.of(".hwp") == "문서")
     check("정리: 미리보기는 옮기지 않음", (src / "영상.mp4").exists())
 
     result = organize.run(str(src), str(dest))
     check("정리: 6개 옮김", result == {"moved": 6, "failed": []})
     left = sorted(p.name for p in src.iterdir())
     check("정리: 남은 것은 받는 중·숨김·하위 폴더", left == sorted(["받는중.crdownload", "숨김.txt", "sub"]) and (src / "sub" / "안쪽.txt").exists())
-    check("정리: 먼저 있던 파일은 그대로", (dest / "문서" / "보고서.pdf").read_text(encoding="utf-8") == "먼저 있던 파일")
+    check("정리: 먼저 있던 파일은 그대로", (dest / "PDF" / "보고서.pdf").read_text(encoding="utf-8") == "먼저 있던 파일")
 
     result = organize.undo()
     check("되돌리기: 6개", result == {"moved": 6, "failed": []} and (src / "영상.mp4").exists() and not (dest / "동영상" / "영상.mp4").exists())
-    check("되돌리기: 먼저 있던 파일은 남음", (dest / "문서" / "보고서.pdf").exists() and (src / "보고서.pdf").exists())
+    check("되돌리기: 먼저 있던 파일은 남음", (dest / "PDF" / "보고서.pdf").exists() and (src / "보고서.pdf").exists())
     raises("되돌리기: 기록이 없으면 거부", organize.undo, "되돌릴 정리가 없습니다.")
 
     organize.run(str(src), str(dest))
@@ -198,23 +200,31 @@ def test_index_search():
     index.build(paths)
     check("색인: 연 시각을 읽기 전으로 되돌림", os.stat(memo).st_atime_ns == atime)
 
-    find = lambda **q: names(search.find(q)["rows"])  # noqa: E731
+    find = lambda **q: names(search.listing(q)["rows"])  # noqa: E731
     check("검색: 세 글자 이상 내용", find(text="삼천만") == {"memo.txt"})
     check("검색: 두 글자 내용", find(text="예산") == {"memo.txt"})
     check("검색: cp949 내용", find(text="한글 메모") == {"옛메모.txt"})
     check("검색: PDF 내용(대소문자 무시)", find(text="ZEBRA") == {"report.pdf"})
     check("검색: docx·xlsx·pptx 내용", find(text="계약 조건") == {"계약.docx"} and find(text="매출 합계") == {"실적.xlsx"}
           and find(text="발표 자료") == {"발표.pptx"})
-    check("검색: 내용 미리보기", "삼천만" in search.find({"text": "삼천만"})["rows"][0]["snippet"])
+    check("검색: 내용 미리보기", "삼천만" in search.listing({"text": "삼천만"})["rows"][0]["snippet"])
     check("검색: 이름(대소문자 무시)", find(name="MEMO") == {"memo.txt"})
-    check("검색: 종류", find(kinds=["문서"], name="발표") == {"발표.pptx"} and find(kinds=["압축"], name="memo") == set())
+    check("검색: 폴더 이름", find(name="deep") == {"a.txt"})
+    check("검색: 종류", find(kind="문서", name="발표") == {"발표.pptx"} and find(kind="압축", name="memo") == set())
+    listed = search.listing({"name": "memo"})
+    check("목록: 개수·합계·종류별 개수", listed["total"] == 1 and listed["kinds"] == [["문서", 1]] and listed["bytes"] == os.path.getsize(memo))
+    check("목록: 위치 이름", {r["place"] for r in listed["rows"]} == {"root"})
+    by_size = [r["name"] for r in search.listing({"folder": str(root), "sort": "size", "order": "desc"})["rows"]]
+    check("목록: 크기 정렬", by_size[0] == "big.bin")
+    check("목록: 폴더 범위(하위 포함)", find(folder=str(root / "sub")) == {"a.txt"} and find(folder=str(root / "sub2")) == {"b.txt"})
     check("검색: 크기", find(size_min=2) == {"big.bin"} and "big.bin" not in find(size_max=1, name="b"))
     check("검색: 날짜 기간(끝 날짜 포함)", find(date_from="2020-01-01", date_to="2020-01-15") == {"big.bin"} and find(date_to="2020-01-14") == set())
     check("색인: AppData·숨김 폴더 제외", find(name="skip") == set())
-    raises("검색: 잘못된 날짜", lambda: search.find({"date_from": "2020/01/01"}), "날짜는 2026-10-17 모양으로")
-    raises("검색: 음수 크기", lambda: search.find({"size_min": -1}), "최소 크기는 0 이상")
-    raises("검색: 모르는 종류", lambda: search.find({"kinds": ["사진"]}), "모르는 종류입니다: 사진")
-    raises("검색: 조건 없음", lambda: search.find({}), "찾을 조건을 하나 이상")
+    raises("검색: 잘못된 날짜", lambda: search.listing({"date_from": "2020/01/01"}), "날짜는 2026-10-17 모양으로")
+    raises("검색: 음수 크기", lambda: search.listing({"size_min": -1}), "최소 크기는 0 이상")
+    raises("검색: 모르는 종류", lambda: search.listing({"kind": "사진"}), "모르는 종류입니다: 사진")
+    raises("목록: 모르는 목록", lambda: search.listing({"view": "all"}), "모르는 목록입니다")
+    check("목록: 조건 없으면 전체", search.listing({})["total"] == index.count())
 
     write(root / "memo.txt", "회의록: 예산 사천만원으로 변경")
     os.remove(root / "sub2" / "b.txt")
@@ -224,24 +234,22 @@ def test_index_search():
     write(root / "sub2" / "b.txt", "옆 폴더")
     index.build(paths)
 
-    top = tree.children()
-    check("나무: 맨 위는 색인한 폴더", sorted(f["path"] for f in top["folders"]) == sorted(paths))
-    kids = tree.children(str(root))
+    top = tree.places()
+    check("위치: 색인한 폴더(설정 순서, 놓을 곳은 끝)", [f["path"] for f in top] == paths)
     files_under = sum(1 for p in root.rglob("*") if p.is_file() and not {"AppData", "숨긴폴더"} & set(p.relative_to(root).parts))
-    root_row = next(f for f in top["folders"] if f["path"] == str(root))
-    check("나무: 하위 전체 파일 수", root_row["files"] == files_under)
-    check("나무: 하위 폴더와 파일", {f["name"] for f in kids["folders"]} == {"sub", "sub2"} and "memo.txt" in names(kids["files"]))
-    check("나무: 위치 거슬러 올라가기", tree.chain(str(root / "sub" / "deep" / "a.txt")) == [str(root), str(root / "sub"), str(root / "sub" / "deep")])
-    check("나무: 색인에 없는 경로", tree.chain(str(TEMP / "없음" / "x.txt")) == [])
+    root_row = next(f for f in top if f["path"] == str(root))
+    check("위치: 하위 전체 파일 수", root_row["files"] == files_under)
+    check("경로: 맨 위 폴더부터", [f["path"] for f in tree.chain(str(root / "sub" / "deep" / "a.txt"))] == [str(root), str(root / "sub"), str(root / "sub" / "deep")])
+    check("경로: 색인에 없는 경로", tree.chain(str(TEMP / "없음" / "x.txt")) == [])
 
     src, dest = TEMP / "src", TEMP / "dest"
     organize.run(str(src), str(dest))
-    check("정리 후 색인: 옮긴 파일이 나무에", "보고서 (2).pdf" in names(tree.children(str(dest / "문서"))["files"]))
-    check("정리 후 색인: 내용으로 찾음", str(dest / "문서" / "보고서 (2).pdf") in {r["path"] for r in search.find({"text": "zebra"})["rows"]})
-    dest_row = next(f for f in tree.children()["folders"] if f["path"] == str(dest))
+    check("정리 후 색인: 옮긴 파일이 그 폴더 목록에", "보고서 (2).pdf" in find(folder=str(dest / "PDF")))
+    check("정리 후 색인: 내용으로 찾음", str(dest / "PDF" / "보고서 (2).pdf") in {r["path"] for r in search.listing({"text": "zebra"})["rows"]})
+    dest_row = next(f for f in tree.places() if f["path"] == str(dest))
     check("정리 후 색인: 폴더 합계", dest_row["files"] == sum(1 for p in dest.rglob("*") if p.is_file()))
     organize.undo()
-    check("되돌린 후 색인: 색인 밖으로 간 파일은 빠짐", str(dest / "문서" / "보고서 (2).pdf") not in {r["path"] for r in search.find({"text": "zebra"})["rows"]})
+    check("되돌린 후 색인: 색인 밖으로 간 파일은 빠짐", str(dest / "PDF" / "보고서 (2).pdf") not in {r["path"] for r in search.listing({"text": "zebra"})["rows"]})
 
 
 def test_recent():
@@ -253,22 +261,95 @@ def test_recent():
     make_old(old)
     index.build(index.roots(settings.load()))
 
-    rows = lambda mode, days: names(recent.collect(mode, days)["rows"])  # noqa: E731
-    check("모아 보기: 받은 파일", rows("downloaded", 7) == {"받은파일.zip"})
-    check("모아 보기: 고친 파일", "memo.txt" in rows("modified", 7) and "옛날.txt" not in rows("modified", 7))
-    check("모아 보기: 오래 안 본 파일", "옛날.txt" in rows("stale", 180) and "big.bin" in rows("stale", 180) and "memo.txt" not in rows("stale", 180))
-    raises("모아 보기: 모르는 목록", lambda: recent.collect("all", 7), "모르는 목록입니다")
+    rows = lambda view: names(search.listing({"view": view})["rows"])  # noqa: E731
+    check("모아 보기: 받은 파일", rows("downloaded") == {"받은파일.zip"})
+    check("모아 보기: 고친 파일", "memo.txt" in rows("modified") and "옛날.txt" not in rows("modified"))
+    check("모아 보기: 오래 안 연 파일", "옛날.txt" in rows("stale") and "big.bin" in rows("stale") and "memo.txt" not in rows("stale"))
+    tags = {r["name"]: r["stale"] for r in search.listing({"folder": str(root)})["rows"]}
+    check("목록: 오래 안 연 태그", tags["옛날.txt"] and not tags["memo.txt"])
+    settings.save({"stale_days": 3650})
+    check("모아 보기: 기간 설정을 따름", "옛날.txt" not in rows("stale"))
+    settings.save({"stale_days": 90})
+    counts = search.counts()
+    check("사이드바 숫자", counts["downloaded"] == 1 and counts["all"] == index.count() and counts["stale"] == len(rows("stale")))
 
     exclude.add(str(root / "sub"))
     exclude.add(old)
-    check("예외: 폴더 아래 전부 빠짐", "a.txt" not in rows("modified", 7))
-    check("예외: 이름이 이어지는 옆 폴더는 남음", "b.txt" in rows("modified", 7))
-    check("예외: 파일 하나", "옛날.txt" not in rows("stale", 180))
-    check("예외: 검색에는 나옴", {"a.txt", "옛날.txt"} <= names(search.find({"name": "."})["rows"]))
+    check("예외: 폴더 아래 전부 빠짐", "a.txt" not in rows("modified"))
+    check("예외: 이름이 이어지는 옆 폴더는 남음", "b.txt" in rows("modified"))
+    check("예외: 파일 하나", "옛날.txt" not in rows("stale"))
+    check("예외: 검색에는 나옴", {"a.txt", "옛날.txt"} <= names(search.listing({"name": "."})["rows"]))
     exclude.remove(str(root / "sub"))
     exclude.remove(old)
-    check("예외 빼기: 다시 나옴", "a.txt" in rows("modified", 7) and "옛날.txt" in rows("stale", 180))
+    check("예외 빼기: 다시 나옴", "a.txt" in rows("modified") and "옛날.txt" in rows("stale"))
     raises("예외: 없는 경로", lambda: exclude.add(str(TEMP / "없음")), "없는 파일·폴더입니다")
+
+
+def test_duplicates():
+    root = TEMP / "root" / "dup"
+    one = write(root / "같은1.txt", "같은 내용입니다")
+    write(root / "같은2.txt", "같은 내용입니다")
+    write(root / "크기만같음.txt", "다른 내용입니다")
+    big = b"x" * (9 * 1024 * 1024)
+    (root / "큰1.bin").write_bytes(big)
+    (root / "큰2.bin").write_bytes(big)
+    settle()
+    make_old(one, accessed=OLD, modified=int(time.time()))
+    atime = os.stat(one).st_atime_ns
+    index.build(index.roots(settings.load()))
+    found = search.listing({"view": "duplicates", "folder": str(root)})
+    check("중복: 내용이 같은 것만", names(found["rows"]) == {"같은1.txt", "같은2.txt", "큰1.bin", "큰2.bin"})
+    check("중복: 태그", all(r["duplicate"] for r in found["rows"]) and not any(r["duplicate"] for r in search.listing({"name": "크기만같음"})["rows"]))
+    check("중복: 지문을 만들어도 연 시각은 그대로", os.stat(one).st_atime_ns == atime)
+    write(root / "같은2.txt", "이제 다른 내용이에요")
+    index.build(index.roots(settings.load()))
+    check("중복: 바뀌면 다시 비교", names(search.listing({"view": "duplicates", "folder": str(root)})["rows"]) == {"큰1.bin", "큰2.bin"})
+
+
+def find_in(folder):
+    return names(search.listing({"folder": str(folder)})["rows"])
+
+
+def test_actions():
+    root = TEMP / "root" / "act"
+    first = write(root / "첫째.txt", "하나")
+    write(root / "다른.txt", "둘")
+    write(root / "옮길곳" / "다른.txt", "같은 이름")
+    index.build(index.roots(settings.load()))
+
+    renamed = actions.rename(first, "바꾼이름.md")
+    check("이름 바꾸기", renamed == str(root / "바꾼이름.md") and os.path.exists(renamed) and not os.path.exists(first))
+    row = search.listing({"name": "바꾼이름"})["rows"]
+    check("이름 바꾸기: 색인(이름·종류)", names(row) == {"바꾼이름.md"} and row[0]["kind"] == "문서" and not search.listing({"name": "첫째"})["rows"])
+    raises("이름 바꾸기: 같은 이름", lambda: actions.rename(renamed, "다른.txt"), "같은 이름의 파일이 있습니다")
+    raises("이름 바꾸기: 쓸 수 없는 글자", lambda: actions.rename(renamed, "a/b.txt"), "쓸 수 없는 이름입니다")
+    raises("이름 바꾸기: 빈 이름", lambda: actions.rename(renamed, "  "), "쓸 수 없는 이름입니다")
+    renamed = actions.rename(renamed, "바꾼이름.MD")
+    check("이름 바꾸기: 대소문자만", os.path.basename(renamed) == "바꾼이름.MD" and "바꾼이름.MD" in os.listdir(root))
+
+    moved = actions.move_to(renamed, str(root / "옮길곳"))
+    check("옮기기", moved == str(root / "옮길곳" / "바꾼이름.MD") and os.path.exists(moved) and not os.path.exists(renamed))
+    check("옮기기: 색인", find_in(root / "옮길곳") == {"바꾼이름.MD", "다른.txt"})
+    raises("옮기기: 같은 이름", lambda: actions.move_to(str(root / "다른.txt"), str(root / "옮길곳")), "같은 이름의 파일이 있습니다")
+    raises("옮기기: 이미 그 폴더", lambda: actions.move_to(moved, str(root / "옮길곳")), "이미 그 폴더에 있습니다")
+    raises("옮기기: 없는 폴더", lambda: actions.move_to(moved, str(root / "없음")), "없는 폴더입니다")
+
+    calls = []
+
+    def fake_delete(operation):  # 실제 휴지통 대신: 넘어온 경로와 설정을 기록하고 파일을 지운다.
+        op = ctypes.cast(operation, ctypes.POINTER(actions.FileOp)).contents
+        calls.append((op.pFrom, op.fFlags))
+        os.remove(op.pFrom)
+        return 0
+
+    real, actions.shell_delete = actions.shell_delete, fake_delete
+    try:
+        actions.trash(moved)
+    finally:
+        actions.shell_delete = real
+    check("휴지통: 되살릴 수 있게 보냄(영구 삭제면 경고)", bool(calls) and calls[0][0] == moved
+          and calls[0][1] & actions.FOF_ALLOWUNDO and calls[0][1] & actions.FOF_WANTNUKEWARNING)
+    check("휴지통: 색인에서 빠짐", find_in(root / "옮길곳") == {"다른.txt"})
 
 
 def test_server():
@@ -278,19 +359,27 @@ def test_server():
     page = client.get("/?key=" + server.KEY)
     check("서버: 열쇠로 화면", page.status_code == 200 and "script-src 'self'" in page.headers["Content-Security-Policy"])
     state = client.get("/api/state")
-    check("서버: 상태", state.status_code == 200 and state.json["indexed"] > 0 and "기타" in state.json["kinds"])
-    found = client.post("/api/search", json={"text": "zebra"})
-    check("서버: 검색", found.status_code == 200 and "report.pdf" in names(found.json["rows"]))
+    check("서버: 상태", state.status_code == 200 and state.json["counts"]["all"] > 0 and "기타" in state.json["kinds"] and bool(state.json["places"]))
+    found = client.post("/api/files", json={"text": "zebra"})
+    check("서버: 목록", found.status_code == 200 and "report.pdf" in names(found.json["rows"]))
+    bad = client.post("/api/rename", json={"path": str(TEMP / "없음.txt"), "name": "x.txt"})
+    check("서버: 색인에 없는 경로는 이름 바꾸지 않음", bad.status_code == 400 and "색인에 없는 경로" in bad.json["error"])
+    bad = client.post("/api/trash", json={"path": str(TEMP / "src")})
+    check("서버: 색인에 없는 경로는 휴지통에 보내지 않음", bad.status_code == 400 and os.path.exists(TEMP / "src"))
+    bad = client.post("/api/move", json={"path": str(TEMP / "root" / "memo.txt")})
+    check("서버: 창 없이 옮기기 거부", bad.status_code == 400 and os.path.exists(TEMP / "root" / "memo.txt"))
+    bad = client.post("/api/files", json={"view": "all"})
+    check("서버: 모르는 목록", bad.status_code == 400)
     bad = client.post("/api/open", json={"path": str(TEMP / "없음.txt")})
     check("서버: 색인에 없는 경로는 열지 않음", bad.status_code == 400 and "색인에 없는 경로" in bad.json["error"])
     bad = client.post("/api/settings", json={"recent_days": 0})
     check("서버: 잘못된 기간", bad.status_code == 400 and "1~3650일" in bad.json["error"])
     bad = client.post("/api/settings", json={"color": "red"})
     check("서버: 모르는 설정", bad.status_code == 400 and "모르는 설정입니다: color" in bad.json["error"])
-    bad = client.post("/api/recent", json={"mode": "stale", "days": "많이"})
+    bad = client.post("/api/settings", json={"stale_days": "많이"})
     check("서버: 기간이 숫자가 아님", bad.status_code == 400)
-    ok = client.post("/api/recent", json={"mode": "stale", "days": 30})
-    check("서버: 모아 보기와 기간 기억", ok.status_code == 200 and settings.load()["stale_days"] == 30)
+    ok = client.post("/api/settings", json={"stale_days": 30})
+    check("서버: 기간 저장", ok.status_code == 200 and settings.load()["stale_days"] == 30)
     bad = client.post("/api/pick", json={})
     check("서버: 창 없이 폴더 고르기 거부", bad.status_code == 400)
     bad = client.post("/api/organize/preview", json={"source": str(TEMP / "없음"), "dest": str(TEMP / "dest")})
@@ -309,6 +398,8 @@ try:
     test_other_drive()
     test_index_search()
     test_recent()
+    test_duplicates()
+    test_actions()
     test_server()
 finally:
     shutil.rmtree(TEMP, ignore_errors=True)

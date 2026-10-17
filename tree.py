@@ -1,41 +1,34 @@
-"""나무 보기: 폴더 하나의 하위 폴더(그 아래 전체의 파일 수·용량)와 파일. 색인을 읽는다. 펼칠 때 그 폴더만 불러온다."""
+"""폴더 구조: 사이드바의 위치(색인한 맨 위 폴더와 그 아래 전체 파일 수)와 상세의 경로(맨 위 폴더부터 파일이 든 폴더까지). 색인을 읽는다."""
 import os
 
 import exclude
 import index
+import settings
 
-MAX_FILES = 1000  # 한 폴더에서 보여 줄 최대 파일 수
 
-
-def children(path=None):
-    """path가 없으면 색인한 맨 위 폴더들."""
+def places():
+    """색인한 맨 위 폴더들을 설정에 적은 순서로(놓을 곳은 끝에). [{"path", "name", "files", "size"}]"""
+    order = [exclude.key(path) for path in index.roots(settings.load())]
     db = index.connect()
     try:
-        if not path:
-            folders = db.execute("select path, name, files, size from folders where parent is null order by path").fetchall()
-            return {"folders": [dict(row) for row in folders], "files": [], "more": 0}
-        key = exclude.key(path)
-        folders = db.execute("select path, name, files, size from folders where parent = ? order by name", (key,)).fetchall()
-        files = db.execute(f"select path, name, kind, size, modified from files where folder = ? order by name limit {MAX_FILES + 1}",
-                           (key,)).fetchall()
-        total = db.execute("select count(*) from files where folder = ?", (key,)).fetchone()[0]
-        return {"folders": [dict(row) for row in folders], "files": [dict(row) for row in files[:MAX_FILES]],
-                "more": max(0, total - MAX_FILES)}
+        rows = [dict(row) for row in db.execute("select key, path, name, files, size from folders where parent is null")]
     finally:
         db.close()
+    rows.sort(key=lambda row: order.index(row["key"]) if row["key"] in order else len(order))
+    return [{k: row[k] for k in ("path", "name", "files", "size")} for row in rows]
 
 
 def chain(path):
-    """파일(또는 폴더)이 든 폴더부터 맨 위 폴더까지 거슬러 올라가, 위에서부터의 폴더 경로 목록. 색인에 없으면 빈 목록."""
+    """파일(또는 폴더)이 든 폴더부터 맨 위 폴더까지 거슬러 올라가, 위에서부터의 [{"path", "name"}]. 색인에 없으면 빈 목록."""
     db = index.connect()
     try:
         found = []
         key = os.path.dirname(exclude.key(path))
         while key:
-            row = db.execute("select path, parent from folders where key = ?", (key,)).fetchone()
+            row = db.execute("select path, name, parent from folders where key = ?", (key,)).fetchone()
             if row is None:
                 return []
-            found.append(row["path"])
+            found.append({"path": row["path"], "name": row["name"]})
             key = row["parent"]
         return found[::-1]
     finally:

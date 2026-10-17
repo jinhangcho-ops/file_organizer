@@ -1,6 +1,8 @@
 """확장자 → 종류. 정리할 때의 폴더 이름이자 검색의 종류 조건. 표에 없는 확장자는 OTHER."""
 KINDS = {
-    "문서": ".pdf .doc .docx .hwp .hwpx .txt .md .rtf .odt .xls .xlsx .xlsm .csv .tsv .ppt .pptx .odp .ods .json .xml .html .htm",
+    "문서": ".doc .docx .hwp .hwpx .txt .md .rtf .odt .ppt .pptx .odp .json .xml .html .htm",
+    "표": ".xls .xlsx .xlsm .csv .tsv .ods",
+    "PDF": ".pdf",
     "이미지": ".jpg .jpeg .png .gif .bmp .webp .heic .svg .tif .tiff .ico .raw .psd",
     "동영상": ".mp4 .mkv .avi .mov .wmv .webm .flv .m4v .ts",
     "음악": ".mp3 .wav .flac .aac .m4a .ogg .wma",

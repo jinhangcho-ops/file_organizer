@@ -6,12 +6,12 @@ import subprocess
 from flask import Flask, abort, jsonify, request, send_from_directory
 from werkzeug.exceptions import HTTPException
 
+import actions
 import drives
 import exclude
 import index
 import kinds
 import organize
-import recent
 import search
 import settings
 import tree
@@ -61,7 +61,8 @@ def body():
 @app.get("/api/state")
 def state():
     return jsonify(settings=settings.load(), drives=drives.list_drives(), known=drives.known_folders(), kinds=kinds.NAMES,
-                   last_access=drives.last_access_on(), undo=len(organize.last()), index=index.status, indexed=index.count(), exclude=exclude.load())
+                   last_access=drives.last_access_on(), undo=len(organize.last()), index=index.status, counts=search.counts(),
+                   places=tree.places(), exclude=exclude.load())
 
 
 @app.post("/api/settings")
@@ -69,11 +70,15 @@ def save_settings():
     return jsonify(settings=settings.save(body()))
 
 
-@app.post("/api/pick")
-def pick():
+def pick_folder():
     if ask_folder is None:
         raise ValueError("폴더 고르기는 프로그램 창에서만 됩니다.")
-    return jsonify(path=ask_folder())
+    return ask_folder()
+
+
+@app.post("/api/pick")
+def pick():
+    return jsonify(path=pick_folder())
 
 
 @app.post("/api/organize/preview")
@@ -105,23 +110,9 @@ def build_index():
     return jsonify(index.status)
 
 
-@app.post("/api/search")
-def find():
-    return jsonify(search.find(body()))
-
-
-@app.post("/api/recent")
-def collect():
-    data = body()
-    mode = data.get("mode")
-    name = "stale_days" if mode == "stale" else "recent_days"
-    days = settings.save({name: data.get("days")})[name]
-    return jsonify(recent.collect(mode, days))
-
-
-@app.get("/api/tree")
-def folder():
-    return jsonify(tree.children(request.args.get("path")))
+@app.post("/api/files")
+def files():
+    return jsonify(search.listing(body()))
 
 
 @app.get("/api/chain")
@@ -135,13 +126,38 @@ def change_exclude():
     return jsonify(exclude=exclude.remove(data["path"]) if data.get("remove") else exclude.add(data["path"]))
 
 
+def indexed_path():
+    """요청의 path. 색인에 있고 지금도 있는 파일·폴더만 받는다(화면이 다루는 파일은 모두 색인에서 왔다)."""
+    path = body().get("path") or ""
+    if not index.known(path) or not os.path.exists(path):
+        raise ValueError(f"색인에 없는 경로입니다. 색인을 갱신하세요: {path}")
+    return path
+
+
+@app.post("/api/move")
+def move():
+    """폴더 고르기 창으로 고른 곳에 옮긴다. 고르지 않으면 path가 null."""
+    path = indexed_path()
+    folder = pick_folder()
+    return jsonify(path=folder and actions.move_to(path, folder))
+
+
+@app.post("/api/rename")
+def rename():
+    return jsonify(path=actions.rename(indexed_path(), body().get("name")))
+
+
+@app.post("/api/trash")
+def trash():
+    actions.trash(indexed_path())
+    return jsonify(ok=True)
+
+
 @app.post("/api/open")
 def open_path():
     """색인에 있는 파일·폴더만 연다. reveal이면 탐색기에서 그 파일을 골라 보여 준다."""
     data = body()
-    path = data.get("path") or ""
-    if not index.known(path) or not os.path.exists(path):
-        raise ValueError(f"색인에 없는 경로입니다. 색인을 갱신하세요: {path}")
+    path = indexed_path()
     if data.get("reveal"):
         subprocess.Popen(["explorer", "/select,", os.path.normpath(path)])
     else:

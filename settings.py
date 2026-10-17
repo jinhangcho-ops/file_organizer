@@ -32,7 +32,7 @@ def write(name, data):
 
 def defaults():
     known = drives.known_folders()
-    return {"source": known["다운로드"], "dest": "", "roots": list(known.values()), "recent_days": 7, "stale_days": 180}
+    return {"source": known["다운로드"], "dest": "", "roots": list(known.values()), "recent_days": 7, "stale_days": 90}
 
 
 def load():

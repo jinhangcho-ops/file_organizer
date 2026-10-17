@@ -9,7 +9,7 @@ import server
 http = make_server("127.0.0.1", 0, server.app, threaded=True)  # 0: 비어 있는 포트를 자동으로 고른다.
 threading.Thread(target=http.serve_forever, daemon=True).start()
 # 열쇠를 아는 이 창만 화면을 열 수 있다(브라우저로 주소만 열면 거부된다).
-window = webview.create_window("파일 정리·검색", f"http://127.0.0.1:{http.server_port}/?key={server.KEY}", width=1400, height=900)
+window = webview.create_window("파일 정리", f"http://127.0.0.1:{http.server_port}/?key={server.KEY}", width=1400, height=900)
 
 
 def ask_folder():
