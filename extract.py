@@ -1,8 +1,5 @@
 """파일 종류별로 안의 글자를 꺼낸다(내용 검색용). 읽지 못하는 파일(암호, 깨짐)은 빈 글자."""
-import logging
 from pathlib import Path
-
-logging.getLogger("pypdf").setLevel(logging.ERROR)  # 깨진 PDF마다 경고를 찍지 않게 한다.
 
 MAX_SIZE = 50 * 1024 * 1024  # 이보다 큰 파일은 내용을 읽지 않는다(이름·크기 등으로만 찾는다).
 MAX_CHARS = 2_000_000  # 파일 하나에서 저장할 최대 글자 수
@@ -20,10 +17,23 @@ def plain(path):
 
 
 def pdf(path):
-    from pypdf import PdfReader
+    """pypdfium2(PDFium)로 읽는다. pypdf는 어떤 PDF에서 한 파일에 1분 넘게 걸렸다(PDFium은 1초)."""
+    import pypdfium2
 
-    reader = PdfReader(path)
-    return "\n".join(page.extract_text() or "" for page in reader.pages)
+    document = pypdfium2.PdfDocument(path)
+    try:
+        lines, count = [], 0
+        for page in document:
+            textpage = page.get_textpage()
+            lines.append(textpage.get_text_range())
+            textpage.close()
+            page.close()
+            count += len(lines[-1])
+            if count >= MAX_CHARS:
+                break
+        return "\n".join(lines)
+    finally:
+        document.close()
 
 
 def docx(path):

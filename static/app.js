@@ -189,11 +189,12 @@ async function showFileInTree(row) {
 }
 
 function showIndex(status) {
+  const progress = status.total ? `${status.done.toLocaleString()} / ${status.total.toLocaleString()}` : `${status.done.toLocaleString()}개`;
   $("index-status").textContent = status.running
-    ? `색인하는 중… ${status.done.toLocaleString()}개 확인`
+    ? `색인하는 중… ${status.step} ${progress}`
     : status.error ? "색인 실패: " + status.error
     : status.finished ? `색인 갱신 ${fullDate(status.finished)}` : "";
-  if (status.stopped && !status.running) $("index-status").textContent = `색인을 멈췄습니다 (${status.done.toLocaleString()}개까지 반영)`;
+  if (status.stopped && !status.running) $("index-status").textContent = `색인을 멈췄습니다. 다시 누르면 남은 것부터 이어서 합니다.`;
   $("index-progress").textContent = status.running ? status.current : "";
   $("reindex").disabled = status.running;
   document.querySelectorAll("[data-stop]").forEach((b) => b.classList.toggle("hidden", !status.running));
@@ -208,10 +209,17 @@ document.querySelectorAll("[data-stop]").forEach((button) => button.addEventList
   }
 }));
 
+let shown = 0;  // 색인 중에 마지막으로 화면을 새로 읽은 때
+
 async function pollIndex() {
   const status = await api("/api/index");
   showIndex(status);
   if (status.running) {
+    if (Date.now() - shown > 10000) {  // 색인하는 동안에도 10초마다 숫자·나무·목록을 새로 읽어 저장된 만큼 보여 준다.
+      shown = Date.now();
+      await loadState();
+      await loadFiles();
+    }
     setTimeout(pollIndex, 1000);
   } else {
     await loadState();

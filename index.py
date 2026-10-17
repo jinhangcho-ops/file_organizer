@@ -1,8 +1,10 @@
 """색인(설정 폴더의 index.db, SQLite). 목록·검색·모아 보기가 디스크를 다시 훑지 않고 이것을 읽는다.
-- files: 파일 하나에 한 줄(경로, 종류, 크기, 만든·고친·연 시각, 다운로드 표시, 중복 비교용 지문).
+- files: 파일 하나에 한 줄(경로, 종류, 크기, 만든·고친·연 시각, 다운로드 표시, 중복 비교용 지문, 내용을 읽은 때의 stamp).
 - body: 파일 안의 글자(FTS5 trigram, rowid = files.id). 세 글자 이상은 색인으로 빨리 찾는다.
 - folders: 폴더 구조와 그 아래 전체의 파일 수·용량(사이드바의 위치, 상세의 경로).
-두 번째 색인부터는 크기·고친 시각이 바뀐 파일만 내용을 다시 읽는다. 내용을 읽은 파일은 연 시각을 읽기 전으로 되돌린다.
+색인은 세 단계다. ① 파일 목록(이름·크기·날짜)만 빠르게 훑는다. ② 중복 비교 지문 ③ 파일 안의 글자.
+②·③은 아직 하지 않았거나 그 뒤에 바뀐 파일만 하므로, 멈추거나 창을 닫았다 다시 하면 남은 것부터 이어서 한다.
+SAVE_EVERY초마다 저장해서 중간에 끊겨도 거기까지는 남는다. 내용을 읽은 파일은 연 시각을 읽기 전으로 되돌린다.
 지문은 크기가 같은 파일이 둘 이상일 때만 만든다(크기가 다르면 같은 파일일 수 없다)."""
 import hashlib
 import os
@@ -20,24 +22,28 @@ import settings
 SKIP = {"windows", "program files", "program files (x86)", "programdata", "appdata", "$recycle.bin", "system volume information",
         "recovery", "config.msi", "$windows.~bt", "$windows.~ws", "$winreagent"}  # 들어가지 않는 폴더 이름(소문자)
 HIDDEN = stat_flags.FILE_ATTRIBUTE_HIDDEN | stat_flags.FILE_ATTRIBUTE_SYSTEM
-COMMIT_EVERY = 500  # 이만큼 넣을 때마다 저장해서, 색인하는 중에도 검색에 나오게 한다.
+SAVE_EVERY = 2  # 이 초마다 저장해서, 색인하는 중에도 목록에 나오고 끊겨도 거기까지는 남게 한다.
 WHOLE = 8 * 1024 * 1024  # 이보다 큰 파일은 앞·가운데·뒤 SAMPLE씩만 읽어 지문을 만든다(그래서 '중복 의심').
 SAMPLE = 1024 * 1024
 
 SCHEMA = """
 create table if not exists files(id integer primary key, path text, key text unique, folder text, name text, ext text, kind text,
-  size integer, created integer, modified integer, accessed integer, downloaded integer, stamp integer, hash text, hashed integer);
+  size integer, created integer, modified integer, accessed integer, downloaded integer, stamp integer, hash text, hashed integer,
+  textstamp integer);
 create index if not exists files_folder on files(folder);
 create virtual table if not exists body using fts5(text, tokenize='trigram');
 create table if not exists folders(key text primary key, path text, parent text, name text, files integer default 0, size integer default 0);
 create index if not exists folders_parent on folders(parent);
 create index if not exists files_hash on files(hash);
 """
-ADDED = {"hash": "text", "hashed": "integer"}  # 예전 색인 파일에 없는 칸
+ADDED = {"hash": "text", "hashed": "integer", "textstamp": "integer"}  # 예전 색인 파일에 없는 칸
 
-status = {"running": False, "done": 0, "current": "", "error": "", "finished": None, "stopped": False}  # 화면이 1초마다 읽는다.
+# 화면이 1초마다 읽는다. step: 지금 단계 이름, done/total: 그 단계에서 한 수와 할 수(목록 단계는 total 없음).
+status = {"running": False, "step": "", "done": 0, "total": 0, "current": "", "error": "", "finished": None, "stopped": False}
 lock = threading.Lock()
 stop = threading.Event()  # 켜지면 색인이 지금 파일까지만 하고 멈춘다.
+worker = None  # 색인 스레드(창을 닫을 때 끝나기를 기다린다)
+saved = [0.0]  # 마지막으로 저장한 때
 
 
 def connect():
@@ -90,12 +96,18 @@ def walk(root):
         yield folder, files
 
 
+def save_now(db, force=False):
+    """SAVE_EVERY초가 지났으면(또는 force) 저장한다."""
+    if force or time.time() - saved[0] >= SAVE_EVERY:
+        db.commit()
+        saved[0] = time.time()
+
+
 def save_file(db, path, st):
-    """파일 하나를 색인에 넣거나 고친다. 다운로드 표시와 내용을 읽고, 연 시각은 읽기 전으로 되돌린다."""
+    """파일 하나의 목록 정보를 색인에 넣거나 고친다(다운로드 표시 포함). 바뀐 파일은 지문과 내용을 지워 ②·③에서 다시 하게 한다."""
     name = os.path.basename(path)
     ext = os.path.splitext(name)[1].lower()
     marked = filetime.downloaded(path)
-    text = extract.text(path, ext) if extract.readable(ext, st.st_size) else ""
     filetime.restore_access(path, st)
     key = exclude.key(path)
     row = db.execute(
@@ -103,13 +115,11 @@ def save_file(db, path, st):
            values(?,?,?,?,?,?,?,?,?,?,?,?)
            on conflict(key) do update set path=excluded.path, folder=excluded.folder, name=excluded.name, ext=excluded.ext,
              kind=excluded.kind, size=excluded.size, created=excluded.created, modified=excluded.modified,
-             accessed=excluded.accessed, downloaded=excluded.downloaded, stamp=excluded.stamp, hash=null, hashed=null
+             accessed=excluded.accessed, downloaded=excluded.downloaded, stamp=excluded.stamp, hash=null, hashed=null, textstamp=null
            returning id""",
         (path, key, os.path.dirname(key), name, ext, kinds.of(ext), st.st_size, int(st.st_birthtime), int(st.st_mtime),
          int(st.st_atime), int(marked), st.st_mtime_ns)).fetchone()
     db.execute("delete from body where rowid = ?", (row["id"],))
-    if text.strip():
-        db.execute("insert into body(rowid, text) values(?, ?)", (row["id"], text))
 
 
 def add_folder(db, path, parent):
@@ -134,12 +144,13 @@ def totals(db):
 
 
 def build(paths):
-    """paths 아래를 모두 훑어 색인을 새로 맞춘다. 사라진 파일·폴더는 지운다.
-    멈추면(stop) 그때까지 읽은 것은 남기고, 끝까지 훑지 못했으니 사라진 것 지우기와 중복 비교는 하지 않는다."""
+    """paths 아래를 훑어 색인을 맞추고(①), 지문(②)과 내용(③) 중 남은 것을 한다. 끝까지 훑었으면 사라진 파일·폴더를 지운다.
+    멈추면(stop) 그때까지 한 것은 남기고 끝낸다. 사라진 것 지우기는 끝까지 훑었을 때만 한다(못 본 파일이 사라진 것인지 알 수 없으므로)."""
     db = connect()
     try:
         old = {row["key"]: (row["size"], row["stamp"]) for row in db.execute("select key, size, stamp from files")}
         seen, folders = set(), set()
+        status.update(step="파일 목록 확인", done=0, total=0)
         done = scan(db, paths, old, seen, folders)
         if done:
             gone = [(key,) for key in old if key not in seen]
@@ -147,15 +158,15 @@ def build(paths):
             db.executemany("delete from files where key = ?", gone)
             db.executemany("delete from folders where key = ?", [(key,) for (key,) in db.execute("select key from folders") if key not in folders])
         totals(db)
-        db.commit()
-        if done:
-            fingerprints(db)
+        save_now(db, force=True)
+        fingerprints(db)
+        read_texts(db)
     finally:
         db.close()
 
 
 def scan(db, paths, old, seen, folders):
-    """paths 아래의 파일을 색인에 맞춘다. 본 파일·폴더의 key를 seen·folders에 모은다. 끝까지 했으면 True, 멈췄으면 False."""
+    """① paths 아래의 파일 목록을 색인에 맞춘다. 본 파일·폴더의 key를 seen·folders에 모은다. 끝까지 했으면 True, 멈췄으면 False."""
     for root in paths:
         for folder, entries in walk(root):
             if stop.is_set():
@@ -178,9 +189,41 @@ def scan(db, paths, old, seen, folders):
                     status["current"] = entry.path
                     save_file(db, entry.path, st)
                 status["done"] += 1
-                if status["done"] % COMMIT_EVERY == 0:
-                    db.commit()
+                save_now(db)
     return True
+
+
+def read_text(db, row_id, path, ext, st):
+    """파일 하나의 글자를 읽어 넣고 읽은 것으로 표시한다. 읽은 뒤 연 시각은 되돌린다."""
+    text = extract.text(path, ext) if extract.readable(ext, st.st_size) else ""
+    filetime.restore_access(path, st)
+    db.execute("delete from body where rowid = ?", (row_id,))
+    if text.strip():
+        db.execute("insert into body(rowid, text) values(?, ?)", (row_id, text))
+    db.execute("update files set textstamp = stamp where id = ?", (row_id,))
+
+
+def read_texts(db):
+    """③ 내용을 읽을 수 있는 파일 중 아직 읽지 않았거나 그 뒤에 바뀐 파일의 글자를 읽는다. 읽은 뒤 연 시각은 되돌린다."""
+    readable = sorted(extract.READERS)
+    marks = ", ".join("?" * len(readable))
+    rows = db.execute(f"""select id, path, ext, size, stamp from files where (textstamp is null or textstamp <> stamp)
+                          and size <= ? and ext in ({marks})""", [extract.MAX_SIZE] + readable).fetchall()
+    status.update(step="파일 내용 읽기", done=0, total=len(rows))
+    for row in rows:
+        if stop.is_set():
+            break
+        status["current"] = row["path"]
+        try:
+            st = os.stat(row["path"])
+        except OSError:
+            continue
+        if st.st_mtime_ns != row["stamp"]:  # 목록을 훑은 뒤에 바뀌었다: 다음 색인 때 읽는다.
+            continue
+        read_text(db, row["id"], row["path"], row["ext"], st)
+        status["done"] += 1
+        save_now(db)
+    save_now(db, force=True)
 
 
 def fingerprint(path, size):
@@ -202,18 +245,19 @@ def fingerprints(db):
     """크기가 같은 파일이 둘 이상인 것들 중 지문이 없거나 그 뒤에 바뀐 파일의 지문을 만든다."""
     rows = db.execute("""select id, path, size from files where size > 0 and (hashed is null or hashed <> stamp)
                          and size in (select size from files where size > 0 group by size having count(*) > 1)""").fetchall()
-    for n, row in enumerate(rows, 1):
+    status.update(step="중복 확인", done=0, total=len(rows))
+    for row in rows:
         if stop.is_set():
             break
-        status["current"] = "중복 확인 " + row["path"]
+        status["current"] = row["path"]
         try:
             value = fingerprint(row["path"], row["size"])
         except OSError:
             continue
         db.execute("update files set hash = ?, hashed = stamp where id = ?", (value, row["id"]))
-        if n % COMMIT_EVERY == 0:
-            db.commit()
-    db.commit()
+        status["done"] += 1
+        save_now(db)
+    save_now(db, force=True)
 
 
 def start(paths):
@@ -221,7 +265,7 @@ def start(paths):
     with lock:
         if status["running"]:
             return False
-        status.update(running=True, done=0, current="", error="", stopped=False)
+        status.update(running=True, step="", done=0, total=0, current="", error="", stopped=False)
         stop.clear()
 
     def work():
@@ -232,8 +276,17 @@ def start(paths):
         finally:
             status.update(running=False, current="", finished=int(time.time()), stopped=stop.is_set())
 
-    threading.Thread(target=work, daemon=True).start()
+    global worker
+    worker = threading.Thread(target=work, daemon=True)
+    worker.start()
     return True
+
+
+def finish(timeout=15):
+    """창을 닫을 때: 돌고 있는 색인을 멈추고, 지금 파일까지 저장하고 끝나기를 기다린다."""
+    stop.set()
+    if worker is not None:
+        worker.join(timeout)
 
 
 def under_index(db, folder):
@@ -271,8 +324,11 @@ def moved(pairs):
                 ext = os.path.splitext(after)[1].lower()
                 db.execute("update files set path = ?, key = ?, folder = ?, name = ?, ext = ?, kind = ? where id = ?",
                            (after, key, os.path.dirname(key), os.path.basename(after), ext, kinds.of(ext), row["id"]))
-            else:
-                save_file(db, after, os.stat(after))
+            else:  # 색인에 없던 파일이 들어왔다(정리 등): 몇 개뿐이니 내용까지 바로 읽는다.
+                st = os.stat(after)
+                save_file(db, after, st)
+                row = db.execute("select id from files where key = ?", (exclude.key(after),)).fetchone()
+                read_text(db, row["id"], after, os.path.splitext(after)[1].lower(), st)
         totals(db)
         db.commit()
     finally:

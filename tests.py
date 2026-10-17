@@ -5,6 +5,7 @@
 import ctypes
 import os
 import shutil
+import sqlite3
 import sys
 import tempfile
 import time
@@ -15,6 +16,7 @@ os.environ["APPDATA"] = str(TEMP / "appdata")
 
 import actions  # noqa: E402  APPDATA를 바꾼 뒤에 불러온다.
 import exclude  # noqa: E402
+import extract  # noqa: E402
 import filetime  # noqa: E402
 import index  # noqa: E402
 import organize  # noqa: E402
@@ -359,7 +361,59 @@ def test_stop():
     finally:
         index.walk = real
     check("멈춤: 화면의 [멈추기]", index.status["stopped"] and not index.status["running"] and not index.status["error"])
+    index.stop.clear()  # 서버로 보낸 멈춤 신호를 지운다(다음 색인은 index.start가 지우지만 여기서는 build를 바로 부른다).
     index.build(paths)
+
+
+def test_resume():
+    root = TEMP / "resume"
+    for n in range(6):
+        write(root / f"메모{n}.txt", f"이어 읽기 검사 {n}번")
+    settings.save({"roots": settings.load()["roots"] + [str(root)]})
+    paths = index.roots(settings.load())
+    index.build(paths)  # 지금 있는 것을 모두 읽어 둔다.
+
+    reads = []
+    real = extract.text
+
+    def counting(path, ext):  # 내용을 읽을 때마다 센다.
+        reads.append(os.path.basename(path))
+        return real(path, ext)
+
+    extract.text = counting
+    try:
+        index.build(paths)
+        check("다시 색인: 한 번 읽은 파일은 다시 읽지 않음", reads == [])
+
+        write(root / "메모0.txt", "바뀐 내용입니다")
+        for n in range(6, 12):
+            write(root / f"메모{n}.txt", f"이어 읽기 검사 {n}번")
+        reads.clear()
+
+        def stop_after_three(path, ext):  # 세 개를 읽은 뒤 [멈추기]를 누른 것처럼 한다.
+            if len(reads) == 3:
+                index.stop.set()
+            return counting(path, ext)
+
+        extract.text = stop_after_three
+        try:
+            index.build(paths)
+        finally:
+            index.stop.clear()
+        first = list(reads)
+        db = sqlite3.connect(settings.folder() / "index.db")  # 다른 연결로 봐도 저장돼 있어야 한다.
+        stored = db.execute("select count(*) from files where textstamp = stamp and path like ?", (str(root) + "%",)).fetchone()[0]
+        db.close()
+        check("멈춤: 읽은 데까지 저장됨", len(first) in (3, 4) and stored == 12 - 7 + len(first))
+        extract.text = counting
+        reads.clear()
+        index.build(paths)
+        check("이어서: 남은 것만 읽음", len(reads) == 7 - len(first) and not set(reads) & set(first))
+        check("이어서: 바뀐 파일은 다시 읽음", "메모0.txt" in first + reads)
+        check("이어서: 내용 검색", names(search.listing({"text": "바뀐 내용"})["rows"]) == {"메모0.txt"}
+              and names(search.listing({"text": "검사 11번"})["rows"]) == {"메모11.txt"})
+    finally:
+        extract.text = real
 
 
 def find_in(folder):
@@ -459,6 +513,7 @@ try:
     test_duplicates()
     test_actions()
     test_stop()
+    test_resume()
     test_server()
 finally:
     shutil.rmtree(TEMP, ignore_errors=True)
