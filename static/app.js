@@ -4,7 +4,8 @@
 const $ = (id) => document.getElementById(id);
 let state = null;                 // /api/state의 답
 let page = "files";               // files, organize, setup
-let scope = {all: true};          // 목록의 범위: {all} | {folder, name} | {view}
+let scope = {all: true};          // 목록의 범위: {all} | {folder, name}
+let filter = "";                  // 고른 필터 칩(VIEWS의 이름, "" = 없음)
 let kind = "";                    // 고른 종류 칩("" = 전체)
 let sort = "date", order = "desc";
 let more = {};                    // [조건]의 값
@@ -13,7 +14,7 @@ let menuPath = null;              // 오른쪽 클릭한 파일
 let source = "", dest = "";       // 정리할 곳, 놓을 곳
 let listed = 0;                   // 늦게 온 목록 응답을 버리기 위한 번호
 
-const VIEWS = {  // 설정 화면 맨 위의 카드(이 순서). mark: 정리할 거리라 노란 점을 붙인다.
+const VIEWS = {  // 목록의 필터 칩이자 설정 화면 맨 위의 카드(이 순서). mark: 정리할 거리라 카드에 노란 점을 붙인다.
   duplicates: {title: "중복 의심", date: "수정한 날짜", mark: true},
   downloaded: {title: "최근 다운로드", date: "받은 날짜"},
   modified: {title: "최근 수정", date: "수정한 날짜"},
@@ -162,8 +163,9 @@ function showPage(name) {
 document.querySelectorAll(".side-foot [data-page]").forEach((b) => b.addEventListener("click", () => showPage(b.dataset.page)));
 
 // ---------- 목록 ----------
-function openScope(next) {
+function openScope(next, view = "") {
   scope = next;
+  filter = view;
   kind = "";
   showPage("files");
   loadFiles();
@@ -172,9 +174,9 @@ function openScope(next) {
 async function loadFiles() {
   const number = ++listed;
   const query = {...more, name: $("name").value, kind, sort, order};
-  if (scope.view) query.view = scope.view;
+  if (filter) query.view = filter;
   if (scope.folder) query.folder = scope.folder;
-  $("title").textContent = scope.view ? viewTitle(scope.view) : scope.folder ? scope.name : "모든 파일";
+  $("title").textContent = scope.folder ? scope.name : "모든 파일";
   try {
     const found = await api("/api/files", query);
     if (number !== listed) return;
@@ -189,13 +191,20 @@ async function loadFiles() {
 function showFiles(found) {
   $("summary").textContent = `${found.total.toLocaleString()}개 항목, 합계 ${size(found.bytes)}` +
     (found.more ? ` · 앞의 ${found.rows.length.toLocaleString()}개만 보입니다` : "");
+  const viewCounts = Object.fromEntries(found.views);
+  $("filters").replaceChildren(...Object.keys(VIEWS).map((view) => {  // 설정 화면의 카드와 같은 순서
+    const n = viewCounts[view];
+    const button = el("button", {className: filter === view ? "on" : ""}, viewTitle(view), el("span", {className: "n", textContent: n.toLocaleString()}));
+    button.addEventListener("click", () => { filter = filter === view ? "" : view; loadFiles(); });
+    return button;
+  }));
   const all = found.kinds.reduce((sum, [, n]) => sum + n, 0);
   $("chips").replaceChildren(...[["", "전체", all], ...found.kinds.map(([k, n]) => [k, k, n])].map(([value, label, n]) => {
     const button = el("button", {className: kind === value ? "on" : ""}, label, el("span", {className: "n", textContent: n.toLocaleString()}));
     button.addEventListener("click", () => { kind = value; loadFiles(); });
     return button;
   }));
-  $("date-label").textContent = scope.view ? VIEWS[scope.view].date : "수정한 날짜";
+  $("date-label").textContent = filter ? VIEWS[filter].date : "수정한 날짜";
   document.querySelectorAll("#files th[data-sort]").forEach((th) => {
     th.classList.toggle("sorted", th.dataset.sort === sort);
     th.dataset.arrow = th.dataset.sort === sort ? (order === "asc" ? " ↑" : " ↓") : "";
@@ -497,7 +506,7 @@ function showSetup() {
     const button = el("button", {},
       el("span", {className: "label"}, VIEWS[view].mark && state.counts[view] ? el("span", {className: "mark"}) : null, viewTitle(view)),
       el("span", {className: "count"}, state.counts[view].toLocaleString(), el("small", {textContent: "개"})));
-    button.addEventListener("click", () => openScope({view}));
+    button.addEventListener("click", () => openScope({all: true}, view));
     return button;
   }));
   $("access-off").classList.toggle("hidden", state.last_access);

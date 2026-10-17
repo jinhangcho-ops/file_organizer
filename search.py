@@ -103,7 +103,8 @@ def where(parts):
 
 
 def listing(query):
-    """목록 한 쪽. {"rows", "more", "total", "bytes", "kinds": [[종류, 개수], …](종류 표 순서)}. 줄마다 duplicate·stale 태그와 위치 이름(place)을 붙인다."""
+    """목록 한 쪽. {"rows", "more", "total", "bytes", "kinds": [[종류, 개수], …](종류 표 순서), "views": [[목록, 개수], …]}.
+    종류별 개수는 종류 조건 없이, 목록(view)별 개수는 그 목록 조건만 바꿔 센다(나머지 조건은 그대로). 줄마다 duplicate·stale 태그와 위치 이름(place)을 붙인다."""
     config = settings.load()
     parts, values, date = conditions(query, config)
     kind = query.get("kind") or ""
@@ -119,6 +120,12 @@ def listing(query):
     db = index.connect()
     try:
         counts = dict(db.execute(f"select f.kind, count(*) from files f{where(parts)} group by f.kind", values).fetchall())
+        views = []
+        for view in VIEWS:
+            view_parts, view_values, _ = conditions(query | {"view": view}, config)
+            view_parts += ["f.kind = ?"] if kind else []
+            view_values += [kind] if kind else []
+            views.append([view, db.execute(f"select count(*) from files f{where(view_parts)}", view_values).fetchone()[0]])
         total, size = db.execute(f"select count(*), coalesce(sum(f.size), 0) from files f{where(picked)}", picked_values).fetchone()
         rows = db.execute(
             f"""select {FIELDS}, {date} date, ({DUPLICATE}) duplicate, ({SEEN} < ?) stale{snippet}
@@ -129,7 +136,7 @@ def listing(query):
         db.close()
     rows = [dict(row) | {"place": place(row["path"], places)} for row in rows]
     return {"rows": rows[:LIMIT], "more": len(rows) > LIMIT, "total": total, "bytes": size,
-            "kinds": [[name, counts[name]] for name in kinds.NAMES if counts.get(name)]}  # JSON 객체는 키가 정렬되므로 목록으로
+            "kinds": [[name, counts[name]] for name in kinds.NAMES if counts.get(name)], "views": views}  # JSON 객체는 키가 정렬되므로 목록으로
 
 
 def place_names(db):

@@ -68,6 +68,8 @@ main { overflow: auto; padding: 26px 32px 32px; }
 .chips button .n { color: var(--muted); margin-left: 4px; }
 .chips button.on { background: var(--chip-on); color: var(--chip-on-text); border-color: var(--chip-on); }
 .chips button.on .n { color: inherit; opacity: .8; }
+.filters button { border-style: dashed; }
+.filters button.on { border-style: solid; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
 .table-card { overflow-x: auto; }
 #files { min-width: 560px; }
