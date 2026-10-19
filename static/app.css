@@ -82,6 +82,8 @@ main { overflow: auto; padding: 26px 32px 32px; }
 .chips button.on { background: var(--chip-on); color: var(--chip-on-text); border-color: var(--chip-on); }
 .chips button.on .n { color: inherit; opacity: .8; }
 .chips button.none:not(.on) { opacity: .45; }
+.exts { margin-top: -6px; padding-left: 14px; border-left: 2px solid var(--line); }
+.exts button { padding: 3px 12px; font-size: 13px; }
 .filters button { border-style: dashed; }
 .filters button.on { border-style: solid; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; }

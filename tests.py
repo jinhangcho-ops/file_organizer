@@ -232,6 +232,12 @@ def test_index_search():
     raises("검색: 모르는 종류", lambda: search.listing({"kind": "그림"}), "모르는 종류입니다: 그림")
     raises("목록: 모르는 목록", lambda: search.listing({"view": "all"}), "모르는 목록입니다")
     check("목록: 조건 없으면 전체", search.listing({})["total"] == index.count())
+    docs = search.listing({"folder": str(root), "kind": "문서"})
+    check("확장자 칩: 종류 안의 확장자별 개수", docs["exts"][0] == [".txt", 4] and dict(docs["exts"]) == {".txt": 4, ".docx": 1, ".pptx": 1} and search.listing({})["exts"] == [])
+    check("확장자 칩: 고른 확장자만", find(folder=str(root), kind="문서", ext=".docx") == {"계약.docx"}
+          and dict(search.listing({"folder": str(root), "kind": "문서", "ext": ".docx"})["exts"]) == dict(docs["exts"]))
+    raises("확장자 칩: 종류에 없는 확장자", lambda: search.listing({"kind": "문서", "ext": ".pdf"}), "문서에 없는 확장자입니다: .pdf")
+    raises("확장자 칩: 종류 없이", lambda: search.listing({"ext": ".txt"}), "종류에 없는 확장자입니다: .txt")
 
     write(root / "memo.txt", "회의록: 예산 사천만원으로 변경")
     os.remove(root / "sub2" / "b.txt")

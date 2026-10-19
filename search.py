@@ -103,18 +103,25 @@ def where(parts):
 
 
 def listing(query):
-    """목록 한 쪽. {"rows", "more", "total", "bytes", "kinds": [[종류, 개수], …](종류 표의 모든 종류, 순서대로), "views": [[목록, 개수], …]}.
-    종류별 개수는 종류 조건 없이, 목록(view)별 개수는 그 목록 조건만 바꿔 센다(나머지 조건은 그대로). 줄마다 duplicate·stale 태그와 위치 이름(place)을 붙인다."""
+    """목록 한 쪽. {"rows", "more", "total", "bytes", "kinds": [[종류, 개수], …](종류 표의 모든 종류, 순서대로), "views": [[목록, 개수], …],
+    "exts": [[확장자, 개수], …](종류를 골랐을 때 그 종류 안의 확장자, 많은 순)}.
+    종류별 개수는 종류·확장자 조건 없이, 확장자별 개수는 확장자 조건 없이, 목록(view)별 개수는 그 목록 조건만 바꿔 센다(나머지 조건은 그대로).
+    줄마다 duplicate·stale 태그와 위치 이름(place)을 붙인다."""
     config = settings.load()
     parts, values, date = conditions(query, config)
     kind = query.get("kind") or ""
     if kind and kind not in kinds.NAMES:
         raise ValueError(f"모르는 종류입니다: {kind}")
+    ext = (query.get("ext") or "").lower()
+    if ext and (not kind or kinds.of(ext) != kind):
+        raise ValueError(f"{kind or '종류'}에 없는 확장자입니다: {ext}")
     sort = SORTS.get(query.get("sort"), date)
     order = "asc" if query.get("order") == "asc" else "desc"
     stale_since = int(time.time()) - config["stale_days"] * DAY
-    picked = parts + (["f.kind = ?"] if kind else [])
-    picked_values = values + ([kind] if kind else [])
+    by_kind = parts + (["f.kind = ?"] if kind else [])
+    by_kind_values = values + ([kind] if kind else [])
+    picked = by_kind + (["f.ext = ?"] if ext else [])
+    picked_values = by_kind_values + ([ext] if ext else [])
     text = (query.get("text") or "").strip()
     snippet = ", (select substr(text, max(1, instr(lower(text), lower(?)) - 40), 120) from body where rowid = f.id) snippet" if text else ""
     db = index.connect()
@@ -123,9 +130,11 @@ def listing(query):
         views = []
         for view in VIEWS:
             view_parts, view_values, _ = conditions(query | {"view": view}, config)
-            view_parts += ["f.kind = ?"] if kind else []
-            view_values += [kind] if kind else []
+            view_parts += (["f.kind = ?"] if kind else []) + (["f.ext = ?"] if ext else [])
+            view_values += ([kind] if kind else []) + ([ext] if ext else [])
             views.append([view, db.execute(f"select count(*) from files f{where(view_parts)}", view_values).fetchone()[0]])
+        exts = db.execute(f"select f.ext, count(*) n from files f{where(by_kind)} group by f.ext order by n desc, f.ext",
+                          by_kind_values).fetchall() if kind else []
         total, size = db.execute(f"select count(*), coalesce(sum(f.size), 0) from files f{where(picked)}", picked_values).fetchone()
         rows = db.execute(
             f"""select {FIELDS}, {date} date, ({DUPLICATE}) duplicate, ({SEEN} < ?) stale{snippet}
@@ -136,7 +145,7 @@ def listing(query):
         db.close()
     rows = [dict(row) | {"place": place(row["path"], places)} for row in rows]
     return {"rows": rows[:LIMIT], "more": len(rows) > LIMIT, "total": total, "bytes": size,
-            "kinds": [[name, counts.get(name, 0)] for name in kinds.NAMES], "views": views}  # JSON 객체는 키가 정렬되므로 목록으로
+            "kinds": [[name, counts.get(name, 0)] for name in kinds.NAMES], "views": views, "exts": [list(row) for row in exts]}  # JSON 객체는 키가 정렬되므로 목록으로
 
 
 def place_names(db):

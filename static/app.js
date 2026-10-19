@@ -7,6 +7,7 @@ let page = "files";               // files, organize, setup
 let scope = {all: true};          // 목록의 범위: {all} | {folder, name}
 let filter = "";                  // 고른 필터 칩(VIEWS의 이름, "" = 없음)
 let kind = "";                    // 고른 종류 칩("" = 전체)
+let ext = "";                     // 고른 확장자 칩("" = 그 종류 모두). 종류를 골랐을 때만 나온다.
 let sort = "date", order = "desc";
 let more = {};                    // [조건]의 값
 let picked = null;                // 상세에 보이는 파일(목록의 줄)
@@ -240,6 +241,7 @@ function openScope(next, view = "") {
   scope = next;
   filter = view;
   kind = "";
+  ext = "";
   showPage("files");
   loadFiles();
   if (next.folder) openFolderInTree(next.folder);
@@ -258,7 +260,7 @@ async function openFolderInTree(path) {
 
 async function loadFiles() {
   const number = ++listed;
-  const query = {...more, name: $("name").value, kind, sort, order};
+  const query = {...more, name: $("name").value, kind, ext, sort, order};
   if (filter) query.view = filter;
   if (scope.folder) query.folder = scope.folder;
   $("title").textContent = scope.folder ? scope.name : "모든 파일";
@@ -286,9 +288,16 @@ function showFiles(found) {
   const all = found.kinds.reduce((sum, [, n]) => sum + n, 0);
   $("chips").replaceChildren(...[["", "전체", all], ...found.kinds.map(([k, n]) => [k, k, n])].map(([value, label, n]) => {
     const button = el("button", {className: (kind === value ? "on" : "") + (n ? "" : " none")}, label, el("span", {className: "n", textContent: n.toLocaleString()}));
-    button.addEventListener("click", () => { kind = value; loadFiles(); });
+    button.addEventListener("click", () => { kind = value; ext = ""; loadFiles(); });
     return button;
   }));
+  const inKind = found.exts.reduce((sum, [, n]) => sum + n, 0);
+  $("exts").replaceChildren(...[["", "모두", inKind], ...found.exts.map(([e, n]) => [e, e.replace(".", "") || "(확장자 없음)", n])].map(([value, label, n]) => {
+    const button = el("button", {className: ext === value ? "on" : ""}, label, el("span", {className: "n", textContent: n.toLocaleString()}));
+    button.addEventListener("click", () => { ext = value; loadFiles(); });
+    return button;
+  }));
+  $("exts").classList.toggle("hidden", !kind || !found.exts.length);
   document.querySelectorAll("#files th[data-sort]").forEach((th) => {
     th.classList.toggle("sorted", th.dataset.sort === sort);
     th.dataset.arrow = th.dataset.sort === sort ? (order === "asc" ? " ↑" : " ↓") : "";
