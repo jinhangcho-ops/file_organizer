@@ -15,6 +15,7 @@ import time
 
 import exclude
 import extract
+import fence
 import filetime
 import kinds
 import settings
@@ -63,17 +64,18 @@ def hidden(entry_stat):
 
 
 def roots(config):
-    """색인할 폴더들: 설정의 폴더와 놓을 곳. 없는 폴더와 다른 폴더 안에 든 폴더는 뺀다."""
-    found = []
+    """색인할 폴더들: 설정의 폴더와 놓을 곳. 없는 폴더, 다른 폴더 안에 든 폴더, 차단·잠금 폴더(또는 그 아래)는 뺀다."""
+    found, fences = [], fence.keys()
     for path in config["roots"] + [config["dest"]]:
-        if path and os.path.isdir(path):
+        if path and os.path.isdir(path) and not fence.inside(path, fences):
             found.append(os.path.abspath(path))
     keys = {exclude.key(path): path for path in found}
     return [path for k, path in keys.items() if not any(k != other and k.startswith(os.path.join(other, "")) for other in keys)]
 
 
-def walk(root):
-    """root 아래의 (폴더 경로, [파일 DirEntry]) 들. 링크·정션, 숨김·시스템 폴더, SKIP의 폴더는 들어가지 않는다. 읽을 수 없는 폴더는 건너뛴다."""
+def walk(root, fences=frozenset()):
+    """root 아래의 (폴더 경로, [파일 DirEntry]) 들. 링크·정션, 숨김·시스템 폴더, SKIP의 폴더, 차단·잠금 폴더(fences, key)는
+    들어가지 않는다. 읽을 수 없는 폴더는 건너뛴다."""
     stack = [root]
     while stack:
         folder = stack.pop()
@@ -85,7 +87,7 @@ def walk(root):
                         if entry.is_symlink() or entry.is_junction():
                             continue
                         if entry.is_dir():
-                            if entry.name.lower() not in SKIP and not hidden(entry.stat()):
+                            if entry.name.lower() not in SKIP and not hidden(entry.stat()) and exclude.key(entry.path) not in fences:
                                 stack.append(entry.path)
                         elif entry.is_file() and not hidden(entry.stat()):
                             files.append(entry)
@@ -167,8 +169,9 @@ def build(paths):
 
 def scan(db, paths, old, seen, folders):
     """① paths 아래의 파일 목록을 색인에 맞춘다. 본 파일·폴더의 key를 seen·folders에 모은다. 끝까지 했으면 True, 멈췄으면 False."""
+    fences = fence.keys()
     for root in paths:
-        for folder, entries in walk(root):
+        for folder, entries in walk(root, fences):
             if stop.is_set():
                 return False
             add_folder(db, folder, None if folder == root else os.path.dirname(folder))

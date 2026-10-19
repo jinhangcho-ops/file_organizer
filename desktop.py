@@ -7,6 +7,7 @@ import webview
 from werkzeug.serving import make_server
 
 import index
+import lock
 import server
 
 http = make_server("127.0.0.1", 0, server.app, threaded=True)  # 0: 비어 있는 포트를 자동으로 고른다.
@@ -72,3 +73,4 @@ server.ask_folder = ask_folder
 server.window_control = control
 webview.start()  # 창을 닫으면 여기서 끝나고, 서버 스레드도 함께 끝난다.
 index.finish()  # 색인 중이었으면 지금 파일까지 저장하고 멈춘다(다음에 남은 것부터 이어서 한다).
+lock.close_all()  # 열어 둔 잠금 폴더를 다시 잠근다.

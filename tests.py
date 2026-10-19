@@ -350,8 +350,8 @@ def test_stop():
 
     real = index.walk
 
-    def walk_then_stop(root):  # 첫 폴더를 넘겨준 뒤 [멈추기]를 누른 것처럼 한다.
-        for n, item in enumerate(real(root)):
+    def walk_then_stop(*args):  # 첫 폴더를 넘겨준 뒤 [멈추기]를 누른 것처럼 한다.
+        for n, item in enumerate(real(*args)):
             if n == 1:
                 client.post("/api/index/stop", json={})  # 열쇠 쿠키를 받은 클라이언트
             yield item

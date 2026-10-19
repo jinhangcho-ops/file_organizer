@@ -11,6 +11,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import blacklist  # noqa: E402
 import index  # noqa: E402
 import jobs  # noqa: E402
 import server  # noqa: E402
@@ -29,8 +30,11 @@ def clean_temp(tmp_path_factory):
 
 @pytest.fixture
 def home(tmp_path, monkeypatch):
-    """임시 설정 폴더와 색인할 폴더 하나(root). 놓을 곳은 비워 둔다."""
+    """임시 설정 폴더와 색인할 폴더 하나(root). 놓을 곳은 비워 둔다.
+    차단 목록 폴더(PROGRAMDATA)도 임시로 바꾸고, 그 폴더의 권한 맞추기(관리자만 쓰기)는 하지 않는다(하면 검사 뒤에 지울 수 없다)."""
     monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    monkeypatch.setenv("PROGRAMDATA", str(tmp_path / "programdata"))
+    monkeypatch.setattr(blacklist, "restrict", lambda path: None)
     root = tmp_path / "root"
     root.mkdir()
     settings.save({"roots": [str(root)]})

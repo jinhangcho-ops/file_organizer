@@ -41,7 +41,7 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: rgba(0, 0,
 .search { position: relative; width: 320px; flex: none; }
 .search svg { position: absolute; left: 9px; top: 8px; color: var(--mute); }
 .search input[type=text] { padding-left: 30px; }
-input[type=text], input[type=number], input[type=date] { height: 30px; width: 100%; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); padding: 0 8px; min-width: 0; user-select: text; }
+input[type=text], input[type=password], input[type=number], input[type=date] { height: 30px; width: 100%; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); padding: 0 8px; min-width: 0; user-select: text; }
 input[type=checkbox] { accent-color: var(--acc); margin: 0; }
 
 /* 칩 */
@@ -73,7 +73,7 @@ input[type=checkbox] { accent-color: var(--acc); margin: 0; }
 .hd h2 { margin: 0; font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hd p { margin: 2px 0 0; color: var(--mute); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .folders { flex: 1; overflow: auto; }
-.fl { display: grid; grid-template-columns: 1fr 128px; align-items: center; gap: 10px; height: 30px; padding: 0 16px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.fl { display: grid; grid-template-columns: 1fr 178px; align-items: center; gap: 10px; height: 30px; padding: 0 16px; border-bottom: 1px solid var(--line); cursor: pointer; }
 .fl:hover { background: var(--panel2); }
 .fl.cur { background: var(--accbg); box-shadow: inset 3px 0 var(--acc); }
 .fl.here:not(.cur) { box-shadow: inset 3px 0 var(--warn); }
@@ -84,7 +84,9 @@ input[type=checkbox] { accent-color: var(--acc); margin: 0; }
 .fl .c { width: 12px; color: var(--mute); font-size: 10px; flex: none; text-align: center; }
 .fl .m { display: flex; align-items: center; gap: 8px; }
 .fl .m .bar { flex: 1; }
-.fl .m span { width: 52px; text-align: right; color: var(--mute); font-variant-numeric: tabular-nums; font-size: 12px; }
+.fl .m span { width: 62px; text-align: right; font-variant-numeric: tabular-nums; font-size: 12px; white-space: nowrap; }
+.fl .m small { width: 44px; text-align: right; color: var(--mute); font-variant-numeric: tabular-nums; font-size: 11px; white-space: nowrap; }
+.box .note { margin-bottom: 10px; }
 .fl.file { cursor: pointer; color: var(--acc); }
 .fl.file .nm span:last-child { text-decoration: underline; }
 .bar { height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }

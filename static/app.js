@@ -262,10 +262,12 @@ document.querySelectorAll("[data-page]").forEach((b) => b.addEventListener("clic
 $("back").addEventListener("click", () => showPage("files"));
 
 // ---------- 왼쪽 폴더 목록 ----------
-// 맨 위는 '모든 파일', 그 아래 색인한 폴더들. 형제끼리는 파일이 많은 폴더부터. 막대는 가장 큰 맨 위 폴더에 견준 크기(제곱근).
+// 맨 위는 '모든 파일', 그 아래 색인한 폴더들. 형제끼리는 용량이 큰 폴더부터. 막대는 가장 큰 맨 위 폴더에 견준 용량(제곱근).
+// 줄마다 그 아래 전체의 용량과 파일 수(작게). 오른쪽 클릭은 폴더 메뉴(잠그기, 차단 폴더로).
 // 이름을 누르면 그 폴더(하위 포함)의 파일이 가운데에 나오고 펼쳐진다. ▸/▾는 펼치기·접기만 한다.
 // 가운데에서 파일을 고르면 그 폴더까지 펼치고, 폴더 아래에 고른 파일 한 줄을 붙인다(누르면 탐색기에서 연다).
-const byCount = (list) => [...list].sort((a, b) => b.files - a.files);
+const bySize = (list) => [...list].sort((a, b) => b.size - a.size || b.files - a.files);
+const amounts = (bytes, files) => [el("span", {textContent: size(bytes)}), el("small", {textContent: files.toLocaleString() + "개"})];
 
 function folderRow(folder, depth, biggest, top) {
   const key = lower(folder.path);
@@ -276,9 +278,10 @@ function folderRow(folder, depth, biggest, top) {
   name.insertAdjacentHTML("beforeend", FOLDER_ICON);
   name.append(el("span", {textContent: folder.name, style: top ? "font-weight:600" : ""}));
   const bar = el("div", {className: "bar"}, el("i"));
-  bar.firstChild.style.width = Math.min(100, Math.sqrt(folder.files / biggest) * 100).toFixed(1) + "%";
-  const row = el("div", {className: "fl", title: folder.path}, name, el("div", {className: "m"}, bar, el("span", {textContent: folder.files.toLocaleString()})));
+  bar.firstChild.style.width = Math.min(100, Math.sqrt(folder.size / biggest) * 100).toFixed(1) + "%";
+  const row = el("div", {className: "fl", title: folder.path}, name, el("div", {className: "m"}, bar, ...amounts(folder.size, folder.files)));
   row.dataset.path = folder.path;
+  if (top) row.dataset.top = "1";
   caret.addEventListener("click", (e) => {
     e.stopPropagation();
     if (folder.has_children) toggleFolder(folder, !open);
@@ -304,15 +307,16 @@ async function toggleFolder(folder, open) {
 
 async function drawTree(reload = true) {
   if (reload) children.clear();
-  const places = byCount(state.places);
-  const biggest = Math.max(1, ...places.map((p) => p.files));
+  const places = bySize(state.places);
+  const biggest = Math.max(1, ...places.map((p) => p.size));
+  const total = places.reduce((sum, p) => sum + p.size, 0);  // 색인한 맨 위 폴더끼리는 겹치지 않는다.
   const all = el("div", {className: "fl"}, el("div", {className: "nm"}, el("span", {className: "c"}), el("span", {textContent: "모든 파일", style: "font-weight:600"})),
-    el("div", {className: "m"}, el("div"), el("span", {textContent: state.counts.all.toLocaleString()})));
+    el("div", {className: "m"}, el("div", {style: "flex:1"}), ...amounts(total, state.counts.all)));
   all.dataset.all = "1";
   all.addEventListener("click", () => openScope({all: true}));
   const list = [all];
   const add = async (folders, depth, top) => {
-    for (const folder of byCount(folders)) {
+    for (const folder of bySize(folders)) {
       list.push(folderRow(folder, depth, biggest, top));
       const key = lower(folder.path);
       if (pickedFolder && key === lower(pickedFolder)) list.push(pickedRow());
@@ -324,7 +328,7 @@ async function drawTree(reload = true) {
   };
   await add(places, 0, true);
   $("tree").replaceChildren(...list);
-  $("folders-sum").textContent = `항목이 많은 폴더부터 · 합계 ${size(places.reduce((sum, p) => sum + p.size, 0))}`;
+  $("folders-sum").textContent = `용량이 큰 폴더부터 · 합계 ${size(total)}`;
   markTree();
 }
 
@@ -778,10 +782,11 @@ $("act-rename").addEventListener("click", async (e) => {
 $("act-trash").addEventListener("click", () => trashPaths(selectedPaths()));
 
 // ---------- 대화상자: 입력(value가 있으면)이나 확인. 확인하면 입력값 또는 true, 취소하면 null ----------
-function ask({title, text = "", value}) {
+function ask({title, text = "", value, secret = false}) {
   $("dialog-title").textContent = title;
   $("dialog-text").textContent = text;
   const input = $("dialog-input");
+  input.type = secret ? "password" : "text";  // secret: 비밀번호(가려서 보인다)
   input.classList.toggle("hidden", value === undefined);
   $("dialog").classList.remove("hidden");
   if (value !== undefined) {
@@ -815,14 +820,17 @@ document.addEventListener("contextmenu", (e) => {
   e.preventDefault();
   if (!$("dialog").classList.contains("hidden")) return;
   const tr = page === "files" && e.target.closest("#files tbody tr");
-  if (tr) return showMenu(e, tr.row.path);
+  if (tr) return showMenu(e, tr.row.path, "file");
+  const folder = page === "files" && e.target.closest(".fl[data-path]");
+  if (folder && !folder.dataset.top) return showMenu(e, folder.dataset.path, "folder");
   hideMenu();
   goBack();
 });
 
-function showMenu(e, path) {
+function showMenu(e, path, kind) {
   menuPath = path;
   const menu = $("menu");
+  menu.querySelectorAll("[data-for]").forEach((b) => b.classList.toggle("hidden", b.dataset.for !== kind || (!!b.dataset.admin && !state.admin)));
   menu.classList.remove("hidden");
   menu.style.left = Math.min(e.clientX, innerWidth - menu.offsetWidth - 4) + "px";
   menu.style.top = Math.min(e.clientY, innerHeight - menu.offsetHeight - 4) + "px";
@@ -847,7 +855,94 @@ $("menu").addEventListener("click", (e) => {
   if (act === "open") openPath(menuPath, false);
   if (act === "reveal") openPath(menuPath, true);
   if (act === "exclude") changeExclude(menuPath, false);
+  if (act === "lock") lockFolder(menuPath);
+  if (act === "block") changeBlacklist(menuPath, false);
 });
+
+// ---------- 차단 폴더(관리자 권한일 때만 바꾼다)와 잠금 폴더 ----------
+async function changeBlacklist(path, remove) {
+  if (!remove && !await ask({title: "차단 폴더로 지정할까요?", text: `${path}\n\n이 폴더와 그 아래 전부를 색인하지 않고 어디서도 다루지 않아요. 지금까지의 색인 기록은 지워요(실제 파일은 그대로).`})) return;
+  try {
+    await api("/api/blacklist", {path, remove});
+    await loadState();
+    if (page === "files") await loadFiles();
+    toast(remove ? "차단을 풀었어요. 다음 [색인 갱신]부터 다시 들어와요." : "차단 폴더로 지정했어요.");
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+$("block-pick").addEventListener("click", async () => {
+  const {path} = await api("/api/pick", {}).catch((e) => (toast(e.message), {}));
+  if (path) await changeBlacklist(path, false);
+});
+
+$("block-find").addEventListener("click", async () => {
+  const {folders} = await api("/api/blacklist/candidates");
+  $("block-choices").replaceChildren(...(folders.length ? folders.map((path) => {
+    const button = el("button", {className: "chip", textContent: "+ " + path});
+    button.addEventListener("click", () => changeBlacklist(path, false));
+    return button;
+  }) : [el("span", {className: "hint", textContent: "찾은 게임 폴더가 없어요."})]));
+});
+
+const password = (title, text = "") => ask({title, text, value: "", secret: true});
+
+async function lockCall(url, data, done) {
+  try {
+    state.locks = (await api(url, data)).locks;
+    await loadState();
+    if (page === "files") await loadFiles();
+    if (done) toast(done);
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+async function lockFolder(path) {
+  if (!state.lock_password) return toast("먼저 설정에서 잠금 비밀번호를 정하세요.");
+  const pw = await password("폴더를 잠글까요?", `${path}\n\n비밀번호를 넣어야 열려요. 잠그면 목록과 검색에서 빠져요.`);
+  if (pw !== null) await lockCall("/api/lock", {path, password: pw}, "잠갔어요.");
+}
+
+$("lock-password").addEventListener("click", async () => {
+  let old;
+  if (state.lock_password) {
+    old = await password("지금 비밀번호");
+    if (old === null) return;
+  }
+  const next = await password("새 비밀번호", "4자 이상. 잊으면 README의 ‘비밀번호를 잊었을 때’ 명령으로 풀어요.");
+  if (next === null) return;
+  if (await password("새 비밀번호 확인") !== next) return toast("두 번 넣은 비밀번호가 달라요.");
+  try {
+    await api("/api/lock/password", {old, new: next});
+    await loadState();
+    toast("비밀번호를 정했어요.");
+  } catch (e) {
+    toast(e.message);
+  }
+});
+
+function lockRow(item) {
+  const row = el("div");
+  row.insertAdjacentHTML("beforeend", FOLDER_ICON);
+  row.append(el("span", {className: "mono", textContent: `${item.open ? "열림" : "잠김"}  ${item.path}`}));
+  const button = (text, act) => {
+    const b = el("button", {className: "btn s", textContent: text});
+    b.addEventListener("click", act);
+    row.append(b);
+  };
+  if (item.open) button("다시 잠그기", () => lockCall("/api/lock/close", {path: item.path}, "다시 잠갔어요."));
+  else button("열기", async () => {
+    const pw = await password("잠금 폴더 열기", item.path);
+    if (pw !== null) await lockCall("/api/lock/open", {path: item.path, password: pw});
+  });
+  button("잠금 풀기", async () => {
+    const pw = await password("잠금을 아주 풀까요?", `${item.path}\n\n다음 [색인 갱신]부터 목록에 다시 나와요.`);
+    if (pw !== null) await lockCall("/api/lock/release", {path: item.path, password: pw}, "잠금을 풀었어요.");
+  });
+  return row;
+}
 
 async function changeExclude(path, remove) {
   try {
@@ -1015,6 +1110,19 @@ function showSetup() {
   $("excludes").replaceChildren(...state.exclude.map((rule) =>
     listRow(`${rule.kind === "folder" ? "폴더" : "파일"}  ${rule.path}`, () => changeExclude(rule.path, true), rule.kind === "folder")));
   $("excludes-empty").classList.toggle("hidden", state.exclude.length > 0);
+  $("not-admin").classList.toggle("hidden", state.admin);
+  document.querySelectorAll(".admin-only").forEach((box) => box.classList.toggle("hidden", !state.admin));
+  $("blocked").replaceChildren(...state.blacklist.map((path) => {
+    if (state.admin) return listRow(path, () => changeBlacklist(path, true));
+    const row = el("div");
+    row.insertAdjacentHTML("beforeend", FOLDER_ICON);
+    row.append(el("span", {className: "mono", textContent: path}));
+    return row;
+  }));
+  $("blocked-empty").classList.toggle("hidden", state.blacklist.length > 0);
+  $("locks").replaceChildren(...state.locks.map(lockRow));
+  $("locks-empty").classList.toggle("hidden", state.locks.length > 0);
+  $("lock-password").textContent = state.lock_password ? "비밀번호 바꾸기" : "비밀번호 정하기";
 }
 
 $("days-save").addEventListener("click", async () => {

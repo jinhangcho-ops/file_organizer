@@ -116,6 +116,24 @@
             <div class="em" id="excludes-empty">예외로 지정한 파일이 없어요.<br>목록에서 파일을 오른쪽 클릭하고 “예외로 지정”을 고르세요.</div>
           </div>
         </div>
+        <div class="box">
+          <h3>차단 폴더</h3>
+          <div class="hint">색인하지 않고, 목록·검색·정리·옮기기·휴지통·보관 어디서도 다루지 않아요. 시스템·게임 폴더처럼 건드리면 안 되는 곳을 넣으세요. 추가하면 그 아래의 색인 기록을 바로 지워요(실제 파일은 그대로).</div>
+          <div class="note hidden" id="not-admin">관리자 권한으로 실행하면 바꿀 수 있어요. 지금은 보기만 돼요.</div>
+          <div class="list" id="blocked"></div>
+          <div class="em" id="blocked-empty">차단한 폴더가 없어요.</div>
+          <div class="admin-only">
+            <div class="row" style="margin-top:10px"><button class="btn s" id="block-pick">폴더 추가</button><button class="btn s" id="block-find">게임 폴더 찾기</button></div>
+            <div class="row" style="margin-top:8px" id="block-choices"></div>
+          </div>
+        </div>
+        <div class="box">
+          <h3>잠금 폴더</h3>
+          <div class="hint">비밀번호를 넣어야 열리는 폴더예요. 왼쪽 폴더 목록에서 폴더를 오른쪽 클릭하고 “잠그기”를 고르세요. 잠그면 Windows 권한으로 내 계정의 접근을 막고 숨겨요. 암호화는 아니어서 관리자나 권한 명령을 아는 사람은 풀 수 있어요(가리기 수준). 열어 둔 폴더는 프로그램을 닫을 때 다시 잠가요.</div>
+          <div class="list" id="locks"></div>
+          <div class="em" id="locks-empty">잠근 폴더가 없어요.</div>
+          <div class="row" style="margin-top:10px"><button class="btn s" id="lock-password">비밀번호 정하기</button></div>
+        </div>
       </div>
     </div>
 
@@ -172,9 +190,11 @@
 <div class="grip ne" data-edge="ne"></div><div class="grip nw" data-edge="nw"></div><div class="grip se" data-edge="se"></div><div class="grip sw" data-edge="sw"></div>
 
 <div id="menu" class="menu hidden">
-  <button data-act="open">열기</button>
-  <button data-act="reveal">폴더 열기</button>
-  <button data-act="exclude">예외로 지정</button>
+  <button data-act="open" data-for="file">열기</button>
+  <button data-act="reveal" data-for="file">폴더 열기</button>
+  <button data-act="exclude" data-for="file">예외로 지정</button>
+  <button data-act="lock" data-for="folder">잠그기</button>
+  <button data-act="block" data-for="folder" data-admin="1">차단 폴더로</button>
 </div>
 
 <div id="dialog" class="dialog hidden">
