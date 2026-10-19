@@ -21,6 +21,8 @@ import tree
 app = Flask(__name__, static_folder="static")
 KEY = secrets.token_urlsafe(32)  # 실행할 때마다 새로 만든다. desktop.py가 창의 첫 주소에 넣는다.
 ask_folder = None  # 폴더 고르는 대화상자(→ 경로 또는 None). desktop.py가 채운다.
+window_control = None  # 제목 줄 없는 창의 버튼·크기 조절(동작, 값 → 답). desktop.py가 채운다.
+WINDOW_ACTIONS = {"minimize", "toggle", "close", "bounds", "place"}
 CSP = "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:"
 
 
@@ -156,6 +158,24 @@ def files():
 def chain():
     """파일(folder=1이면 그 폴더 자신)까지의 폴더들."""
     return jsonify(folders=tree.chain(request.args["path"], request.args.get("folder") == "1"))
+
+
+@app.get("/api/same")
+def same():
+    """상세에 보여 줄 내용이 같은 파일과 이름이 같은 파일."""
+    return jsonify(search.same(checked(request.args.get("path", ""))))
+
+
+@app.post("/api/window")
+def window():
+    """화면이 그린 제목 줄의 버튼(최소화·최대화·닫기)과 가장자리 크기 조절. bounds는 지금 창의 위치·크기, place는 위치·크기 바꾸기."""
+    data = body()
+    action = data.get("action")
+    if action not in WINDOW_ACTIONS:
+        raise ValueError(f"모르는 창 동작입니다: {action}")
+    if window_control is None:
+        raise ValueError("프로그램 창에서만 됩니다.")
+    return jsonify(window_control(action, data) or {})
 
 
 @app.get("/api/tree")

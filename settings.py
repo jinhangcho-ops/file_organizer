@@ -35,7 +35,7 @@ def defaults():
     known = drives.known_folders()
     # chip_counts: 종류 칩을 누른 횟수(많이 누른 칩을 왼쪽에 놓는다). archive_dest·cold_days: 오래된 파일 보관의 보관할 곳과 기간.
     return {"source": known["다운로드"], "dest": "", "roots": list(known.values()), "recent_days": 7, "stale_days": 90,
-            "chip_counts": {}, "archive_dest": "", "cold_days": 365}
+            "chip_counts": {}, "archive_dest": "", "cold_days": 365, "theme": "auto"}  # theme: auto(Windows 설정을 따름), light, dark
 
 
 def load():
@@ -64,6 +64,10 @@ def check(changes):
         elif name in ("recent_days", "stale_days", "cold_days"):
             if not isinstance(value, int) or isinstance(value, bool) or not DAYS[0] <= value <= DAYS[1]:
                 raise ValueError(f"기간은 {DAYS[0]}~{DAYS[1]}일 사이의 정수로 쓰세요.")
+            clean[name] = value
+        elif name == "theme":
+            if value not in ("auto", "light", "dark"):
+                raise ValueError(f"모르는 화면 색입니다: {value}")
             clean[name] = value
         elif name == "chip_counts":
             if not isinstance(value, dict) or any(k not in kinds.NAMES or not isinstance(n, int) or n < 0 for k, n in value.items()):

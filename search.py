@@ -164,6 +164,27 @@ def place(path, places):
     return next((name for prefix, name in places if key.startswith(prefix)), "")
 
 
+SAME_LIMIT = 50  # 상세에 보여 줄 같은 파일의 최대 수
+
+
+def same(path):
+    """상세의 '내용이 같은 파일'(지문이 같음)과 '이름이 같은 파일'(대소문자 무시, 내용은 다를 수 있음). 각각 [{"path", "name", "size", "place"}]."""
+    key = exclude.key(path)
+    db = index.connect()
+    try:
+        row = db.execute("select name, hash from files where key = ?", (key,)).fetchone()
+        if row is None:
+            return {"content": [], "name": []}
+        found = {}
+        query = f"select path, name, size, modified from files where {{}} and key <> ? order by lower(path) limit {SAME_LIMIT}"
+        found["content"] = db.execute(query.format("hash = ?"), (row["hash"], key)).fetchall() if row["hash"] else []
+        found["name"] = db.execute(query.format("lower(name) = lower(?)"), (row["name"], key)).fetchall()
+        places = place_names(db)
+    finally:
+        db.close()
+    return {k: [dict(r) | {"place": place(r["path"], places)} for r in rows] for k, rows in found.items()}
+
+
 def counts():
     """사이드바의 숫자: 전체, 모아 보기마다의 파일 수."""
     config = settings.load()

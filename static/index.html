@@ -6,193 +6,192 @@
 <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-<nav class="side">
-  <h1>파일 정리</h1>
-  <p class="side-label">폴더</p>
-  <ul id="tree" class="tree"></ul>
-  <div class="side-foot">
-    <div id="trash-zone" class="trash-zone" title="파일이나 폴더를 여기에 끌어 놓으면 확인한 뒤 휴지통으로 보냅니다">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg>
-      <span>여기에 끌어 놓으면 휴지통으로</span>
+<div class="win">
+  <div class="titlebar pywebview-drag-region" id="titlebar">
+    <b class="pywebview-drag-region">파일 정리</b>
+    <div class="wc">
+      <button id="theme" title="화면 색 바꾸기"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button>
+      <button id="w-min" title="최소화">—</button>
+      <button id="w-max" title="최대화">☐</button>
+      <button id="w-close" class="x" title="닫기">✕</button>
     </div>
-    <ul class="side-list">
-      <li><button data-page="organize"><span>다운로드 정리하기</span></button></li>
-      <li><button data-page="archive"><span>오래된 파일 보관</span></button></li>
-      <li><button data-page="setup"><span>설정</span></button></li>
-    </ul>
-    <p class="side-status"><span id="index-status"></span> <button data-stop class="link hidden">멈추기</button></p>
   </div>
-</nav>
 
-<main>
-  <section id="page-files" class="page">
-    <h2 id="title">모든 파일</h2>
-    <p id="summary" class="sub"></p>
-    <div class="search-row">
-      <label class="search">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
-        <input id="name" placeholder="파일 이름이나 폴더로 찾기" autocomplete="off">
-      </label>
-      <button id="more-toggle" class="ghost">조건</button>
+  <div class="topbar" id="topbar">
+    <button class="btn ib hidden" id="back" title="파일 목록으로 (마우스 오른쪽 버튼)">←</button>
+    <b id="ttl" class="ttl">파일 정리</b>
+    <div class="search files-only" id="srch">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      <input type="text" id="name" placeholder="파일 이름이나 폴더로 찾기" autocomplete="off">
     </div>
-    <form id="more" class="more hidden">
-      <label>파일 안의 글자<input name="text" placeholder="txt·pdf·docx·xlsx·pptx 등의 내용"></label>
-      <label>수정한 날짜 (부터)<input name="date_from" type="date"></label>
-      <label>수정한 날짜 (까지)<input name="date_to" type="date"></label>
-      <label>크기 최소 (MB)<input name="size_min" type="number" min="0" step="any"></label>
-      <label>크기 최대 (MB)<input name="size_max" type="number" min="0" step="any"></label>
-      <div class="more-buttons"><button type="button" id="more-clear" class="ghost">지우기</button><button class="dark">적용</button></div>
-    </form>
-    <div id="filters" class="chips filters"></div>
-    <div id="chips" class="chips"></div>
-    <div id="exts" class="chips exts hidden"></div>
-    <p id="list-error" class="error hidden"></p>
-    <div class="card table-card">
-      <table id="files">
-        <thead><tr>
-          <th data-sort="name">이름</th><th data-sort="kind" class="col-kind">종류</th>
-          <th data-sort="size" class="col-size">크기</th><th data-sort="date" class="col-date">날짜</th>
-        </tr></thead>
-        <tbody></tbody>
-      </table>
-      <p id="empty" class="empty hidden"></p>
-    </div>
-  </section>
+    <button class="btn files-only" id="more-toggle">조건</button>
+    <div class="grow"></div>
+    <div class="chips one-line files-only" id="filters"></div>
+    <button class="btn ib files-only" data-page="organize" title="다운로드 정리하기">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M4 19h16"/></svg>
+    </button>
+    <button class="btn ib files-only" data-page="archive" title="오래된 파일 보관">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h18v4H3zM5 8v12h14V8M10 12h4"/></svg>
+    </button>
+    <button class="btn ib files-only" id="trash" title="파일이나 폴더를 끌어다 놓으면 확인한 뒤 휴지통으로 보내요">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v5M14 11v5"/></svg>
+    </button>
+    <button class="btn ib files-only" data-page="setup" title="설정">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg>
+    </button>
+  </div>
 
-  <section id="page-organize" class="page hidden">
-    <h2>다운로드 정리하기</h2>
-    <p class="sub">고른 곳 바로 아래의 파일만 종류별 폴더로 옮깁니다. 하위 폴더와 그 안의 파일은 그대로 둡니다.</p>
-    <div class="card form-card">
-      <div class="field">
-        <p class="field-label">정리할 곳</p>
-        <div id="source-choices" class="chips"></div>
-        <div class="path-line"><span id="source" class="path"></span><button data-pick="source" class="ghost small">폴더 고르기</button></div>
-      </div>
-      <div class="field">
-        <p class="field-label">놓을 곳</p>
-        <div class="path-line"><span id="dest" class="path"></span><button data-pick="dest" class="ghost small">폴더 고르기</button></div>
-        <p class="hint">이 폴더 안에 문서, 발표 자료, 표, PDF, 사진, 이미지 … 폴더를 만들어 옮깁니다. 같은 이름이 있으면 '이름 (2)'로 저장합니다.</p>
-      </div>
-      <div class="button-row">
-        <button id="preview" class="ghost">미리보기</button>
-        <button id="run" class="dark" disabled>정리</button>
-        <button id="undo" class="ghost" disabled>마지막 정리 되돌리기</button>
-      </div>
-      <p id="organize-message" class="message"></p>
-    </div>
-    <div id="preview-card" class="card table-card hidden">
-      <table id="preview-table">
-        <thead><tr><th>파일</th><th class="col-kind">종류</th><th>옮길 곳</th></tr></thead>
-        <tbody></tbody>
-      </table>
-    </div>
-  </section>
+  <form id="more" class="more hidden">
+    <label>파일 안의 글자<input type="text" name="text" placeholder="txt·pdf·docx·xlsx·pptx 등의 내용"></label>
+    <label>수정한 날짜 (부터)<input name="date_from" type="date"></label>
+    <label>수정한 날짜 (까지)<input name="date_to" type="date"></label>
+    <label>크기 최소 (MB)<input name="size_min" type="number" min="0" step="any"></label>
+    <label>크기 최대 (MB)<input name="size_max" type="number" min="0" step="any"></label>
+    <div class="more-buttons"><button type="button" id="more-clear" class="btn">지우기</button><button class="btn p">적용</button></div>
+  </form>
 
-  <section id="page-archive" class="page hidden">
-    <h2>오래된 파일 보관</h2>
-    <p class="sub">오래 열지도 수정하지도 않은 파일을 보관할 곳의 zip 하나로 묶고, zip을 확인한 뒤 원본은 휴지통으로 보냅니다.</p>
-    <div class="card form-card">
-      <div class="field">
-        <p class="field-label">보관할 곳</p>
-        <div class="path-line"><span id="archive-dest" class="path"></span><button data-pick="archive" class="ghost small">폴더 고르기</button></div>
-        <p class="hint">예: D:\Archive_ColdStorage. zip 안에는 원래 경로(C\Users\…)가 그대로 들어갑니다.</p>
-      </div>
-      <div class="field">
-        <p class="field-label">기간</p>
-        <label class="days"><span><input id="cold_days" type="number" min="1" max="3650"> 일 넘게 안 본 파일</span></label>
-        <p class="hint">설치파일(exe 등), 예외로 지정한 곳, 휴지통으로 보낼 수 없는 곳(네트워크·이동식 디스크)의 파일은 넣지 않습니다. 압축·동영상·음악·사진처럼 이미 압축된 파일은 다시 압축하지 않고 그대로 넣습니다.</p>
-      </div>
-      <div class="button-row">
-        <button id="archive-preview" class="ghost">미리보기</button>
-        <button id="archive-run" class="dark" disabled>보관 시작</button>
-      </div>
-      <p id="archive-message" class="message"></p>
-    </div>
-    <div id="archive-card" class="card table-card hidden">
-      <table id="archive-table">
-        <thead><tr><th>종류</th><th class="col-size">개수</th><th class="col-size">용량</th></tr></thead>
-        <tbody></tbody>
-      </table>
-    </div>
-  </section>
-
-  <section id="page-setup" class="page hidden">
-    <h2>설정</h2>
-    <p class="sub">목록과 검색은 색인을 읽습니다. 폴더를 바꾸거나 파일이 바뀌면 [색인 갱신]을 누르세요.</p>
-    <div id="views" class="view-cards"></div>
-    <div id="access-off" class="notice hidden">
-      이 PC는 파일을 연 시각을 기록하지 않습니다. 그래서 '안 본 파일'은 수정한 시각으로 판단합니다.
-      기록을 켜려면 관리자 권한 PowerShell에서 <code>fsutil behavior set disablelastaccess 0</code>을 실행한 뒤 다시 시작하세요.
-    </div>
-    <div class="card form-card">
-      <div class="field">
-        <p class="field-label">색인할 폴더</p>
-        <ul id="roots" class="rows"></ul>
-        <div id="root-choices" class="chips"></div>
-        <div class="button-row"><button data-pick="root" class="ghost small">폴더 추가</button></div>
-        <p class="hint">놓을 곳은 따로 넣지 않아도 색인합니다. Windows, Program Files, AppData, 숨김·시스템 폴더는 들어가지 않습니다.</p>
-      </div>
-      <div class="button-row"><button id="reindex" class="dark">색인 갱신</button><button data-stop class="ghost hidden">멈추기</button><span id="index-progress" class="hint"></span></div>
-    </div>
-    <div class="card form-card">
-      <div class="field">
-        <p class="field-label">기간</p>
-        <div class="days">
-          <label>최근 다운로드·최근 수정: 최근 <input id="recent_days" type="number" min="1" max="3650"> 일</label>
-          <label>안 본 파일: <input id="stale_days" type="number" min="1" max="3650"> 일 넘게</label>
-          <button id="days-save" class="ghost small">저장</button>
+  <div class="body">
+    <div class="split page" id="page-files">
+      <section class="pane-l">
+        <div class="hd"><h2>폴더</h2><p id="folders-sum"></p></div>
+        <div class="folders" id="tree"></div>
+        <div class="side-status"><span id="index-status"></span> <button data-stop class="link hidden">멈추기</button></div>
+      </section>
+      <section class="pane-m">
+        <div class="hd"><h2 id="title">모든 파일</h2><p id="summary"></p></div>
+        <div class="bar2"><div id="chips" class="chips one-line"></div></div>
+        <div class="bar2 sub hidden" id="exts-bar"><div id="exts" class="chips one-line"></div></div>
+        <p id="list-error" class="error hidden"></p>
+        <div class="tw" id="tw">
+          <table id="files">
+            <thead><tr>
+              <th class="ck"><input type="checkbox" id="check-all" title="모두 고르기"></th>
+              <th data-sort="name">이름</th><th data-sort="size" class="n">크기</th><th data-sort="date">날짜</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+          <p id="empty" class="empty hidden"></p>
         </div>
-        <p id="days-message" class="message"></p>
-      </div>
+        <div class="sbar" id="sbar"></div>
+      </section>
+      <aside class="pane-d hidden" id="detail">
+        <div class="sec"><p class="big" id="detail-name"></p><div id="detail-pills"></div><p id="detail-multi" class="multi hidden"></p></div>
+        <div class="sec"><div class="kv" id="detail-rows"></div></div>
+        <div class="sec"><h3 id="same-content-title">내용이 같은 파일</h3><div id="same-content"></div></div>
+        <div class="sec"><h3 id="same-name-title">이름이 같은 파일</h3><div id="same-name"></div></div>
+        <div class="acts">
+          <button class="btn p" id="act-move">다른 폴더로 옮기기</button>
+          <button class="btn" id="act-rename">이름 바꾸기</button>
+          <button class="btn d" id="act-trash">휴지통으로 보내기</button>
+          <p id="detail-message" class="message"></p>
+        </div>
+      </aside>
     </div>
-    <div class="card form-card">
-      <div class="field">
-        <p class="field-label">예외 (위 네 목록에서 빼기)</p>
-        <ul id="excludes" class="rows"></ul>
-        <p id="excludes-empty" class="hint">예외가 없습니다. 목록에서 파일을 오른쪽 클릭하고 [예외로]를 고르세요.</p>
-      </div>
-    </div>
-  </section>
-</main>
 
-<aside id="detail" class="detail">
-  <p id="detail-empty" class="hint">파일을 고르면 여기에 자세한 내용이 나옵니다.</p>
-  <div id="detail-body" class="hidden">
-    <div id="detail-badge" class="badge big"></div>
-    <h3 id="detail-name"></h3>
-    <p id="detail-multi" class="multi hidden"></p>
-    <dl id="detail-rows" class="facts"></dl>
-    <p class="field-label">경로</p>
-    <ol id="detail-path" class="crumbs"></ol>
-    <div class="actions">
-      <button id="act-move" class="outline">다른 폴더로 옮기기</button>
-      <button id="act-rename" class="ghost">이름 바꾸기</button>
-      <button id="act-trash" class="ghost danger">휴지통으로 보내기</button>
+    <div class="scroll hidden page" id="page-setup">
+      <div class="sgrid">
+        <div class="stats" id="views"></div>
+        <div class="note hidden" id="access-off">이 PC는 파일을 연 시각을 기록하지 않아요. 그래서 “안 본 파일”은 수정한 시각으로 판단해요. 기록을 켜려면 관리자 권한 PowerShell에서 <code>fsutil behavior set disablelastaccess 0</code>을 실행한 뒤 다시 시작하세요.</div>
+        <div class="box">
+          <h3>색인할 폴더</h3>
+          <div class="hint">놓을 곳은 따로 넣지 않아도 색인해요. Windows, Program Files, AppData, 숨김·시스템 폴더는 들어가지 않아요.</div>
+          <div class="list" id="roots"></div>
+          <div class="row" style="margin-top:10px"><span id="root-choices" class="row"></span><button class="btn s" data-pick="root">폴더 추가</button></div>
+          <div class="row" style="margin-top:12px"><button class="btn p" id="reindex">색인 갱신</button><button class="btn hidden" data-stop>멈추기</button></div>
+          <p id="index-progress" class="hint progress"></p>
+        </div>
+        <div class="col">
+          <div class="box">
+            <h3>기간</h3>
+            <div class="hint">목록 위쪽 버튼이 이 기준으로 파일을 골라요.</div>
+            <div class="row" style="margin-bottom:8px">최근 다운로드·최근 수정은 최근 <input type="number" id="recent_days" min="1" max="3650"> 일</div>
+            <div class="row" style="margin-bottom:12px">안 본 파일은 <input type="number" id="stale_days" min="1" max="3650"> 일 넘게</div>
+            <button class="btn p" id="days-save">저장</button>
+            <p id="days-message" class="message"></p>
+          </div>
+          <div class="box">
+            <h3>예외</h3>
+            <div class="hint">여기 추가한 파일은 위 네 목록에서 빠져요.</div>
+            <div class="list" id="excludes"></div>
+            <div class="em" id="excludes-empty">예외로 지정한 파일이 없어요.<br>목록에서 파일을 오른쪽 클릭하고 “예외로 지정”을 고르세요.</div>
+          </div>
+        </div>
+      </div>
     </div>
-    <p id="detail-message" class="message"></p>
+
+    <div class="scroll hidden page" id="page-organize">
+      <div class="sgrid">
+        <div class="box full">
+          <h3>다운로드 정리하기</h3>
+          <div class="hint">고른 곳 바로 아래의 파일만 종류별 폴더로 옮겨요. 하위 폴더와 그 안의 파일은 그대로 둬요.</div>
+          <p class="label">정리할 곳</p>
+          <div class="row" id="source-choices"></div>
+          <div class="row path-line"><span id="source" class="mono"></span><button class="btn s" data-pick="source">폴더 고르기</button></div>
+          <p class="label">놓을 곳</p>
+          <div class="row path-line"><span id="dest" class="mono"></span><button class="btn s" data-pick="dest">폴더 고르기</button></div>
+          <div class="hint">이 폴더 안에 문서, 발표 자료, 표, PDF, 사진, 이미지 … 폴더를 만들어 옮겨요. 같은 이름이 있으면 ‘이름 (2)’로 저장해요.</div>
+          <div class="row">
+            <button class="btn" id="preview">미리보기</button>
+            <button class="btn p" id="run" disabled>정리</button>
+            <button class="btn" id="undo" disabled>마지막 정리 되돌리기</button>
+          </div>
+          <p id="organize-message" class="message"></p>
+        </div>
+        <div class="box full flush hidden" id="preview-card">
+          <table id="preview-table"><thead><tr><th>파일</th><th>종류</th><th>옮길 곳</th></tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+    </div>
+
+    <div class="scroll hidden page" id="page-archive">
+      <div class="sgrid">
+        <div class="box full">
+          <h3>오래된 파일 보관</h3>
+          <div class="hint">오래 열지도 수정하지도 않은 파일을 보관할 곳의 zip 하나로 묶고, zip을 확인한 뒤 원본은 휴지통으로 보내요.</div>
+          <p class="label">보관할 곳</p>
+          <div class="row path-line"><span id="archive-dest" class="mono"></span><button class="btn s" data-pick="archive">폴더 고르기</button></div>
+          <div class="hint">예: D:\Archive_ColdStorage. zip 안에는 원래 경로(C\Users\…)가 그대로 들어가요.</div>
+          <p class="label">기간</p>
+          <div class="row"><input type="number" id="cold_days" min="1" max="3650"> 일 넘게 안 본 파일</div>
+          <div class="hint">설치파일(exe 등), 예외로 지정한 곳, 휴지통으로 보낼 수 없는 곳(네트워크·이동식 디스크)의 파일은 넣지 않아요. 압축·동영상·음악·사진처럼 이미 압축된 파일은 다시 압축하지 않고 그대로 넣어요.</div>
+          <div class="row">
+            <button class="btn" id="archive-preview">미리보기</button>
+            <button class="btn p" id="archive-run" disabled>보관 시작</button>
+          </div>
+          <p id="archive-message" class="message"></p>
+        </div>
+        <div class="box full flush hidden" id="archive-card">
+          <table id="archive-table"><thead><tr><th>종류</th><th class="n">개수</th><th class="n">용량</th></tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+    </div>
   </div>
-</aside>
+</div>
+
+<div class="grip n" data-edge="n"></div><div class="grip s" data-edge="s"></div><div class="grip e" data-edge="e"></div><div class="grip w" data-edge="w"></div>
+<div class="grip ne" data-edge="ne"></div><div class="grip nw" data-edge="nw"></div><div class="grip se" data-edge="se"></div><div class="grip sw" data-edge="sw"></div>
 
 <div id="menu" class="menu hidden">
   <button data-act="open">열기</button>
   <button data-act="reveal">폴더 열기</button>
-  <button data-act="exclude">예외로</button>
+  <button data-act="exclude">예외로 지정</button>
 </div>
 
 <div id="dialog" class="dialog hidden">
   <form id="dialog-form" class="dialog-box">
     <p id="dialog-title" class="dialog-title"></p>
     <p id="dialog-text" class="hint"></p>
-    <input id="dialog-input" class="hidden" autocomplete="off">
-    <div class="button-row end">
-      <button type="button" id="dialog-cancel" class="ghost">취소</button>
-      <button id="dialog-ok" class="dark">확인</button>
+    <input type="text" id="dialog-input" class="hidden" autocomplete="off">
+    <div class="row end">
+      <button type="button" id="dialog-cancel" class="btn">취소</button>
+      <button id="dialog-ok" class="btn p">확인</button>
     </div>
   </form>
 </div>
-<div id="job" class="job hidden"><span id="job-text"></span><div class="bar"><div id="job-bar"></div></div></div>
-<div id="drag-badge" class="drag-badge"></div>
+<div id="job" class="job hidden"><span id="job-text"></span><div class="bar"><i id="job-bar"></i></div></div>
+<div id="drag-badge" class="chip on drag-badge"></div>
 <div id="marquee" class="marquee hidden"></div>
+<div id="toast" class="toast"></div>
 <script src="/static/app.js"></script>
 </body>
 </html>
