@@ -1,36 +1,36 @@
-"""상세 패널의 동작: 다른 폴더로 옮기기, 이름 바꾸기, 휴지통으로 보내기. 셋 다 덮어쓰지 않고, 끝나면 색인에 반영한다."""
-import ctypes
+"""파일·폴더 다루기: 옮기기(여러 개, 끌어 놓기·폴더 고르기), 이름 바꾸기, 휴지통으로 보내기. 덮어쓰지 않고, 끝나면 색인에 반영한다."""
 import os
-from ctypes import wintypes
 
 import exclude
 import index
 import organize
+import trash
 
 BAD = set('\\/:*?"<>|')  # 파일 이름에 쓸 수 없는 글자
-FO_DELETE = 3
-FOF_SILENT, FOF_NOCONFIRMATION, FOF_ALLOWUNDO, FOF_WANTNUKEWARNING = 0x4, 0x10, 0x40, 0x4000
-shell_delete = ctypes.windll.shell32.SHFileOperationW  # 검사는 이것을 바꿔 끼워 실제 휴지통에 넣지 않는다.
 
 
-class FileOp(ctypes.Structure):  # SHFILEOPSTRUCTW
-    _fields_ = [("hwnd", wintypes.HWND), ("wFunc", wintypes.UINT), ("pFrom", wintypes.LPCWSTR), ("pTo", wintypes.LPCWSTR),
-                ("fFlags", wintypes.WORD), ("fAnyOperationsAborted", wintypes.BOOL), ("hNameMappings", wintypes.LPVOID),
-                ("lpszProgressTitle", wintypes.LPCWSTR)]
-
-
-def move_to(path, folder):
-    """파일을 folder로 옮긴다. 같은 이름이 있으면 거부한다. 옮긴 경로를 돌려준다."""
+def move_many(paths, folder, progress=lambda *args: None):
+    """파일·폴더들을 folder로 옮긴다. 같은 이름이 있으면 덮어쓰지 않고 '이름 (2)'로. {"moved", "failed", "paths"(옮긴 뒤 경로)}"""
     if not os.path.isdir(folder):
         raise ValueError(f"없는 폴더입니다: {folder}")
-    target = os.path.join(folder, os.path.basename(path))
-    if exclude.key(target) == exclude.key(path):
-        raise ValueError("이미 그 폴더에 있습니다.")
-    if os.path.lexists(target):
-        raise ValueError(f"그 폴더에 같은 이름의 파일이 있습니다: {os.path.basename(path)}")
-    organize.move(path, target)
-    index.moved([(path, target)])
-    return target
+    into = exclude.key(folder)
+    done, failed = [], []
+    for n, path in enumerate(paths):
+        progress(n, len(paths), path)
+        try:
+            if exclude.key(os.path.dirname(path)) == into:
+                raise ValueError("이미 그 폴더에 있습니다.")
+            if os.path.isdir(path) and (into == exclude.key(path) or into.startswith(os.path.join(exclude.key(path), ""))):
+                raise ValueError("폴더를 그 안으로 옮길 수 없습니다.")
+            target = organize.free_name(folder, os.path.basename(path), set())
+            (organize.move_folder if os.path.isdir(path) else organize.move)(path, target)
+            done.append((path, target))
+        except (OSError, ValueError) as e:
+            failed.append({"from": path, "error": getattr(e, "strerror", None) or str(e)})
+    progress(len(paths), len(paths))
+    if done:
+        index.moved(done)
+    return {"moved": len(done), "failed": failed, "paths": [after for _, after in done]}
 
 
 def rename(path, name):
@@ -48,10 +48,15 @@ def rename(path, name):
     return target
 
 
-def trash(path):
-    """Windows 휴지통으로 보낸다. 휴지통이 없는 곳(네트워크 등)이라 영구 삭제가 될 때는 Windows가 경고하고 취소할 수 있다."""
-    operation = FileOp(wFunc=FO_DELETE, pFrom=path + "\0", fFlags=FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_WANTNUKEWARNING)
-    code = shell_delete(ctypes.byref(operation))
-    if code or operation.fAnyOperationsAborted or os.path.lexists(path):
-        raise ValueError("휴지통으로 보내지 못했습니다." + (f" (오류 {code})" if code else ""))
-    index.removed(path)
+def trash_many(paths, progress=lambda *args: None):
+    """파일·폴더들을 휴지통으로 보낸다(trash.to_trash). 보낼 수 없는 것은 그대로 두고 까닭을 알린다."""
+    sent, failed = [], []
+    for n, path in enumerate(paths):
+        progress(n, len(paths), path)
+        ok, refused = trash.to_trash([path])
+        sent += ok
+        failed += [{"from": p, "error": reason} for p, reason in refused]
+    progress(len(paths), len(paths))
+    if sent:
+        index.removed(sent)
+    return {"trashed": len(sent), "failed": failed}

@@ -1,5 +1,6 @@
 """디스크 목록과 Windows의 알려진 폴더(다운로드·문서·바탕 화면) 위치, 연 시각 기록이 켜져 있는지."""
 import ctypes
+import os
 import string
 import uuid
 import winreg
@@ -53,6 +54,11 @@ def last_access_on():
     except OSError:
         return True  # 값이 없으면 Windows 기본(기록함)
     return not value & 1
+
+
+def drive_type(path):
+    """경로가 있는 디스크의 종류 번호(GetDriveTypeW: 2 이동식, 3 고정, 4 네트워크 …)."""
+    return ctypes.windll.kernel32.GetDriveTypeW(os.path.splitdrive(os.path.abspath(path))[0] + "\\")
 
 
 def same_drive(a, b):

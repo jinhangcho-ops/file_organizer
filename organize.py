@@ -4,6 +4,7 @@
 - 같은 디스크면 이름 바꾸기, 다른 디스크면 복사 → 크기 확인 → 원본 지우기.
 - 옮긴 기록(moves.json)으로 마지막 정리를 되돌린다."""
 import os
+import shutil
 
 import drives
 import exclude
@@ -66,10 +67,33 @@ def move(before, after):
     os.remove(before)
 
 
-def apply(moves):
+def move_folder(before, after):
+    """폴더를 통째로 옮긴다. 다른 디스크면 모든 파일을 복사해 크기를 확인한 뒤에야 원본 폴더를 지운다(복사가 실패하면 만든 사본만 치운다)."""
+    if drives.same_drive(before, after):
+        os.rename(before, after)
+        return
+    copied = []
+    try:
+        for folder, _, names in os.walk(before):
+            target = os.path.join(after, os.path.relpath(folder, before))
+            os.makedirs(target, exist_ok=True)
+            for name in names:
+                source = os.path.join(folder, name)
+                filetime.copy(source, os.path.join(target, name))
+                copied.append((source, os.path.join(target, name)))
+        if any(os.stat(a).st_size != os.stat(b).st_size for a, b in copied):
+            raise OSError("복사한 파일의 크기가 원본과 다릅니다.")
+    except OSError:
+        shutil.rmtree(after, ignore_errors=True)  # 이번에 만든 사본만 치운다. 원본은 그대로.
+        raise
+    shutil.rmtree(before)  # 옮기기: 사본을 확인했으므로 원본 자리를 비운다(탐색기의 '이동'과 같다).
+
+
+def apply(moves, progress=lambda *args: None):
     """moves의 (전, 후)를 차례로 옮긴다. 옮긴 것과 실패한 것을 나눠 돌려주고 색인에 반영한다."""
     done, failed = [], []
-    for before, after in moves:
+    for n, (before, after) in enumerate(moves):
+        progress(n, len(moves), before)
         try:
             if os.path.lexists(after):
                 raise OSError("같은 이름의 파일이 이미 있습니다.")
@@ -77,14 +101,15 @@ def apply(moves):
             done.append((before, after))
         except OSError as e:
             failed.append({"from": before, "to": after, "error": e.strerror or str(e)})
+    progress(len(moves), len(moves))
     if done:
         index.moved(done)
     return done, failed
 
 
-def run(source, dest):
+def run(source, dest, progress=lambda *args: None):
     """미리보기와 같은 목록을 서버에서 다시 만들어 옮긴다(화면이 보낸 경로를 그대로 믿지 않는다)."""
-    done, failed = apply([(item["from"], item["to"]) for item in plan(source, dest)])
+    done, failed = apply([(item["from"], item["to"]) for item in plan(source, dest)], progress)
     settings.write(LOG, [{"from": before, "to": after} for before, after in done])
     return {"moved": len(done), "failed": failed}
 
@@ -93,14 +118,14 @@ def last():
     return settings.read(LOG, [])
 
 
-def undo():
+def undo(progress=lambda *args: None):
     """마지막 정리를 되돌린다. 그사이 지웠거나 원래 자리에 같은 이름이 생긴 파일은 그대로 두고 알린다."""
     moves = last()
     if not moves:
         raise ValueError("되돌릴 정리가 없습니다.")
     back = [(item["to"], item["from"]) for item in moves if os.path.exists(item["to"])]
     missing = [{"from": item["to"], "to": item["from"], "error": "옮긴 파일이 없습니다."} for item in moves if not os.path.exists(item["to"])]
-    done, failed = apply(back)
+    done, failed = apply(back, progress)
     left = {after for _, after in back} - {after for _, after in done}  # 실패한 것만 기록에 남겨 다시 되돌릴 수 있게 한다.
     settings.write(LOG, [item for item in moves if item["from"] in left])
     return {"moved": len(done), "failed": missing + failed}

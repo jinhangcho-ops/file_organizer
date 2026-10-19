@@ -301,24 +301,50 @@ def under_index(db, folder):
         path = up
 
 
+def add_chain(db, folder, known):
+    """색인한 폴더 known부터 folder까지 색인에 없는 폴더를 만든다."""
+    chain = []
+    path = folder
+    while exclude.key(path) != exclude.key(known):
+        chain.append(path)
+        path = os.path.dirname(path)
+    for path in reversed(chain):
+        add_folder(db, path, os.path.dirname(path))
+
+
+def prefix(path):
+    return os.path.join(exclude.key(path), "")
+
+
+def move_folder_rows(db, before, after):
+    """폴더 before(와 그 아래 전부)를 after로 옮긴 것을 반영한다. 내용·지문은 그대로 두고 경로만 바꾼다."""
+    old = prefix(before)
+    folders = db.execute("select key, path from folders where key = ? or substr(key, 1, ?) = ?", (exclude.key(before), len(old), old)).fetchall()
+    for row in folders:
+        path = after + row["path"][len(before):]
+        db.execute("update folders set key = ?, path = ?, parent = ?, name = ? where key = ?",
+                   (exclude.key(path), path, exclude.key(os.path.dirname(path)), os.path.basename(path), row["key"]))
+    for row in db.execute("select id, path from files where substr(key, 1, ?) = ?", (len(old), old)).fetchall():
+        path = after + row["path"][len(before):]
+        key = exclude.key(path)
+        db.execute("update files set path = ?, key = ?, folder = ? where id = ?", (path, key, os.path.dirname(key), row["id"]))
+
+
 def moved(pairs):
-    """정리·되돌리기·옮기기·이름 바꾸기로 옮긴 (전, 후) 경로를 색인에 반영한다. 옮겨 간 곳이 색인 밖이면 색인에서 뺀다."""
+    """정리·되돌리기·옮기기·이름 바꾸기로 옮긴 (전, 후) 경로(파일 또는 폴더)를 색인에 반영한다. 옮겨 간 곳이 색인 밖이면 색인에서 뺀다."""
     db = connect()
     try:
         for before, after in pairs:
             folder = os.path.dirname(after)
             known = under_index(db, folder)
-            row = db.execute("select id from files where key = ?", (exclude.key(before),)).fetchone()
             if known is None:
                 forget(db, before)
                 continue
-            chain = []  # 색인한 폴더부터 새 폴더까지 없는 폴더를 만든다.
-            path = folder
-            while exclude.key(path) != exclude.key(known):
-                chain.append(path)
-                path = os.path.dirname(path)
-            for path in reversed(chain):
-                add_folder(db, path, os.path.dirname(path))
+            add_chain(db, folder, known)
+            if os.path.isdir(after):
+                move_folder_rows(db, before, after)
+                continue
+            row = db.execute("select id from files where key = ?", (exclude.key(before),)).fetchone()
             if row:  # 내용은 그대로 두고 위치·이름만 바꾼다.
                 key = exclude.key(after)
                 ext = os.path.splitext(after)[1].lower()
@@ -336,17 +362,30 @@ def moved(pairs):
 
 
 def forget(db, path):
-    db.execute("delete from body where rowid = (select id from files where key = ?)", (exclude.key(path),))
-    db.execute("delete from files where key = ?", (exclude.key(path),))
+    """파일 path, 또는 폴더 path와 그 아래 전부를 색인에서 뺀다."""
+    key, old = exclude.key(path), prefix(path)
+    db.execute("delete from body where rowid in (select id from files where key = ? or substr(key, 1, ?) = ?)", (key, len(old), old))
+    db.execute("delete from files where key = ? or substr(key, 1, ?) = ?", (key, len(old), old))
+    db.execute("delete from folders where key = ? or substr(key, 1, ?) = ?", (key, len(old), old))
 
 
-def removed(path):
-    """휴지통으로 보낸 파일을 색인에서 뺀다."""
+def removed(paths):
+    """휴지통으로 보낸 파일·폴더들을 색인에서 뺀다."""
     db = connect()
     try:
-        forget(db, path)
+        for path in paths:
+            forget(db, path)
         totals(db)
         db.commit()
+    finally:
+        db.close()
+
+
+def is_root(path):
+    """색인한 맨 위 폴더인지(옮기거나 휴지통으로 보내지 않는다)."""
+    db = connect()
+    try:
+        return bool(db.execute("select 1 from folders where key = ? and parent is null", (exclude.key(path),)).fetchone())
     finally:
         db.close()
 

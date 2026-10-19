@@ -1,6 +1,7 @@
 """확장자 → 종류. 정리할 때의 폴더 이름이자 목록의 종류 칩. 표에 없는 확장자는 OTHER."""
 KINDS = {
-    "문서": ".doc .docx .hwp .hwpx .txt .md .rtf .odt .ppt .pptx .odp .json .xml .html .htm",
+    "문서": ".doc .docx .hwp .hwpx .txt .md .rtf .odt .json .xml .html .htm",
+    "발표 자료": ".ppt .pptx .pps .ppsx .key .odp",
     "표": ".xls .xlsx .xlsm .csv .tsv .ods",
     "PDF": ".pdf",
     "사진": ".jpg .jpeg .heic .heif .raw .cr2 .cr3 .nef .arw .dng .orf .rw2",  # 카메라·휴대폰으로 찍은 것

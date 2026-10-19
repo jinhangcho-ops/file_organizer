@@ -53,6 +53,11 @@ code { font-family: Consolas, monospace; padding: 0 4px; border-radius: 4px; bac
 .tree .picked-file > .row { background: rgba(242, 201, 76, .16); font-size: 13px; }
 .tree .picked-file .name::before { content: "↳ "; color: var(--side-muted); }
 .side-foot { margin-top: auto; }
+.trash-zone { display: flex; align-items: center; gap: 8px; margin: 0 4px 12px; padding: 12px; border: 1.5px dashed var(--side-muted); border-radius: 10px;
+  color: var(--side-muted); font-size: 13px; transition: background .15s, border-color .15s, transform .15s; }
+.trash-zone svg { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.trash-zone.drop { background: rgba(240, 113, 103, .18); border-color: var(--danger); color: var(--side-text); transform: scale(1.03); }
+.tree .row.drop { background: rgba(242, 201, 76, .28); outline: 1.5px solid var(--count); }
 .side-foot .side-list { margin-bottom: 6px; }
 .side-status { color: var(--side-muted); font-size: 12px; margin: 0 10px; word-break: break-all; }
 .link { background: none; border: 0; padding: 0; color: var(--side-text); text-decoration: underline; font-size: 12px; }
@@ -77,6 +82,11 @@ main { overflow: auto; padding: 26px 32px 32px; }
 .more label:first-child { grid-column: 1 / -1; }
 .more-buttons { display: flex; gap: 8px; align-items: end; justify-content: end; }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+/* 목록의 칩 줄: 늘 한 줄. 넘치면 스크롤바 없이 휠·끌기로 좌우로 민다(app.js의 scroller). */
+.chips.one-line { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; cursor: grab; user-select: none; }
+.chips.one-line::-webkit-scrollbar { display: none; }
+.chips.one-line.panning { cursor: grabbing; }
+.chips.one-line button { flex: none; padding: 4px 12px; font-size: 13px; }
 .chips button { border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 6px 15px; }
 .chips button .n { color: var(--muted); margin-left: 4px; }
 .chips button.on { background: var(--chip-on); color: var(--chip-on-text); border-color: var(--chip-on); }
@@ -157,6 +167,16 @@ td.where { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
 .crumbs .here { padding: 3px 4px; font-weight: bold; }
 .actions { display: flex; flex-direction: column; gap: 10px; }
 .actions button { width: 100%; padding: 10px; }
+
+.multi { background: var(--hover); border-radius: 8px; padding: 8px 10px; font-size: 13px; margin: -8px 0 16px; }
+.job { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 15; width: 420px; max-width: calc(100vw - 32px);
+  background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; box-shadow: 0 8px 24px rgba(0, 0, 0, .2); font-size: 13px; }
+.job .bar { height: 6px; border-radius: 3px; background: var(--line); margin-top: 8px; overflow: hidden; }
+.job #job-bar { height: 100%; width: 0; background: var(--chip-on); transition: width .2s; }
+.job.done #job-bar { width: 100%; }
+.drag-badge { position: fixed; top: -100px; left: 0; padding: 6px 12px; border-radius: 999px; background: var(--chip-on); color: var(--chip-on-text); font-size: 13px; font-weight: bold; white-space: nowrap; }
+.marquee { position: fixed; z-index: 12; border: 1px solid var(--chip-on); background: rgba(61, 100, 200, .12); pointer-events: none; }
+#files tbody tr { user-select: none; }
 
 /* 메뉴·대화상자 */
 .menu { position: fixed; z-index: 10; display: flex; flex-direction: column; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 4px; box-shadow: 0 8px 24px rgba(0, 0, 0, .2); }

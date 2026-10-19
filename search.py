@@ -103,7 +103,7 @@ def where(parts):
 
 
 def listing(query):
-    """목록 한 쪽. {"rows", "more", "total", "bytes", "kinds": [[종류, 개수], …](종류 표의 모든 종류, 순서대로), "views": [[목록, 개수], …],
+    """목록 한 쪽. {"rows", "more", "total", "bytes", "kinds": [[종류, 개수], …](모든 종류, 칩 순서 chip_order대로), "views": [[목록, 개수], …],
     "exts": [[확장자, 개수], …](종류를 골랐을 때 그 종류 안의 확장자, 많은 순)}.
     종류별 개수는 종류·확장자 조건 없이, 확장자별 개수는 확장자 조건 없이, 목록(view)별 개수는 그 목록 조건만 바꿔 센다(나머지 조건은 그대로).
     줄마다 duplicate·stale 태그와 위치 이름(place)을 붙인다."""
@@ -145,7 +145,13 @@ def listing(query):
         db.close()
     rows = [dict(row) | {"place": place(row["path"], places)} for row in rows]
     return {"rows": rows[:LIMIT], "more": len(rows) > LIMIT, "total": total, "bytes": size,
-            "kinds": [[name, counts.get(name, 0)] for name in kinds.NAMES], "views": views, "exts": [list(row) for row in exts]}  # JSON 객체는 키가 정렬되므로 목록으로
+            "kinds": [[name, counts.get(name, 0)] for name in chip_order(config)], "views": views, "exts": [list(row) for row in exts]}  # JSON 객체는 키가 정렬되므로 목록으로
+
+
+def chip_order(config):
+    """종류 칩의 순서: 많이 누른 종류가 앞(settings의 chip_counts), 횟수가 같으면 종류 표의 순서."""
+    used = config.get("chip_counts") or {}
+    return sorted(kinds.NAMES, key=lambda name: -used.get(name, 0))
 
 
 def place_names(db):

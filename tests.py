@@ -24,6 +24,7 @@ import kinds  # noqa: E402
 import search  # noqa: E402
 import server  # noqa: E402
 import settings  # noqa: E402
+import trash  # noqa: E402
 import tree  # noqa: E402
 
 failures = []
@@ -122,7 +123,7 @@ def test_organize():
     check("정리: 같은 이름은 (2)", to.get("보고서.pdf") == str(dest / "PDF" / "보고서 (2).pdf"))
     check("정리: 종류별 폴더(대문자 확장자 포함)", to.get("사진.JPG") == str(dest / "사진" / "사진.JPG")
           and to.get("setup.exe") == str(dest / "설치파일" / "setup.exe") and to.get("이상한.xyz") == str(dest / "기타" / "이상한.xyz"))
-    check("종류: 표·PDF·문서 나누기", kinds.of(".CSV") == "표" and kinds.of(".pdf") == "PDF" and kinds.of(".hwp") == "문서"
+    check("종류: 표·PDF·문서 나누기", kinds.of(".CSV") == "표" and kinds.of(".pdf") == "PDF" and kinds.of(".hwp") == "문서" and kinds.of(".pptx") == "발표 자료"
           and kinds.of(".JPG") == "사진" and kinds.of(".png") == "이미지")
     check("정리: 미리보기는 옮기지 않음", (src / "영상.mp4").exists())
 
@@ -217,7 +218,7 @@ def test_index_search():
     check("검색: 내용 미리보기", "삼천만" in search.listing({"text": "삼천만"})["rows"][0]["snippet"])
     check("검색: 이름(대소문자 무시)", find(name="MEMO") == {"memo.txt"})
     check("검색: 폴더 이름", find(name="deep") == {"a.txt"})
-    check("검색: 종류", find(kind="문서", name="발표") == {"발표.pptx"} and find(kind="압축", name="memo") == set())
+    check("검색: 종류", find(kind="발표 자료", name="발표") == {"발표.pptx"} and find(kind="문서", name="발표") == set() and find(kind="압축", name="memo") == set())
     listed = search.listing({"name": "memo"})
     check("목록: 개수·합계·종류별 개수", listed["total"] == 1 and nonzero(listed["kinds"]) == {"문서": 1} and [k for k, _ in listed["kinds"]] == kinds.NAMES and listed["bytes"] == os.path.getsize(memo))
     check("목록: 위치 이름", {r["place"] for r in listed["rows"]} == {"root"})
@@ -233,7 +234,7 @@ def test_index_search():
     raises("목록: 모르는 목록", lambda: search.listing({"view": "all"}), "모르는 목록입니다")
     check("목록: 조건 없으면 전체", search.listing({})["total"] == index.count())
     docs = search.listing({"folder": str(root), "kind": "문서"})
-    check("확장자 칩: 종류 안의 확장자별 개수", docs["exts"][0] == [".txt", 4] and dict(docs["exts"]) == {".txt": 4, ".docx": 1, ".pptx": 1} and search.listing({})["exts"] == [])
+    check("확장자 칩: 종류 안의 확장자별 개수", docs["exts"][0] == [".txt", 4] and dict(docs["exts"]) == {".txt": 4, ".docx": 1} and search.listing({})["exts"] == [])
     check("확장자 칩: 고른 확장자만", find(folder=str(root), kind="문서", ext=".docx") == {"계약.docx"}
           and dict(search.listing({"folder": str(root), "kind": "문서", "ext": ".docx"})["exts"]) == dict(docs["exts"]))
     raises("확장자 칩: 종류에 없는 확장자", lambda: search.listing({"kind": "문서", "ext": ".pdf"}), "문서에 없는 확장자입니다: .pdf")
@@ -443,29 +444,35 @@ def test_actions():
     renamed = actions.rename(renamed, "바꾼이름.MD")
     check("이름 바꾸기: 대소문자만", os.path.basename(renamed) == "바꾼이름.MD" and "바꾼이름.MD" in os.listdir(root))
 
-    moved = actions.move_to(renamed, str(root / "옮길곳"))
+    result = actions.move_many([renamed], str(root / "옮길곳"))
+    moved = result["paths"][0]
     check("옮기기", moved == str(root / "옮길곳" / "바꾼이름.MD") and os.path.exists(moved) and not os.path.exists(renamed))
     check("옮기기: 색인", find_in(root / "옮길곳") == {"바꾼이름.MD", "다른.txt"})
-    raises("옮기기: 같은 이름", lambda: actions.move_to(str(root / "다른.txt"), str(root / "옮길곳")), "같은 이름의 파일이 있습니다")
-    raises("옮기기: 이미 그 폴더", lambda: actions.move_to(moved, str(root / "옮길곳")), "이미 그 폴더에 있습니다")
-    raises("옮기기: 없는 폴더", lambda: actions.move_to(moved, str(root / "없음")), "없는 폴더입니다")
+    result = actions.move_many([str(root / "다른.txt")], str(root / "옮길곳"))
+    check("옮기기: 같은 이름이면 (2)로, 먼저 있던 것은 그대로", result["paths"] == [str(root / "옮길곳" / "다른 (2).txt")]
+          and (root / "옮길곳" / "다른.txt").read_text(encoding="utf-8") == "같은 이름")
+    result = actions.move_many([moved], str(root / "옮길곳"))
+    check("옮기기: 이미 그 폴더", result["moved"] == 0 and "이미 그 폴더에 있습니다" in result["failed"][0]["error"])
+    raises("옮기기: 없는 폴더", lambda: actions.move_many([moved], str(root / "없음")), "없는 폴더입니다")
 
-    calls = []
+    write(root / "묶음" / "안" / "깊은.txt", "폴더째 옮기기")
+    index.build(index.roots(settings.load()))
+    result = actions.move_many([str(root / "묶음")], str(root / "옮길곳"))
+    check("폴더 옮기기", result["moved"] == 1 and (root / "옮길곳" / "묶음" / "안" / "깊은.txt").exists() and not (root / "묶음").exists())
+    check("폴더 옮기기: 색인(파일·폴더 나무)", find_in(root / "옮길곳" / "묶음") == {"깊은.txt"}
+          and [f["name"] for f in tree.children(str(root / "옮길곳" / "묶음"))] == ["안"] and not tree.chain(str(root / "묶음" / "안" / "x"), folder=False))
+    result = actions.move_many([str(root / "옮길곳")], str(root / "옮길곳" / "묶음"))
+    check("폴더 옮기기: 그 안으로는 안 됨", result["moved"] == 0 and "그 안으로" in result["failed"][0]["error"])
 
-    def fake_delete(operation):  # 실제 휴지통 대신: 넘어온 경로와 설정을 기록하고 파일을 지운다.
-        op = ctypes.cast(operation, ctypes.POINTER(actions.FileOp)).contents
-        calls.append((op.pFrom, op.fFlags))
-        os.remove(op.pFrom)
-        return 0
-
-    real, actions.shell_delete = actions.shell_delete, fake_delete
+    sent = []
+    real = trash.send
+    trash.send = lambda path: (sent.append(path), os.replace(path, TEMP / ("휴지통_" + os.path.basename(path))))  # 실제 휴지통 대신 옮겨 둔다
     try:
-        actions.trash(moved)
+        result = actions.trash_many([moved, str(root / "옮길곳" / "묶음")])
     finally:
-        actions.shell_delete = real
-    check("휴지통: 되살릴 수 있게 보냄(영구 삭제면 경고)", bool(calls) and calls[0][0] == moved
-          and calls[0][1] & actions.FOF_ALLOWUNDO and calls[0][1] & actions.FOF_WANTNUKEWARNING)
-    check("휴지통: 색인에서 빠짐", find_in(root / "옮길곳") == {"다른.txt"})
+        trash.send = real
+    check("휴지통: send2trash로 보냄", sent == [moved, str(root / "옮길곳" / "묶음")] and result["trashed"] == 2)
+    check("휴지통: 색인에서 빠짐(폴더는 아래 전부)", find_in(root / "옮길곳") == {"다른.txt", "다른 (2).txt"} and not tree.children(str(root / "옮길곳")))
 
 
 def test_server():
@@ -482,9 +489,13 @@ def test_server():
     check("서버: 폴더 나무", kids.status_code == 200 and "sub" in {f["name"] for f in kids.json["folders"]})
     bad = client.post("/api/rename", json={"path": str(TEMP / "없음.txt"), "name": "x.txt"})
     check("서버: 색인에 없는 경로는 이름 바꾸지 않음", bad.status_code == 400 and "색인에 없는 경로" in bad.json["error"])
-    bad = client.post("/api/trash", json={"path": str(TEMP / "src")})
+    bad = client.post("/api/trash", json={"paths": [str(TEMP / "src")], "confirm": True})
     check("서버: 색인에 없는 경로는 휴지통에 보내지 않음", bad.status_code == 400 and os.path.exists(TEMP / "src"))
-    bad = client.post("/api/move", json={"path": str(TEMP / "root" / "memo.txt")})
+    bad = client.post("/api/trash", json={"paths": [str(TEMP / "root" / "memo.txt")]})
+    check("서버: 확인 없이 휴지통 거부", bad.status_code == 400 and "확인한 뒤에만" in bad.json["error"] and os.path.exists(TEMP / "root" / "memo.txt"))
+    bad = client.post("/api/trash", json={"paths": [str(TEMP / "root")], "confirm": True})
+    check("서버: 맨 위 폴더는 휴지통 거부", bad.status_code == 400 and "맨 위 폴더" in bad.json["error"] and os.path.exists(TEMP / "root"))
+    bad = client.post("/api/move", json={"paths": [str(TEMP / "root" / "memo.txt")]})
     check("서버: 창 없이 옮기기 거부", bad.status_code == 400 and os.path.exists(TEMP / "root" / "memo.txt"))
     bad = client.post("/api/files", json={"view": "all"})
     check("서버: 모르는 목록", bad.status_code == 400)
