@@ -159,6 +159,8 @@ async function toggleMaximize() {
 }
 $("w-max").addEventListener("click", toggleMaximize);
 $("titlebar").addEventListener("dblclick", (e) => { if (!e.target.closest("button")) toggleMaximize(); });
+// pywebview는 끌기 영역 안의 모든 mousedown에서 창 끌기를 시작한다. 버튼에서 시작하면 최대화 뒤 마우스가 움직일 때 창을 원래 자리로 옮겨 버린다.
+$("titlebar").querySelectorAll("button").forEach((b) => b.addEventListener("mousedown", (e) => e.stopPropagation()));
 
 // 가장자리 손잡이: 테두리 없는 창이라 크기 조절을 직접 한다. 누를 때의 창 위치·크기에서 마우스가 움직인 만큼 바꾼다.
 document.querySelectorAll(".grip").forEach((grip) => grip.addEventListener("mousedown", async (e) => {
