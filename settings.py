@@ -8,6 +8,8 @@ import fence
 import kinds
 
 DAYS = (1, 3650)  # 모아 보기 기간(일)의 범위
+# 왼쪽 폴더 목록·오른쪽 상세 칸의 너비(px) 범위와 기본값. 0을 저장하면 기본으로 돌아간다. 화면은 /api/state의 panes로 받는다.
+PANES = {"pane_left": {"min": 200, "max": 700, "default": 380}, "pane_detail": {"min": 260, "max": 700, "default": 340}}
 
 
 def folder():
@@ -36,7 +38,8 @@ def defaults():
     known = drives.known_folders()
     # chip_counts: 종류 칩을 누른 횟수(많이 누른 칩을 왼쪽에 놓는다). archive_dest·cold_days: 오래된 파일 보관의 보관할 곳과 기간.
     return {"source": known["다운로드"], "dest": "", "roots": list(known.values()), "recent_days": 7, "stale_days": 90,
-            "chip_counts": {}, "archive_dest": "", "cold_days": 365, "theme": "auto"}  # theme: auto(Windows 설정을 따름), light, dark
+            "chip_counts": {}, "archive_dest": "", "cold_days": 365, "theme": "auto",  # theme: auto(Windows 설정을 따름), light, dark
+            "pane_left": 0, "pane_detail": 0}  # 칸 너비(0: 기본)
 
 
 def load():
@@ -65,6 +68,11 @@ def check(changes):
         elif name in ("recent_days", "stale_days", "cold_days"):
             if not isinstance(value, int) or isinstance(value, bool) or not DAYS[0] <= value <= DAYS[1]:
                 raise ValueError(f"기간은 {DAYS[0]}~{DAYS[1]}일 사이의 정수로 쓰세요.")
+            clean[name] = value
+        elif name in PANES:
+            low, high = PANES[name]["min"], PANES[name]["max"]
+            if not isinstance(value, int) or isinstance(value, bool) or not (value == 0 or low <= value <= high):
+                raise ValueError(f"칸 너비는 {low}~{high}px 사이의 정수로 쓰세요(0은 기본).")
             clean[name] = value
         elif name == "theme":
             if value not in ("auto", "light", "dark"):

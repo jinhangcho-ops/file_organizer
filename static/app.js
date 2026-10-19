@@ -196,10 +196,70 @@ document.querySelectorAll(".grip").forEach((grip) => grip.addEventListener("mous
   document.addEventListener("mouseup", up);
 }));
 
+// ---------- 칸 너비: 왼쪽 폴더 목록과 오른쪽 상세 사이의 경계선을 끌어 바꾸고 설정에 기억한다 ----------
+// 범위와 기본값은 서버(settings.PANES → state.panes). 저장값 0은 기본. 가운데 파일 표는 MIDDLE_MIN px 넘게 남긴다.
+const MIDDLE_MIN = 400;
+const paneBox = (name) => (name === "pane_left" ? document.querySelector(".pane-l") : $("detail"));
+const setPane = (name, px) => $("page-files").style.setProperty("--" + name, px + "px");
+
+function fitPane(name, px) {
+  const range = state.panes[name];
+  const other = name === "pane_left" ? $("detail") : document.querySelector(".pane-l");
+  const room = $("page-files").clientWidth - (other.classList.contains("hidden") ? 0 : other.offsetWidth) - MIDDLE_MIN;
+  return Math.round(Math.max(range.min, Math.min(range.max, room > 0 ? room : range.max, px)));
+}
+
+function showPanes() {
+  for (const name of Object.keys(state.panes)) setPane(name, fitPane(name, state.settings[name] || state.panes[name].default));
+}
+addEventListener("resize", () => state && showPanes());
+
+async function savePane(name, px) {
+  try {
+    state.settings = (await api("/api/settings", {[name]: px})).settings;
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+document.querySelectorAll(".pane-grip").forEach((grip) => {
+  const name = grip.dataset.pane, sign = name === "pane_left" ? 1 : -1;  // 오른쪽 상세는 왼쪽으로 끌면 넓어진다.
+  grip.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const x0 = e.clientX, start = paneBox(name).offsetWidth;
+    let width = start;
+    grip.classList.add("on");
+    document.documentElement.classList.add("pane-dragging");
+    // 놓을 때 생기는 click을 화면이 '빈 곳 클릭'(상세 닫기)으로 받지 않게 한 번 막는다.
+    const swallow = (c) => c.stopPropagation();
+    document.addEventListener("click", swallow, true);
+    const move = (m) => {
+      width = fitPane(name, start + sign * (m.clientX - x0));
+      setPane(name, width);
+    };
+    const up = () => {
+      document.removeEventListener("mousemove", move);
+      document.removeEventListener("mouseup", up);
+      setTimeout(() => document.removeEventListener("click", swallow, true), 0);
+      grip.classList.remove("on");
+      document.documentElement.classList.remove("pane-dragging");
+      if (width !== start) savePane(name, width);
+    };
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
+  });
+  grip.addEventListener("dblclick", async () => {
+    await savePane(name, 0);
+    showPanes();
+  });
+});
+
 // ---------- 상태 ----------
 async function loadState() {
   state = await api("/api/state");
   applyTheme();
+  showPanes();
   source = source || state.settings.source;
   dest = dest || state.settings.dest;
   archiveDest = archiveDest || state.settings.archive_dest;
@@ -702,6 +762,7 @@ $("trash").addEventListener("click", () => {
 async function showDetail(row) {
   picked = row;
   $("detail").classList.toggle("hidden", !row);
+  showPanes();  // 상세가 열려 가운데가 좁아지면 저장한 너비보다 줄여 맞춘다(저장값은 그대로).
   say("detail-message", "");
   showSelection();
   showFileInTree(row);

@@ -70,7 +70,7 @@ def state():
     return jsonify(settings=settings.load(), drives=drives.list_drives(), known=drives.known_folders(), kinds=kinds.NAMES,
                    last_access=drives.last_access_on(), undo=len(organize.last()), index=index.status, counts=search.counts(),
                    places=tree.places(), exclude=exclude.load(), blacklist=blacklist.load(), admin=blacklist.is_admin(),
-                   locks=lock.listing(), lock_password=lock.has_password())
+                   locks=lock.listing(), lock_password=lock.has_password(), panes=settings.PANES)
 
 
 @app.post("/api/settings")
