@@ -770,8 +770,11 @@ async function showDetail(row) {
   $("detail-name").textContent = row.name;
   $("detail-pills").replaceChildren(...[row.duplicate && "중복 의심", row.stale && `${state.settings.stale_days}일 넘게 안 열었어요`]
     .filter(Boolean).map((t) => el("span", {className: "pill", textContent: t})));
-  const [chain, same] = await Promise.all([api("/api/chain?path=" + encodeURIComponent(row.path)), api("/api/same?path=" + encodeURIComponent(row.path))]);
+  $("preview").textContent = "";
+  const q = encodeURIComponent(row.path);
+  const [chain, same, preview] = await Promise.all([api("/api/chain?path=" + q), api("/api/same?path=" + q), api("/api/preview?path=" + q)]);
   if (picked !== row) return;
+  $("preview").textContent = preview.text || (preview.readable ? "아직 내용을 읽지 않았거나 글자가 없어요." : "이 형식은 내용을 읽지 않아요(사진·동영상·hwp 등).");
   const where = el("div");
   chain.folders.forEach((f, i) => {
     const button = el("button", {className: "crumb", textContent: f.name, title: f.path});
@@ -784,8 +787,11 @@ async function showDetail(row) {
   showSame("same-name", "이름이 같은 파일", same.name, "이름이 같은 파일이 없어요.");
 }
 
+// 같은 파일 칸은 접어 두고, 펼치거나 접은 상태는 다른 파일을 골라도 그대로 둔다(켜 둔 동안만).
+document.querySelectorAll(".fold").forEach((box) => box.querySelector(".fold-head").addEventListener("click", () => box.classList.toggle("open")));
+
 function showSame(id, title, list, none) {
-  $(id + "-title").textContent = list.length ? `${title} ${list.length.toLocaleString()}개${list.length >= 50 ? " 이상" : ""}` : title;
+  $(id + "-title").textContent = list.length ? `${title} ${list.length.toLocaleString()}개${list.length >= 50 ? " 이상" : ""}` : `${title} 없음`;
   $(id).replaceChildren(...(list.length ? list.map((f) => {
     const folder = f.path.slice(0, f.path.lastIndexOf("\\"));
     const button = el("button", {className: "li", title: f.path}, el("span", {textContent: baseName(folder) === f.place ? f.place : `${f.place} › … › ${baseName(folder)}`}), el("span", {textContent: size(f.size)}));

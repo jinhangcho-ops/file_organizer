@@ -125,6 +125,13 @@ td.name { white-space: normal; }
 /* 상세 */
 .sec { padding: 14px 16px; border-bottom: 1px solid var(--line); }
 .sec h3 { margin: 0 0 8px; font-size: 13px; font-weight: 600; }
+.preview { margin: 0; color: var(--mute); font-size: 12px; line-height: 1.6; word-break: break-all; user-select: text; max-height: 8.2em; overflow: auto; }
+/* 같은 파일 칸: 제목 줄만 보이게 접어 두고 누르면 펼친다(app.js의 folds). */
+.fold-head { display: flex; align-items: center; gap: 6px; width: 100%; padding: 0; border: 0; background: none; font-size: 13px; font-weight: 600; text-align: left; }
+.fold-head::before { content: "▸"; color: var(--mute); font-size: 10px; width: 10px; }
+.fold.open .fold-head::before { content: "▾"; }
+.fold.open .fold-head { margin-bottom: 8px; }
+.fold:not(.open) > div { display: none; }
 .big { font-size: 18px; font-weight: 600; letter-spacing: -.01em; word-break: break-all; margin: 0; user-select: text; }
 #detail-pills .pill { margin: 8px 6px 0 0; }
 .multi { margin: 10px 0 0; padding: 8px 10px; border-radius: 6px; background: var(--accbg); font-size: 12px; }

@@ -170,6 +170,12 @@ def same():
     return jsonify(search.same(checked(request.args.get("path", ""))))
 
 
+@app.get("/api/preview")
+def file_preview():
+    """상세의 내용 미리보기(색인이 읽어 둔 글자의 앞부분)."""
+    return jsonify(search.preview(checked(request.args.get("path", ""))))
+
+
 @app.post("/api/window")
 def window():
     """화면이 그린 제목 줄의 버튼(최소화·최대화·닫기)과 가장자리 크기 조절. bounds는 지금 창의 위치·크기, place는 위치·크기 바꾸기."""

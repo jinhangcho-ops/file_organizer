@@ -8,6 +8,7 @@ import os
 import time
 
 import exclude
+import extract
 import index
 import kinds
 import settings
@@ -183,6 +184,25 @@ def same(path):
     finally:
         db.close()
     return {k: [dict(r) | {"place": place(r["path"], places)} for r in rows] for k, rows in found.items()}
+
+
+PREVIEW = 300  # 상세의 내용 미리보기 글자 수
+
+
+def preview(path):
+    """상세의 내용 미리보기: 색인이 읽어 둔 파일 글자의 앞부분(공백은 하나로, PREVIEW자, 넘치면 …).
+    readable: 이 형식·크기의 글자를 읽는지(아니면 화면이 '읽지 않는 형식'이라고 알린다). 따로 저장하지 않고 그때 꺼낸다."""
+    key = exclude.key(path)
+    db = index.connect()
+    try:
+        row = db.execute("select ext, size from files where key = ?", (key,)).fetchone()
+        body = db.execute("select substr(b.text, 1, ?) text from body b join files f on f.id = b.rowid where f.key = ?",
+                          (PREVIEW * 4, key)).fetchone()
+    finally:
+        db.close()
+    text = " ".join(body["text"].split()) if body else ""
+    readable = bool(row) and extract.readable(row["ext"], row["size"])
+    return {"text": text[:PREVIEW] + ("…" if len(text) > PREVIEW else ""), "readable": readable}
 
 
 def counts():
