@@ -1,12 +1,16 @@
-"""파일·폴더 다루기: 옮기기(여러 개, 끌어 놓기·폴더 고르기), 이름 바꾸기, 휴지통으로 보내기. 덮어쓰지 않고, 끝나면 색인에 반영한다."""
+"""파일·폴더 다루기: 옮기기(여러 개, 끌어 놓기·폴더 고르기), 이름 바꾸기, 휴지통으로 보내기, 되돌리기(Ctrl+Z).
+덮어쓰지 않고, 끝나면 색인·잠금 기록·메모에 반영한다."""
 import os
 
+import drives
 import exclude
+import fence
 import index
 import lock
 import notes
 import organize
 import trash
+import undo
 
 BAD = set('\\/:*?"<>|')  # 파일 이름에 쓸 수 없는 글자
 
@@ -37,6 +41,7 @@ def move_many(paths, folder, progress=lambda *args: None):
         index.moved(done)
         lock.moved(done)  # 옮긴 폴더 안의 잠금 폴더·금고 위치를 비밀 파일에서 고친다.
         notes.moved(done)
+        undo.record("move", done, f"{len(done)}개 옮기기")
     return {"moved": len(done), "failed": failed, "paths": [after for _, after in done]}
 
 
@@ -54,7 +59,35 @@ def rename(path, name):
     index.moved([(path, target)])
     lock.moved([(path, target)])
     notes.moved([(path, target)])
+    undo.record("rename", [(path, target)], f"이름 바꾸기 '{name}'")
     return target
+
+
+def move_back(pairs, progress=lambda *args: None):
+    """되돌리기: (전, 후)로 옮겼던 것을 거꾸로(나중 것부터) 원래 자리로. 옮기기와 같은 검사·반영을 하고, 덮어쓰지 않는다.
+    원래 자리에 같은 이름이 생겼거나, 그사이 사라졌거나, 차단·잠금·구조 보호에 걸리면 그 항목은 그대로 두고 알린다.
+    {"moved", "failed", "paths"(되돌린 원래 경로)}"""
+    done, failed = [], []
+    for n, (before, after) in enumerate(reversed(pairs)):
+        progress(n, len(pairs), after)
+        try:
+            if not os.path.lexists(after):
+                raise ValueError("옮긴 파일이 없습니다(그사이 옮기거나 지웠습니다).")
+            if os.path.lexists(before) and exclude.key(before) != exclude.key(after):
+                raise ValueError("원래 자리에 같은 이름이 있습니다.")
+            fence.refuse(os.path.dirname(before))
+            fence.refuse_holding(after, drives.same_drive(after, before), moving=True)
+            lock.refuse_clash(after, before)
+            (organize.move_folder if os.path.isdir(after) else organize.move)(after, before)
+            done.append((after, before))
+        except (OSError, ValueError) as e:
+            failed.append({"from": after, "error": getattr(e, "strerror", None) or str(e)})
+    progress(len(pairs), len(pairs))
+    if done:
+        index.moved(done)
+        lock.moved(done)
+        notes.moved(done)
+    return {"moved": len(done), "failed": failed, "paths": [before for _, before in done]}
 
 
 def trash_many(paths, progress=lambda *args: None):

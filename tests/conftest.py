@@ -24,6 +24,7 @@ import lock  # noqa: E402
 import server  # noqa: E402
 import settings  # noqa: E402
 import trash  # noqa: E402
+import undo  # noqa: E402
 
 DAY = 86400
 
@@ -43,6 +44,7 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
     monkeypatch.setenv("PROGRAMDATA", str(tmp_path / "programdata"))
     monkeypatch.setattr(blacklist, "restrict", lambda path: None)
+    undo.history.clear()  # 되돌리기 기록은 프로세스에 남으므로 검사마다 비운다.
     root = tmp_path / "root"
     root.mkdir()
     settings.save({"roots": [str(root)]})

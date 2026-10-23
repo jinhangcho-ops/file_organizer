@@ -13,6 +13,7 @@ import filetime
 import index
 import kinds
 import settings
+import undo as undo_log  # 이 파일에는 [마지막 정리 되돌리기]의 undo 함수가 있어 이름이 겹친다.
 
 class Partial(OSError):
     """폴더를 다른 디스크로 옮겼지만 그동안 생기거나 바뀐 파일은 원래 폴더에 남겼다(사본은 옮긴 곳에 있다)."""
@@ -131,7 +132,14 @@ def run(source, dest, progress=lambda *args: None):
     """미리보기와 같은 목록을 서버에서 다시 만들어 옮긴다(화면이 보낸 경로를 그대로 믿지 않는다)."""
     done, failed = apply([(item["from"], item["to"]) for item in plan(source, dest)], progress)
     settings.write(LOG, [{"from": before, "to": after} for before, after in done])
+    undo_log.record("organize", done, f"다운로드 정리 {len(done)}개")
     return {"moved": len(done), "failed": failed}
+
+
+def forget_undone(paths):
+    """Ctrl+Z로 원래 자리(paths)에 되돌린 것을 [마지막 정리 되돌리기]의 기록에서 뺀다."""
+    back = {exclude.key(p) for p in paths}
+    settings.write(LOG, [item for item in last() if exclude.key(item["from"]) not in back])
 
 
 def last():
@@ -154,4 +162,5 @@ def undo(progress=lambda *args: None):
     done, failed = apply(back, progress)
     left = {after for _, after in back} - {after for _, after in done}  # 실패한 것만 기록에 남겨 다시 되돌릴 수 있게 한다.
     settings.write(LOG, [item for item in moves if item["from"] in left] + blocked)  # 막힌 것도 남겨 차단·잠금을 푼 뒤 되돌릴 수 있게 한다.
+    undo_log.drop("organize")  # 버튼으로 되돌렸으면 Ctrl+Z의 정리 기록은 낡았다.
     return {"moved": len(done), "failed": missing + failed}

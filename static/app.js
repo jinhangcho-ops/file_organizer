@@ -881,6 +881,7 @@ async function showDetail(row) {
   $("detail-rows").replaceChildren(...facts.flatMap(([k, v]) => [el("span", {textContent: k}), typeof v === "string" ? el("div", {textContent: v}) : v]));
   showSame("same-content", "내용이 같은 파일", same.content, "내용이 같은 파일이 없어요.");
   showGuess(row);
+  showProvenance(row);
   showSame("same-name", "이름이 같은 파일", same.name, "이름이 같은 파일이 없어요.");
   document.querySelector('[data-fold="same-name"]').classList.toggle("hidden", !state.settings.show_same_name);
 }
@@ -943,6 +944,16 @@ async function emptyFolder(path) {
 
 // 같은 파일 칸은 접어 두고, 펼치거나 접은 상태는 다른 파일을 골라도 그대로 둔다(켜 둔 동안만).
 document.querySelectorAll(".fold").forEach((box) => box.querySelector(".fold-head").addEventListener("click", () => box.classList.toggle("open")));
+
+// 상세의 받은 곳·편집한 사람(그 파일에서 바로 읽은 것). 있는 것만 줄로 더한다.
+async function showProvenance(row) {
+  const info = await api("/api/provenance?path=" + encodeURIComponent(row.path)).catch(() => null);
+  if (picked !== row || !info) return;
+  const lines = [["받은 곳", info.source], ["링크가 있던 곳", info.referrer], ["만든 사람", info.author], ["마지막 저장", info.last_saved_by], ["소유자", info.owner]];
+  for (const [label, value] of lines.filter(([, v]) => v)) {
+    $("detail-rows").append(el("span", {textContent: label}), el("div", {className: "mono", textContent: value, title: value}));
+  }
+}
 
 // 상세의 추정(사진·동영상 인식 결과): 칩을 누르면 그 추정의 파일들을 모두 본다.
 async function showGuess(row) {
@@ -1020,6 +1031,21 @@ $("act-rename").addEventListener("click", async (e) => {
 $("act-trash").addEventListener("click", () => trashPaths(selectedPaths()));
 
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") hideMenu(); });  // 대화상자·고르기 창은 common.js가 닫는다.
+
+// Ctrl+Z: 최근의 옮기기·이름 바꾸기·다운로드 정리를 하나씩 되돌린다(서버 undo, 최근 20개). 입력 칸·대화상자·고르기 창에서는 원래대로.
+// e.code를 보므로 한글 입력 상태에서도 된다.
+document.addEventListener("keydown", async (e) => {
+  if (e.code !== "KeyZ" || !e.ctrlKey || e.shiftKey || e.altKey || e.repeat) return;
+  if (e.target.closest?.("input, textarea") || !$("dialog").classList.contains("hidden") || !$("picker").classList.contains("hidden")) return;
+  e.preventDefault();
+  try {
+    const {job, label} = await api("/api/undo", {});
+    const result = await runJob(job);
+    await afterChange(`되돌렸어요: ${label}${result.moved ? "" : " (되돌린 것 없음)"}${failedText(result)}`);
+  } catch (err) {
+    toast(err.message);
+  }
+});
 
 // ---------- 오른쪽 클릭: 파일 줄 위는 메뉴, 그 밖은 이전 폴더로(설정 등에서는 목록으로) ----------
 document.addEventListener("contextmenu", (e) => {

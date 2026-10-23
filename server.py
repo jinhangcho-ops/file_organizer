@@ -21,10 +21,12 @@ import models
 import notes
 import organize
 import protect
+import provenance
 import recognize
 import search
 import settings
 import tree
+import undo
 
 app = Flask(__name__, static_folder="static")
 KEY = secrets.token_urlsafe(32)  # 실행할 때마다 새로 만든다. desktop.py가 창의 첫 주소에 넣는다.
@@ -124,6 +126,27 @@ def organize_undo():
     return jsonify(jobs.start("되돌리기", organize.undo))
 
 
+@app.post("/api/undo")
+def undo_last():
+    """Ctrl+Z: 가장 최근의 옮기기·이름 바꾸기·다운로드 정리를 되돌린다(최근 undo.KEEP개, 켜 둔 동안). 뒤의 작업으로 돌린다."""
+    entry = undo.pop()
+    if entry is None:
+        raise ValueError("되돌릴 것이 없습니다(옮기기·이름 바꾸기·다운로드 정리만, 프로그램을 켠 뒤의 최근 20개).")
+
+    def work(progress):
+        result = actions.move_back(entry["pairs"], progress)
+        if entry["kind"] == "organize":
+            organize.forget_undone(result["paths"])
+        return result | {"label": entry["label"]}
+
+    try:
+        job = jobs.start("되돌리기", work)
+    except ValueError:
+        undo.put_back(entry)  # 다른 작업이 돌고 있어 시작하지 못했다: 기록은 그대로.
+        raise
+    return jsonify(job=job, label=entry["label"])
+
+
 @app.get("/api/job")
 def job():
     """뒤에서 도는 작업(정리, 옮기기, 휴지통, 보관)의 진행. 화면이 끝날 때까지 읽는다."""
@@ -195,6 +218,15 @@ def same():
 def file_preview():
     """상세의 내용 미리보기(색인이 읽어 둔 글자의 앞부분)."""
     return jsonify(search.preview(checked(request.args.get("path", ""))))
+
+
+@app.get("/api/provenance")
+def file_provenance():
+    """상세의 받은 곳(가린 주소)·만든 사람·마지막 저장한 사람·작성자·소유자. 그 파일에서 바로 읽는다."""
+    path = checked(request.args.get("path", ""))
+    if os.path.isdir(path):
+        raise ValueError(f"파일이 아닙니다: {path}")
+    return jsonify(provenance.info(path))
 
 
 @app.get("/api/recognized")
