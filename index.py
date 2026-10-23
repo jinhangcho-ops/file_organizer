@@ -45,17 +45,22 @@ lock = threading.Lock()
 stop = threading.Event()  # 켜지면 색인이 지금 파일까지만 하고 멈춘다.
 worker = None  # 색인 스레드(창을 닫을 때 끝나기를 기다린다)
 saved = [0.0]  # 마지막으로 저장한 때
+ready = set()  # 이 프로세스에서 표를 맞춘 색인 파일들. 열 때마다 맞추면 한 번에 6ms라, 파일 500개 검사에 7초가 걸렸다.
 
 
 def connect():
-    db = sqlite3.connect(settings.folder() / "index.db", timeout=30)
+    path = settings.folder() / "index.db"
+    db = sqlite3.connect(path, timeout=30)
     db.row_factory = sqlite3.Row
-    db.execute("pragma journal_mode=wal")  # 색인하는 동안에도 읽을 수 있게
+    if path in ready:
+        return db
+    db.execute("pragma journal_mode=wal")  # 색인하는 동안에도 읽을 수 있게(파일에 남는 설정이라 한 번이면 된다)
     have = {row["name"] for row in db.execute("pragma table_info(files)")}
     for name, kind in ADDED.items():
         if have and name not in have:
             db.execute(f"alter table files add column {name} {kind}")
     db.executescript(SCHEMA)
+    ready.add(path)
     return db
 
 
@@ -200,6 +205,8 @@ def read_text(db, row_id, path, ext, st):
     """파일 하나의 글자를 읽어 넣고 읽은 것으로 표시한다. 읽은 뒤 연 시각은 되돌린다."""
     text = extract.text(path, ext) if extract.readable(ext, st.st_size) else ""
     filetime.restore_access(path, st)
+    if text is None:  # 읽다 실패했다(클라우드 전용·잠시 잠긴 파일 등): 읽은 것으로 표시하지 않아 다음 색인 때 다시 읽는다.
+        return
     db.execute("delete from body where rowid = ?", (row_id,))
     if text.strip():
         db.execute("insert into body(rowid, text) values(?, ?)", (row_id, text))
@@ -384,13 +391,24 @@ def removed(paths):
         db.close()
 
 
-def is_root(path):
-    """색인한 맨 위 폴더인지(옮기거나 휴지통으로 보내지 않는다)."""
+def look(paths):
+    """paths 각각의 (색인에 있는지, 색인한 맨 위 폴더인지). 연결 하나로 본다(파일마다 열고 닫으면 500개에 8초가 걸렸다)."""
     db = connect()
     try:
-        return bool(db.execute("select 1 from folders where key = ? and parent is null", (exclude.key(path),)).fetchone())
+        found = {}
+        for path in paths:
+            key = exclude.key(path)
+            known_here = db.execute("select 1 from files where key = ? union select 1 from folders where key = ?", (key, key)).fetchone()
+            root = db.execute("select 1 from folders where key = ? and parent is null", (key,)).fetchone()
+            found[path] = (bool(known_here), bool(root))
+        return found
     finally:
         db.close()
+
+
+def is_root(path):
+    """색인한 맨 위 폴더인지(옮기거나 휴지통으로 보내지 않는다)."""
+    return look([path])[path][1]
 
 
 def count():
@@ -403,9 +421,4 @@ def count():
 
 def known(path):
     """path가 색인에 있는 파일·폴더인지. 화면이 열어 달라는 경로는 이것으로 확인한다."""
-    db = connect()
-    try:
-        key = exclude.key(path)
-        return bool(db.execute("select 1 from files where key = ? union select 1 from folders where key = ?", (key, key)).fetchone())
-    finally:
-        db.close()
+    return look([path])[path][0]

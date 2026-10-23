@@ -70,7 +70,7 @@ def state():
     return jsonify(settings=settings.load(), drives=drives.list_drives(), known=drives.known_folders(), kinds=kinds.NAMES,
                    last_access=drives.last_access_on(), undo=len(organize.last()), index=index.status, counts=search.counts(),
                    places=tree.places(), exclude=exclude.load(), blacklist=blacklist.load(), admin=blacklist.is_admin(),
-                   locks=lock.listing(), lock_password=lock.has_password(), panes=settings.PANES)
+                   locks=lock.listing(), lock_vault=lock.vault_info(), lock_password=lock.has_password(), panes=settings.PANES)
 
 
 @app.post("/api/settings")
@@ -200,11 +200,12 @@ def change_exclude():
     return jsonify(exclude=exclude.remove(data["path"]) if data.get("remove") else exclude.add(data["path"]))
 
 
-def checked(path):
-    """색인에 있고 지금도 있는 파일·폴더만 받는다(화면이 다루는 파일은 모두 색인에서 왔다). 차단·잠금 폴더 안은 거부한다."""
-    if not isinstance(path, str) or not index.known(path) or not os.path.exists(path):
+def checked(path, found=None, fences=None):
+    """색인에 있고 지금도 있는 파일·폴더만 받는다(화면이 다루는 파일은 모두 색인에서 왔다). 차단·잠금 폴더 안은 거부한다.
+    여러 개를 볼 때는 index.look의 결과(found)와 fence.keys()를 한 번만 만들어 넘긴다."""
+    if not isinstance(path, str) or not (found or index.look([path]))[path][0] or not os.path.exists(path):
         raise ValueError(f"색인에 없는 경로입니다. 색인을 갱신하세요: {path}")
-    return fence.refuse(path)
+    return fence.refuse(path, fences)
 
 
 def indexed_path():
@@ -214,11 +215,12 @@ def indexed_path():
 def indexed_paths(movable=True):
     """요청의 paths(여러 개). movable이면 색인한 맨 위 폴더는 받지 않는다(통째로 옮기거나 지우지 않는다)."""
     paths = body().get("paths")
-    if not isinstance(paths, list) or not paths:
+    if not isinstance(paths, list) or not paths or not all(isinstance(path, str) for path in paths):
         raise ValueError("고른 파일이 없습니다.")
+    found, fences = index.look(paths), fence.keys()  # 연결 하나, 차단·잠금 목록 한 번으로 모두 본다.
     for path in paths:
-        checked(path)
-        if movable and index.is_root(path):
+        checked(path, found, fences)
+        if movable and found[path][1]:
             raise ValueError(f"색인한 맨 위 폴더는 옮기거나 지울 수 없습니다: {path}")
     return list(dict.fromkeys(paths))
 
@@ -235,12 +237,16 @@ def move():
         if not folder:
             return jsonify(job=None)
         fence.refuse(folder)
+    for path in paths:  # 잠금 폴더를 품은 폴더는 같은 디스크 안에서만 옮긴다(위치는 lock.moved가 고친다).
+        fence.refuse_holding(path, drives.same_drive(path, folder))
     return jsonify(job=jobs.start("옮기기", lambda progress: actions.move_many(paths, folder, progress)))
 
 
 @app.post("/api/rename")
 def rename():
-    return jsonify(path=actions.rename(indexed_path(), body().get("name")))
+    path = indexed_path()
+    fence.refuse_holding(path, True)
+    return jsonify(path=actions.rename(path, body().get("name")))
 
 
 @app.post("/api/trash")
@@ -249,7 +255,15 @@ def trash():
     paths = indexed_paths()
     if body().get("confirm") is not True:
         raise ValueError("확인한 뒤에만 휴지통으로 보냅니다.")
+    for path in paths:
+        fence.refuse_holding(path, False)
     return jsonify(job=jobs.start("휴지통으로 보내기", lambda progress: actions.trash_many(paths, progress)))
+
+
+def not_indexing():
+    """색인하는 동안에는 차단·잠금을 바꾸지 않는다(돌고 있는 색인이 시작할 때 읽은 목록으로 그 폴더를 다시 넣는다)."""
+    if index.status["running"]:
+        raise ValueError("색인하는 중입니다. 색인이 끝난 뒤(또는 [멈추기] 뒤)에 하세요.")
 
 
 @app.post("/api/blacklist")
@@ -259,6 +273,7 @@ def change_blacklist():
     path = data.get("path")
     if not isinstance(path, str) or not path:
         raise ValueError("폴더를 고르세요.")
+    not_indexing()
     if data.get("remove"):
         return jsonify(blacklist=blacklist.remove(path))
     paths = blacklist.add(path, {exclude.key(p) for p in lock.folders()})
@@ -282,23 +297,53 @@ def lock_password():
 
 @app.post("/api/lock")
 def lock_folder():
-    """색인에 있는 폴더를 잠근다. 색인한 맨 위 폴더는 잠그지 않는다. 잠그면 그 아래의 색인 기록을 지운다."""
+    """색인에 있는 폴더를 제자리에서 잠그거나(vault가 아니면) 금고로 모은다(vault: true). 색인한 맨 위 폴더는 다루지 않는다.
+    끝나면 그 아래의 색인 기록을 지운다."""
     data = body()
+    not_indexing()
     path = indexed_path()
     if not os.path.isdir(path) or index.is_root(path):
         raise ValueError(f"잠글 수 없는 폴더입니다(색인한 맨 위 폴더나 파일): {path}")
-    lock.lock(path, data.get("password"), {exclude.key(p) for p in blacklist.load()})
+    blocked = {exclude.key(p) for p in blacklist.load()}
+    (lock.collect if data.get("vault") else lock.lock)(path, data.get("password"), blocked)
     index.removed([path])
     return jsonify(locks=lock.listing())
 
 
+@app.post("/api/lock/vault")
+def lock_vault():
+    """금고 위치를 정한다(폴더 고르기 창). 고르지 않으면 vault가 null."""
+    password = body().get("password")
+    lock.verify(password)  # 창을 띄우기 전에 비밀번호부터 본다.
+    place = pick_folder()
+    if not place:
+        return jsonify(vault=None)
+    return jsonify(vault=lock.set_vault(place, password))
+
+
 @app.post("/api/lock/open")
 def lock_open():
-    """비밀번호가 맞으면 잠금 폴더를 잠시 풀고 탐색기로 연다."""
+    """비밀번호가 맞으면 잠금 폴더(금고 안의 것이면 금고)를 잠시 풀고 탐색기로 연다."""
     data = body()
     path = lock.open_folder(data.get("path"), data.get("password"))
     os.startfile(path)
     return jsonify(locks=lock.listing())
+
+
+@app.post("/api/lock/take_out")
+def lock_take_out():
+    """금고에서 꺼내 원래 자리로. 원래 위 폴더가 없으면 need_folder로 알리고, 화면이 pick: true로 다시 부르면 폴더 고르기 창으로 묻는다."""
+    data = body()
+    folder = None
+    if data.get("pick"):
+        folder = pick_folder()
+        if not folder:
+            return jsonify(path=None, locks=lock.listing())
+    try:
+        path = lock.take_out(data.get("path"), data.get("password"), folder)
+    except lock.NoPlace as e:
+        return jsonify(need_folder=str(e))
+    return jsonify(path=path, locks=lock.listing())
 
 
 @app.post("/api/lock/close")

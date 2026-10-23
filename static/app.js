@@ -179,6 +179,7 @@ document.querySelectorAll(".grip").forEach((grip) => grip.addEventListener("mous
     send();
   };
   const move = (m) => {
+    if (!m.buttons) return up();  // 창 밖에서 놓으면 mouseup이 오지 않는다.
     const dx = m.screenX - x0, dy = m.screenY - y0;
     const box = {x: start.x, y: start.y, width: start.width, height: start.height};
     if (edge.includes("e")) box.width = start.width + dx;
@@ -235,6 +236,7 @@ document.querySelectorAll(".pane-grip").forEach((grip) => {
     const swallow = (c) => c.stopPropagation();
     document.addEventListener("click", swallow, true);
     const move = (m) => {
+      if (!m.buttons) return up();  // 창 밖에서 놓으면 mouseup이 오지 않는다.
       width = fitPane(name, start + sign * (m.clientX - x0));
       setPane(name, width);
     };
@@ -922,7 +924,8 @@ $("menu").addEventListener("click", (e) => {
   if (act === "open") openPath(menuPath, false);
   if (act === "reveal") openPath(menuPath, true);
   if (act === "exclude") changeExclude(menuPath, false);
-  if (act === "lock") lockFolder(menuPath);
+  if (act === "lock") lockFolder(menuPath, false);
+  if (act === "vault") lockFolder(menuPath, true);
   if (act === "block") changeBlacklist(menuPath, false);
 });
 
@@ -966,10 +969,42 @@ async function lockCall(url, data, done) {
   }
 }
 
-async function lockFolder(path) {
+async function lockFolder(path, vault) {
   if (!state.lock_password) return toast("먼저 설정에서 잠금 비밀번호를 정하세요.");
-  const pw = await password("폴더를 잠글까요?", `${path}\n\n비밀번호를 넣어야 열려요. 잠그면 목록과 검색에서 빠져요.`);
-  if (pw !== null) await lockCall("/api/lock", {path, password: pw}, "잠갔어요.");
+  if (vault && !state.lock_vault.path) return toast("먼저 설정에서 금고 위치를 정하세요.");
+  const pw = vault
+    ? await password("금고로 모을까요?", `${path}\n\n금고(${state.lock_vault.path}) 안으로 옮기고 금고를 잠가요. 비밀번호를 넣어야 열리고, [꺼내기]로 이 자리에 되돌려요.`)
+    : await password("폴더를 잠글까요?", `${path}\n\n비밀번호를 넣어야 열려요. 잠그면 목록과 검색에서 빠져요.`);
+  if (pw !== null) await lockCall("/api/lock", {path, password: pw, vault}, vault ? "금고로 모았어요." : "잠갔어요.");
+}
+
+$("lock-vault").addEventListener("click", async () => {
+  if (!state.lock_password) return toast("먼저 잠금 비밀번호를 정하세요.");
+  const pw = await password("금고 위치 정하기", "다음 창에서 금고를 둘 곳을 고르세요. 그 안에 숨긴 .vault 폴더를 만들어 잠가요. 금고와 같은 디스크의 폴더만 모을 수 있어요.");
+  if (pw === null) return;
+  try {
+    const {vault} = await api("/api/lock/vault", {password: pw});
+    await loadState();
+    if (vault) toast("금고를 정했어요: " + vault);
+  } catch (e) {
+    toast(e.message);
+  }
+});
+
+async function takeOut(item) {
+  const pw = await password("금고에서 꺼낼까요?", `${item.path}\n\n원래 자리로 되돌려요. 같은 이름이 있으면 ‘이름 (2)’로 둬요.`);
+  if (pw === null) return;
+  try {
+    let answer = await api("/api/lock/take_out", {path: item.path, password: pw});
+    if (answer.need_folder) {
+      if (!(await ask({title: "꺼낼 곳을 골라 주세요", text: answer.need_folder}))) return;
+      answer = await api("/api/lock/take_out", {path: item.path, password: pw, pick: true});
+    }
+    await loadState();
+    if (answer.path) toast(`꺼냈어요: ${answer.path}. 다음 [색인 갱신]부터 목록에 나와요.`);
+  } catch (e) {
+    toast(e.message);
+  }
 }
 
 $("lock-password").addEventListener("click", async () => {
@@ -993,18 +1028,22 @@ $("lock-password").addEventListener("click", async () => {
 function lockRow(item) {
   const row = el("div");
   row.insertAdjacentHTML("beforeend", FOLDER_ICON);
-  row.append(el("span", {className: "mono", textContent: `${item.open ? "열림" : "잠김"}  ${item.path}`}));
+  const where = item.vault ? "금고" : "제자리";
+  const status = item.missing ? "찾을 수 없음" : item.open ? "열림" : "잠김";
+  row.append(el("span", {className: "mono", textContent: `${where}·${status}  ${item.path}`,
+    title: item.missing ? "앱 밖에서 옮기거나 지운 것 같아요. [잠금 풀기]로 목록에서 뺄 수 있어요." : item.path}));
   const button = (text, act) => {
     const b = el("button", {className: "btn s", textContent: text});
     b.addEventListener("click", act);
     row.append(b);
   };
-  if (item.open) button("다시 잠그기", () => lockCall("/api/lock/close", {path: item.path}, "다시 잠갔어요."));
-  else button("열기", async () => {
-    const pw = await password("잠금 폴더 열기", item.path);
+  if (item.open) button("다시 잠그기", () => lockCall("/api/lock/close", {path: item.path}, item.vault ? "금고를 다시 잠갔어요." : "다시 잠갔어요."));
+  else if (!item.missing) button("열기", async () => {
+    const pw = await password(item.vault ? "금고에서 열기" : "잠금 폴더 열기", item.vault ? `${item.path}\n\n금고를 잠시 풀고 열어요.` : item.path);
     if (pw !== null) await lockCall("/api/lock/open", {path: item.path, password: pw});
   });
-  button("잠금 풀기", async () => {
+  if (item.vault) button("꺼내기", () => takeOut(item));
+  else button("잠금 풀기", async () => {
     const pw = await password("잠금을 아주 풀까요?", `${item.path}\n\n다음 [색인 갱신]부터 목록에 다시 나와요.`);
     if (pw !== null) await lockCall("/api/lock/release", {path: item.path, password: pw}, "잠금을 풀었어요.");
   });
@@ -1190,6 +1229,9 @@ function showSetup() {
   $("locks").replaceChildren(...state.locks.map(lockRow));
   $("locks-empty").classList.toggle("hidden", state.locks.length > 0);
   $("lock-password").textContent = state.lock_password ? "비밀번호 바꾸기" : "비밀번호 정하기";
+  const vault = state.lock_vault;
+  $("vault-path").textContent = vault.path ? `금고: ${vault.path} (${vault.count.toLocaleString()}개${vault.open ? ", 열림" : ""})` : "금고: 정하지 않음";
+  $("lock-vault").textContent = vault.path ? "금고 위치 바꾸기" : "금고 위치 정하기";
 }
 
 $("days-save").addEventListener("click", async () => {

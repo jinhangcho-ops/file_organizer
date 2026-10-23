@@ -1,7 +1,6 @@
 """차단 폴더(관리자만 바꿈, 색인·작업에서 완전히 뺌)와 잠금 폴더(Windows 거부 권한 + 숨김, 비밀번호로 열기), 폴더 용량.
 잠금은 임시 폴더에서 실제 icacls로 걸고 푼다. 검사가 중간에 실패해도 끝나면 임시 폴더의 거부 권한을 모두 뗀다."""
 import os
-import subprocess
 
 import pytest
 
@@ -11,12 +10,6 @@ import tree
 from conftest import build, write
 
 PASSWORD = "test-1234"  # 지어낸 시험용 비밀번호
-
-
-@pytest.fixture
-def unlock_after(tmp_path):
-    yield
-    subprocess.run(["icacls", str(tmp_path), "/remove:d", f"*{lock.user_sid()}", "/T", "/C"], capture_output=True)
 
 
 def listed(client):
@@ -65,10 +58,11 @@ def test_lock_open_close_release(home, client, monkeypatch, unlock_after):
     assert client.post("/api/lock", json={"path": box, "password": PASSWORD}).status_code == 400  # 비밀번호를 정하기 전
     assert client.post("/api/lock/password", json={"new": "12"}).status_code == 400  # 너무 짧다
     assert client.post("/api/lock/password", json={"new": PASSWORD}).status_code == 200
-    assert "test-1234" not in (home.parent / "appdata" / "file_organizer" / "lock.json").read_text(encoding="utf-8")  # 해시만 둔다
+    secret_file = home.parent / "appdata" / "file_organizer" / "lock.dat"
+    assert b"hash" not in secret_file.read_bytes() and os.stat(secret_file).st_file_attributes & 0x2  # 암호화한 숨김 파일
     assert client.post("/api/lock", json={"path": str(home), "password": PASSWORD}).status_code == 400  # 색인한 맨 위 폴더
     assert client.post("/api/lock", json={"path": box, "password": "틀림"}).status_code == 400
-    assert client.post("/api/lock", json={"path": box, "password": PASSWORD}).json["locks"] == [{"path": box, "open": False}]
+    assert client.post("/api/lock", json={"path": box, "password": PASSWORD}).json["locks"] == [{"path": box, "open": False, "vault": False, "missing": False}]
     assert secret not in listed(client)
     with pytest.raises(PermissionError):
         os.listdir(box)
@@ -78,7 +72,7 @@ def test_lock_open_close_release(home, client, monkeypatch, unlock_after):
     build(home)
     assert secret not in listed(client)
     assert client.post("/api/lock/open", json={"path": box, "password": "틀림"}).status_code == 400
-    assert client.post("/api/lock/open", json={"path": box, "password": PASSWORD}).json["locks"] == [{"path": box, "open": True}]
+    assert client.post("/api/lock/open", json={"path": box, "password": PASSWORD}).json["locks"] == [{"path": box, "open": True, "vault": False, "missing": False}]
     assert opened == [box] and os.listdir(box) == ["일기.txt"]
     build(home)
     assert secret not in listed(client)  # 열어 둔 동안에도 색인하지 않는다

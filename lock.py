@@ -1,38 +1,103 @@
-"""잠금 폴더: 비밀번호를 맞춰야 열리는 폴더. Windows 권한으로 가린다(암호화가 아니다).
-잠그면 내 계정에 '거부' 권한(목록·읽기·쓰기·만들기·지나가기·지우기, 그 아래 전부)을 붙이고 숨김·시스템 속성을 켠다.
+"""잠금 폴더: 비밀번호를 맞춰야 열리는 폴더. Windows 권한으로 가린다(암호화가 아니다). 두 가지 방법이 있다.
+- 제자리에서 잠그기: 그 폴더에 내 계정의 '거부' 권한(목록·읽기·쓰기·만들기·지나가기·지우기, 그 아래 전부)을 붙이고 숨김·시스템 속성을 켠다.
+- 금고로 모으기: 폴더를 금고(사용자가 고른 곳의 .vault, 같은 디스크) 안으로 무작위 이름으로 옮기고, 금고 하나만 위처럼 잠근다.
 권한 보기·바꾸기는 거부하지 않는다. 그래서 관리자 권한 없이 다시 풀 수 있다(모든 권한(F)을 거부하면 관리자만 풀 수 있다).
-비밀번호는 저장하지 않고 PBKDF2 해시만 설정 폴더의 lock.json에 둔다. 열어 둔 폴더는 창을 닫을 때 다시 잠근다."""
+목록(원래 위치, 금고 안 이름, 열림)과 비밀번호의 PBKDF2 해시는 비밀 파일 lock.dat 하나에 DPAPI(이 Windows 계정만 푸는 암호화)로 둔다.
+앱 안에서 위 폴더를 옮기거나 이름을 바꾸면 moved가 위치를 고친다. 열어 둔 것은 창을 닫을 때와 다음에 켤 때 다시 잠근다."""
 import ctypes
 import hashlib
 import hmac
+import json
 import os
 import secrets
 import subprocess
+from ctypes import wintypes
 
+import drives
 import exclude
 import fence
+import organize
 import settings
 
-FILE = "lock.json"
+FILE = "lock.dat"
+OLD_FILE = "lock.json"  # 예전에 암호화하지 않고 두던 곳. 읽으면 lock.dat으로 옮기고 지운다.
+VAULT = ".vault"
 ROUNDS = 200_000
 MIN_LENGTH = 4
 DENY = "(OI)(CI)(RD,WD,AD,X,DC,D)"
 HIDE = 0x2 | 0x4  # 숨김 | 시스템
 sid = [None]  # 지금 사용자의 SID(한 번 묻고 기억한다)
+kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+kernel.GetFileAttributesW.restype = wintypes.DWORD
+kernel.GetFileAttributesW.argtypes = [wintypes.LPCWSTR]
+kernel.SetFileAttributesW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD]
+kernel.LocalFree.argtypes = [ctypes.c_void_p]
+crypt = ctypes.WinDLL("crypt32", use_last_error=True)
+
+
+class NoPlace(ValueError):
+    """꺼낼 원래 위 폴더가 없다(화면이 폴더를 골라 다시 부른다)."""
+
+
+class Blob(ctypes.Structure):
+    _fields_ = [("size", wintypes.DWORD), ("data", ctypes.POINTER(ctypes.c_char))]
+
+
+def dpapi(data, protect):
+    """DPAPI로 암호화(protect)하거나 푼다. 이 Windows 계정으로 로그인했을 때만 풀린다."""
+    buffer = ctypes.create_string_buffer(data, len(data))
+    source, out = Blob(len(data), ctypes.cast(buffer, ctypes.POINTER(ctypes.c_char))), Blob()
+    call = crypt.CryptProtectData if protect else crypt.CryptUnprotectData
+    if not call(ctypes.byref(source), None, None, None, None, 1, ctypes.byref(out)):  # 1: 창을 띄우지 않는다
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        return ctypes.string_at(out.data, out.size)
+    finally:
+        kernel.LocalFree(out.data)
+
+
+def store_path():
+    return settings.folder() / FILE
 
 
 def load():
-    data = settings.read(FILE, {})
-    return {"hash": data.get("hash"), "salt": data.get("salt"), "folders": [f for f in data.get("folders", []) if isinstance(f, dict)]}
+    """비밀 파일을 읽는다. {"hash", "salt", "vault", "vault_open", "folders": [{"path", "open"} 또는 {"path", "id"}(금고)]}"""
+    path = store_path()
+    if path.exists():
+        data = json.loads(dpapi(path.read_bytes(), False).decode("utf-8"))
+    else:
+        data = settings.read(OLD_FILE, {})
+        if data:
+            save(data)
+            (settings.folder() / OLD_FILE).unlink()  # 이 앱의 설정 파일(사용자 파일 아님). 위에서 lock.dat으로 옮겼다.
+    return {"hash": data.get("hash"), "salt": data.get("salt"), "vault": data.get("vault") or "", "vault_open": bool(data.get("vault_open")),
+            "folders": [f for f in data.get("folders", []) if isinstance(f, dict) and isinstance(f.get("path"), str)]}
+
+
+def save(data):
+    path = store_path()
+    temp = path.with_suffix(".tmp")
+    temp.write_bytes(dpapi(json.dumps(data, ensure_ascii=False).encode("utf-8"), True))
+    os.replace(temp, path)
+    kernel.SetFileAttributesW(str(path), 0x2)  # 숨김. 바꿔치기하면 속성이 빠져 다시 켠다.
 
 
 def folders():
-    return [f["path"] for f in load()["folders"]]
+    """색인·작업에서 빼는 곳: 제자리 잠금 폴더들과 금고."""
+    data = load()
+    return [f["path"] for f in data["folders"] if not f.get("id")] + ([data["vault"]] if data["vault"] else [])
 
 
 def listing():
-    """화면에 보여 줄 잠금 폴더들 [{"path", "open"}]."""
-    return [{"path": f["path"], "open": bool(f.get("open"))} for f in load()["folders"]]
+    """화면에 보여 줄 잠금 폴더들 [{"path", "open", "vault", "missing"}]. 금고 안의 것은 금고가 열려 있으면 open."""
+    data = load()
+    return [{"path": f["path"], "vault": bool(f.get("id")), "open": data["vault_open"] if f.get("id") else bool(f.get("open")),
+             "missing": not f.get("id") and not os.path.isdir(f["path"])} for f in data["folders"]]
+
+
+def vault_info():
+    data = load()
+    return {"path": data["vault"], "open": data["vault_open"], "count": sum(1 for f in data["folders"] if f.get("id"))}
 
 
 def has_password():
@@ -59,7 +124,7 @@ def set_password(new, old=None):
     if not isinstance(new, str) or len(new) < MIN_LENGTH:
         raise ValueError(f"비밀번호는 {MIN_LENGTH}자 이상으로 정하세요.")
     salt = secrets.token_hex(16)
-    settings.write(FILE, {**data, "hash": digest(new, salt), "salt": salt})
+    save({**data, "hash": digest(new, salt), "salt": salt})
 
 
 def user_sid():
@@ -78,7 +143,6 @@ def icacls(*args):
 
 
 def attributes(path, hide):
-    kernel = ctypes.windll.kernel32
     now = kernel.GetFileAttributesW(path)
     if now == 0xFFFFFFFF:
         raise OSError(f"폴더 속성을 읽지 못했습니다: {path}")
@@ -101,64 +165,181 @@ def unseal(path):
     attributes(path, False)
 
 
-def record(path):
-    for f in load()["folders"]:
+def record(data, path):
+    for f in data["folders"]:
         if exclude.key(f["path"]) == exclude.key(path):
             return f
     raise ValueError(f"잠금 폴더가 아닙니다: {path}")
 
 
-def mark(path, is_open):
-    """path의 열림 표시를 바꾼다. is_open이 None이면 목록에서 뺀다."""
-    data = load()
-    kept = [f for f in data["folders"] if exclude.key(f["path"]) != exclude.key(path)]
-    if is_open is not None:
-        kept.append({"path": path, "open": is_open})
-    settings.write(FILE, {**data, "folders": kept})
+def put(data, item):
+    """item(같은 원래 위치의 기록은 바꾼다)을 넣어 저장한다. item이 {"path"}만 있으면 그 기록을 뺀다."""
+    kept = [f for f in data["folders"] if exclude.key(f["path"]) != exclude.key(item["path"])]
+    save({**data, "folders": kept + ([item] if len(item) > 1 else [])})
 
 
-def lock(path, password, others):
-    """폴더를 잠근다. others: 겹치면 안 되는 차단 폴더 key들."""
-    verify(password)
+def check_new(path, others):
+    """새로 잠그거나 금고로 모을 수 있는 폴더인지. others: 겹치면 안 되는 차단 폴더 key들."""
     path = os.path.abspath(path)
     if not os.path.isdir(path) or os.path.dirname(path) == path:
         raise ValueError(f"잠글 수 있는 폴더가 아닙니다: {path}")
     if fence.overlaps(path, {exclude.key(p) for p in folders()} | set(others)):
-        raise ValueError(f"이미 잠갔거나 차단한 폴더와 겹칩니다: {path}")
-    seal(path)
-    mark(path, False)
-
-
-def open_folder(path, password):
-    """비밀번호가 맞으면 잠시 푼다(창을 닫거나 [다시 잠그기]를 누르면 다시 잠근다)."""
-    verify(password)
-    path = record(path)["path"]
-    unseal(path)
-    mark(path, True)
+        raise ValueError(f"이미 잠갔거나 차단한 폴더(또는 금고)와 겹칩니다: {path}")
     return path
 
 
+def lock(path, password, others):
+    """제자리에서 잠근다. 기록을 먼저 적고, 잠그기가 실패하면 기록을 지운다(잠겼는데 목록에 없는 폴더가 생기지 않게)."""
+    verify(password)
+    path = check_new(path, others)
+    data = load()
+    put(data, {"path": path, "open": False})
+    try:
+        seal(path)
+    except OSError:
+        put(load(), {"path": path})
+        raise
+
+
+def set_vault(place, password):
+    """금고를 place 안의 .vault로 정한다(만들고 잠근다). 금고에 든 것이 있으면 바꾸지 않는다."""
+    verify(password)
+    data = load()
+    if any(f.get("id") for f in data["folders"]):
+        raise ValueError("금고에 든 폴더를 모두 꺼낸 뒤에 금고를 바꿀 수 있습니다.")
+    place = settings.folder_text(place, "금고 위치")
+    vault = os.path.join(place, VAULT)
+    os.makedirs(vault, exist_ok=True)
+    if data["vault"] and exclude.key(data["vault"]) != exclude.key(vault) and os.path.isdir(data["vault"]):
+        unseal(data["vault"])  # 빈 옛 금고는 잠금만 푼다(지우지 않는다).
+    if not (data["vault"] and exclude.key(data["vault"]) == exclude.key(vault) and not data["vault_open"]):
+        seal(vault)
+    save({**data, "vault": vault, "vault_open": False})
+    return vault
+
+
+class Opened:
+    """금고를 잠시 열었다가(잠겨 있었으면) 다시 잠근다."""
+
+    def __init__(self, data):
+        self.vault, self.was_sealed = data["vault"], not data["vault_open"]
+
+    def __enter__(self):
+        if self.was_sealed:
+            unseal(self.vault)
+
+    def __exit__(self, *error):
+        if self.was_sealed:
+            seal(self.vault)
+
+
+def collect(path, password, others):
+    """금고로 모은다: 같은 디스크의 금고 안으로 무작위 이름으로 옮긴다(이름 바꾸기라 복사하지 않는다). 기록을 먼저 적는다."""
+    verify(password)
+    data = load()
+    if not data["vault"]:
+        raise ValueError("먼저 설정에서 금고 위치를 정하세요.")
+    path = check_new(path, others)
+    if not drives.same_drive(path, data["vault"]):
+        raise ValueError("금고와 다른 디스크의 폴더라 금고로 모을 수 없습니다. [잠그기]로 제자리에서 잠그세요.")
+    item = {"path": path, "id": secrets.token_hex(8)}
+    put(data, item)
+    try:
+        with Opened(data):
+            os.rename(path, os.path.join(data["vault"], item["id"]))
+    except OSError:
+        put(load(), {"path": path})
+        raise
+
+
+def open_folder(path, password):
+    """비밀번호가 맞으면 잠시 푼다. 금고 안의 것은 금고를 열고 그 폴더 경로를 돌려준다(창을 닫거나 [다시 잠그기]로 다시 잠근다)."""
+    verify(password)
+    data = load()
+    found = record(data, path)
+    if found.get("id"):
+        if not data["vault_open"]:
+            unseal(data["vault"])
+            save({**data, "vault_open": True})
+        return os.path.join(data["vault"], found["id"])
+    unseal(found["path"])
+    put(data, {"path": found["path"], "open": True})
+    return found["path"]
+
+
 def close(path):
-    """열어 둔 폴더를 다시 잠근다(비밀번호는 묻지 않는다)."""
-    path = record(path)["path"]
-    seal(path)
-    mark(path, False)
+    """열어 둔 것을 다시 잠근다(비밀번호는 묻지 않는다). 금고 안의 것이면 금고를 잠근다."""
+    data = load()
+    found = record(data, path)
+    if found.get("id"):
+        seal(data["vault"])
+        save({**data, "vault_open": False})
+        return
+    seal(found["path"])
+    put(data, {"path": found["path"], "open": False})
+
+
+def take_out(path, password, folder=None):
+    """금고에서 꺼낸다. 원래 위 폴더(또는 고른 folder)에 같은 이름이 있으면 '이름 (2)'. 위 폴더가 없으면 NoPlace."""
+    verify(password)
+    data = load()
+    found = record(data, path)
+    if not found.get("id"):
+        raise ValueError(f"금고에 든 폴더가 아닙니다: {path}")
+    parent = folder or os.path.dirname(found["path"])
+    if not os.path.isdir(parent):
+        raise NoPlace(f"원래 위 폴더가 없습니다. 꺼낼 폴더를 고르세요: {parent}")
+    if not drives.same_drive(parent, data["vault"]):
+        raise ValueError("금고와 같은 디스크의 폴더를 고르세요.")
+    fence.refuse(parent)
+    target = organize.free_name(parent, os.path.basename(found["path"]), set())
+    with Opened(data):
+        os.rename(os.path.join(data["vault"], found["id"]), target)
+    put(load(), {"path": found["path"]})
+    return target
 
 
 def release(path, password):
-    """잠금을 아주 푼다(목록에서 뺀다). 다음 색인부터 다시 들어간다."""
+    """제자리 잠금을 아주 푼다(목록에서 뺀다). 폴더가 사라졌으면(앱 밖에서 옮김·지움) 목록에서만 뺀다."""
     verify(password)
-    found = record(path)
-    if not found.get("open"):
+    data = load()
+    found = record(data, path)
+    if found.get("id"):
+        raise ValueError("금고에 든 폴더는 [꺼내기]로 꺼내세요.")
+    if os.path.isdir(found["path"]) and not found.get("open"):
         unseal(found["path"])
-    mark(found["path"], None)
+    put(data, {"path": found["path"]})
+
+
+def moved(pairs):
+    """앱 안에서 옮기거나 이름을 바꾼 (전, 후) 폴더 안에 든 제자리 잠금 폴더·금고의 위치를 고친다."""
+    data = load()
+    changed = False
+    for before, after in pairs:
+        old = exclude.key(before)
+        for item in data["folders"] + [data]:
+            name = "vault" if item is data else "path"
+            value = item.get(name)
+            if not value or (item is not data and item.get("id")) or not fence.inside(value, {old}):
+                continue
+            item[name] = after + value[len(before):]
+            changed = True
+    if changed:
+        save(data)
 
 
 def close_all():
-    """창을 닫을 때: 열어 둔 잠금 폴더를 모두 다시 잠근다. 하나가 실패해도 나머지는 한다."""
-    for f in load()["folders"]:
-        if f.get("open"):
+    """열어 둔 잠금 폴더와 금고를 모두 다시 잠근다(창을 닫을 때와, 지난번에 비정상으로 끝났을 때를 위해 켤 때). 하나가 실패해도 나머지는 한다."""
+    data = load()
+    for f in data["folders"]:
+        if f.get("open") and not f.get("id"):
             try:
                 close(f["path"])
             except (OSError, ValueError):
                 continue
+    if data["vault_open"] and data["vault"]:
+        try:
+            seal(data["vault"])
+            save({**load(), "vault_open": False})
+        except OSError:
+            pass

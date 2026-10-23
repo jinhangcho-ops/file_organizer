@@ -3,6 +3,7 @@ import os
 
 import exclude
 import index
+import lock
 import organize
 import trash
 
@@ -30,6 +31,7 @@ def move_many(paths, folder, progress=lambda *args: None):
     progress(len(paths), len(paths))
     if done:
         index.moved(done)
+        lock.moved(done)  # 옮긴 폴더 안의 잠금 폴더·금고 위치를 비밀 파일에서 고친다.
     return {"moved": len(done), "failed": failed, "paths": [after for _, after in done]}
 
 
@@ -45,6 +47,7 @@ def rename(path, name):
         raise ValueError(f"같은 이름의 파일이 있습니다: {name}")
     os.rename(path, target)
     index.moved([(path, target)])
+    lock.moved([(path, target)])
     return target
 
 

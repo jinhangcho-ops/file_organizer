@@ -133,9 +133,11 @@
         <div class="box">
           <h3>잠금 폴더</h3>
           <div class="hint">비밀번호를 넣어야 열리는 폴더예요. 왼쪽 폴더 목록에서 폴더를 오른쪽 클릭하고 “잠그기”를 고르세요. 잠그면 Windows 권한으로 내 계정의 접근을 막고 숨겨요. 암호화는 아니어서 관리자나 권한 명령을 아는 사람은 풀 수 있어요(가리기 수준). 열어 둔 폴더는 프로그램을 닫을 때 다시 잠가요.</div>
+          <div class="hint">“금고로 모으기”를 고르면 폴더를 금고 안으로 옮겨(무작위 이름) 금고 하나만 잠가요. 원래 위치는 암호화한 비밀 파일에만 남고, [꺼내기]로 되돌려요. 금고와 같은 디스크의 폴더만 모을 수 있어요.</div>
           <div class="list" id="locks"></div>
           <div class="em" id="locks-empty">잠근 폴더가 없어요.</div>
-          <div class="row" style="margin-top:10px"><button class="btn s" id="lock-password">비밀번호 정하기</button></div>
+          <p class="hint mono" id="vault-path" style="margin:10px 0 0"></p>
+          <div class="row" style="margin-top:10px"><button class="btn s" id="lock-password">비밀번호 정하기</button><button class="btn s" id="lock-vault">금고 위치 정하기</button></div>
         </div>
       </div>
     </div>
@@ -197,6 +199,7 @@
   <button data-act="reveal" data-for="file">폴더 열기</button>
   <button data-act="exclude" data-for="file">예외로 지정</button>
   <button data-act="lock" data-for="folder">잠그기</button>
+  <button data-act="vault" data-for="folder">금고로 모으기</button>
   <button data-act="block" data-for="folder" data-admin="1">차단 폴더로</button>
 </div>
 

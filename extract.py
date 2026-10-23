@@ -77,8 +77,11 @@ def readable(ext, size):
 
 
 def text(path, ext):
-    """파일의 글자. 읽지 못하면 빈 글자."""
+    """파일의 글자. 파일을 열거나 읽지 못하면(잠시 잠김, 클라우드 전용 등) None이라 색인이 다음에 다시 읽는다.
+    내용이 깨진 파일은 빈 글자(다시 읽어도 같으므로 읽은 것으로 둔다)."""
     try:
         return READERS[ext](path)[:MAX_CHARS]
+    except OSError:
+        return None
     except Exception:  # 라이브러리마다 깨진 파일의 오류가 제각각이다.
         return ""

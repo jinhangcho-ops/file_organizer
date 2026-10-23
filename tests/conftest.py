@@ -3,17 +3,24 @@
 - 휴지통은 실제로 쓰지 않는다(fake_trash: send2trash 대신 임시 '휴지통' 폴더로 옮기고 경로를 기록한다)."""
 import os
 import shutil
+import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# 검사 전체의 바탕도 임시 폴더로 둔다. 검사마다 home이 다시 바꾸지만, monkeypatch를 잘못 되돌려도(undo) 실제 설정·색인·차단 목록에 닿지 않게.
+SAFE = Path(tempfile.mkdtemp(prefix="file_organizer_tests_"))
+os.environ["APPDATA"] = str(SAFE / "appdata")
+os.environ["PROGRAMDATA"] = str(SAFE / "programdata")
 
 import blacklist  # noqa: E402
 import index  # noqa: E402
 import jobs  # noqa: E402
+import lock  # noqa: E402
 import server  # noqa: E402
 import settings  # noqa: E402
 import trash  # noqa: E402
@@ -26,6 +33,7 @@ def clean_temp(tmp_path_factory):
     """검사가 모두 끝나면 지어낸 파일·가짜 휴지통이 든 임시 폴더를 지운다(pytest의 보관 설정만으로는 Windows에서 남았다)."""
     yield
     shutil.rmtree(tmp_path_factory.getbasetemp(), ignore_errors=True)
+    shutil.rmtree(SAFE, ignore_errors=True)
 
 
 @pytest.fixture
@@ -98,3 +106,10 @@ def finish():
     status = jobs.wait(60)
     assert not status["running"], "작업이 끝나지 않았습니다"
     return status
+
+
+@pytest.fixture
+def unlock_after(tmp_path):
+    """잠금 검사가 끝나면(실패해도) 임시 폴더 아래의 거부 권한을 모두 뗀다. 안 떼면 임시 폴더를 지울 수 없다."""
+    yield
+    subprocess.run(["icacls", str(tmp_path), "/remove:d", f"*{lock.user_sid()}", "/T", "/C"], capture_output=True)
