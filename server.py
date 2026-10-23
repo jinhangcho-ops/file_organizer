@@ -240,6 +240,7 @@ def move():
         fence.refuse(folder)
     for path in paths:  # 잠금 폴더를 품은 폴더는 같은 디스크 안에서만 옮긴다(위치는 lock.moved가 고친다).
         fence.refuse_holding(path, drives.same_drive(path, folder), moving=True)
+        lock.refuse_clash(path, os.path.join(folder, os.path.basename(path)))
     return jsonify(job=jobs.start("옮기기", lambda progress: actions.move_many(paths, folder, progress)))
 
 
@@ -247,6 +248,7 @@ def move():
 def rename():
     path = indexed_path()
     fence.refuse_holding(path, True)
+    lock.refuse_clash(path, os.path.join(os.path.dirname(path), str(body().get("name") or "").strip()))
     return jsonify(path=actions.rename(path, body().get("name")))
 
 

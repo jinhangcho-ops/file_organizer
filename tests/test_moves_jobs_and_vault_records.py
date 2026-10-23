@@ -140,3 +140,16 @@ def test_partly_moved_folder_is_indexed_where_it_went(home, client, monkeypatch)
     assert job and result["moved"] == 1 and result["failed"][0]["error"] == "일부 남김"
     listed = [row["path"] for row in client.post("/api/files", json={}).json["rows"]]
     assert listed == [str(home / "받을" / "보낼" / "a.txt")]
+
+
+def test_move_that_would_put_a_lock_on_a_vault_items_place_is_refused(home, client, vault, unlock_after):
+    write(home / "가" / "사진" / "a.jpg")
+    write(home / "나" / "사진" / "b.jpg")
+    write(home / "나" / "c.txt")
+    build(home)
+    client.post("/api/lock", json={"path": str(home / "가" / "사진"), "password": PASSWORD, "vault": True})
+    client.post("/api/lock", json={"path": str(home / "나" / "사진"), "password": PASSWORD})
+    os.rmdir(home / "가")  # 금고에 든 폴더의 원래 위 폴더가 사라졌다
+    answer = client.post("/api/rename", json={"path": str(home / "나"), "name": "가"})
+    assert answer.status_code == 400 and "원래 위치와 같아집니다" in answer.json["error"]
+    assert os.path.isdir(home / "나") and len(lock.listing()) == 2
