@@ -1,0 +1,57 @@
+"""폴더 메모(상세의 '내 메모'): 설정 폴더의 notes.json {비교용 key: {"path", "text"}}.
+앱 안에서 옮기거나 이름을 바꾸면 따라가고(moved), 휴지통으로 보내면 지운다(removed). 앱 밖(탐색기)에서 옮긴 것은 따라가지 못한다."""
+import os
+
+import exclude
+import fence
+import settings
+
+FILE = "notes.json"
+MAX = 500  # 메모 한 개의 최대 글자 수
+
+
+def load():
+    data = settings.read(FILE, {})
+    return data if isinstance(data, dict) else {}
+
+
+def get(path):
+    return (load().get(exclude.key(path)) or {}).get("text", "")
+
+
+def put(path, text):
+    """메모를 저장한다(빈 글이면 지운다). 저장한 글."""
+    if not isinstance(text, str) or len(text) > MAX:
+        raise ValueError(f"메모는 {MAX}자까지 쓸 수 있습니다.")
+    data = load()
+    text = text.strip()
+    if text:
+        data[exclude.key(path)] = {"path": os.path.abspath(path), "text": text}
+    else:
+        data.pop(exclude.key(path), None)
+    settings.write(FILE, data)
+    return text
+
+
+def moved(pairs):
+    """옮기거나 이름을 바꾼 (전, 후) 경로 안(또는 그 자신)의 메모 위치를 고친다."""
+    data = load()
+    changed = False
+    for before, after in pairs:
+        old = {exclude.key(before)}
+        for key in [k for k, v in data.items() if fence.inside(v["path"], old)]:
+            note = data.pop(key)
+            path = after + note["path"][len(before):]
+            data[exclude.key(path)] = {"path": path, "text": note["text"]}
+            changed = True
+    if changed:
+        settings.write(FILE, data)
+
+
+def removed(paths):
+    """휴지통으로 보낸 경로 안(또는 그 자신)의 메모를 지운다."""
+    gone = {exclude.key(p) for p in paths}
+    data = load()
+    kept = {k: v for k, v in data.items() if not fence.inside(v["path"], gone)}
+    if len(kept) != len(data):
+        settings.write(FILE, kept)

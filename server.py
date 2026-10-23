@@ -18,6 +18,7 @@ import jobs
 import kinds
 import lock
 import models
+import notes
 import organize
 import protect
 import recognize
@@ -301,6 +302,49 @@ def rename():
     fence.refuse_holding(path, True)
     lock.refuse_clash(path, os.path.join(os.path.dirname(path), str(body().get("name") or "").strip()))
     return jsonify(path=actions.rename(path, body().get("name")))
+
+
+@app.get("/api/folder_summary")
+def folder_summary():
+    """상세의 폴더 설명: 자동 요약(tree.summary)과 내 메모."""
+    path = checked(request.args.get("path", ""))
+    return jsonify(summary=tree.summary(path), note=notes.get(path))
+
+
+@app.post("/api/note")
+def save_note():
+    """폴더 메모 저장(빈 글이면 지운다)."""
+    data = body()
+    return jsonify(note=notes.put(checked(data.get("path") or ""), data.get("text")))
+
+
+@app.post("/api/folder/empty")
+def empty_folder():
+    """폴더 비우기: 안의 파일·폴더를 모두 휴지통으로(폴더는 남는다). confirm이 없으면 보낼 개수만 알려 준다(화면이 확인을 받는다).
+    드라이브 전체는 비우지 않는다. 숨김·시스템 파일은 건드리지 않는다. 지우면 안 되는 것(차단·잠금이 든 것, 구조 보호)은 그 항목만 뺀다."""
+    data = body()
+    path = checked(data.get("path") or "")
+    if not os.path.isdir(path):
+        raise ValueError(f"폴더가 아닙니다: {path}")
+    if os.path.dirname(path) == path:
+        raise ValueError(f"드라이브 전체는 비우지 않습니다: {path}")
+    if fence.inside(path, protect.keys()):  # 구조 보호 폴더(와 그 안)는 안의 것을 휴지통으로 보내지 않는다.
+        raise ValueError(f"구조 보호 폴더라 비울 수 없습니다: {path}")
+    paths, hidden = actions.folder_contents(path)
+    refused = []
+    for item in list(paths):
+        try:
+            fence.refuse(item)
+            fence.refuse_holding(item, False)
+        except ValueError as e:
+            refused.append({"from": item, "error": str(e)})
+            paths.remove(item)
+    if data.get("confirm") is not True:
+        return jsonify(count=len(paths), hidden=hidden, refused=refused)
+    def work(progress):
+        result = actions.trash_many(paths, progress)
+        return result | {"failed": refused + result["failed"], "hidden": hidden}
+    return jsonify(job=jobs.start("폴더 비우기", work))
 
 
 @app.post("/api/trash")

@@ -93,6 +93,10 @@ html.pane-dragging, html.pane-dragging * { cursor: col-resize !important; user-s
 .fl .c:not(:empty):hover { background: var(--line); color: var(--ink); }
 .hd-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 #files tr.group td { background: var(--panel2); color: var(--mute); font-size: 12px; padding: 6px 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#files tr.dir td.name { font-weight: 600; }
+#files tr.dir td.name svg { color: var(--mute); vertical-align: -2px; margin-right: 6px; }
+#files tr.dir small { color: var(--mute); font-weight: 400; margin-left: 8px; }
+#folder-note { width: 100%; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); padding: 6px 8px; font: inherit; color: inherit; resize: vertical; user-select: text; }
 .fl-empty { padding: 14px 16px; color: var(--mute); display: grid; gap: 8px; justify-items: start; }
 .pill.link { cursor: pointer; border: none; font: inherit; }
 .pill.link:hover { text-decoration: underline; }

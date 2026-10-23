@@ -300,6 +300,7 @@ function folderRow(folder, depth, biggest, top) {
   });
   row.addEventListener("click", () => {
     openScope({folder: folder.path, name: folder.name});
+    showDetail({...folder, folder: true});
     if (folder.has_children && !open) toggleFolder(folder, true);
   });
   if (!top) {  // 색인한 맨 위 폴더는 통째로 옮기거나 지우지 않는다.
@@ -445,9 +446,20 @@ let lastFound = null;  // 직전 목록의 답(정렬만 바꿀 때 개수·칩�
 
 // rowsOnly(정확히 true): 정렬만 바뀌었을 때. 서버는 줄만 주고(개수를 다시 세지 않아 빠르다), 나머지는 직전 답을 쓴다.
 // .then(loadFiles)처럼 콜백으로 넘기면 앞 단계의 답이 첫 인자로 들어오므로 true만 받는다.
+// 탐색기처럼 볼 때: 폴더 하나를 보고 검색어·[조건]·모아 보기·추정이 없으면, 바로 아래 폴더 줄과 그 폴더에 바로 든 파일만.
+const browsing = () => !!scope.folder && !scope.same && !scope.tag && !filter && !$("name").value.trim() && !Object.values(more).some((v) => String(v).trim());
+
+// 폴더 줄의 정렬: 이름이면 이름, 크기면 용량, 날짜면 이름 순(폴더 날짜는 색인하지 않는다).
+function sortFolders(list) {
+  const by = sort === "size" ? (a, b) => a.size - b.size : (a, b) => a.name.localeCompare(b.name, "ko");
+  return [...list].sort((a, b) => (order === "asc" || sort === "date" ? by(a, b) : by(b, a)));
+}
+
 async function loadFiles(rowsOnly) {
   const number = ++listed;
   const query = {...more, name: $("name").value, kind, ext, sort, order};
+  const direct = browsing();
+  if (direct) query.direct = true;
   if (rowsOnly === true && lastFound) query.rows_only = true;
   if (filter) query.view = filter;
   if (scope.folder) query.folder = scope.folder;
@@ -455,12 +467,13 @@ async function loadFiles(rowsOnly) {
   if (scope.same) query.same_as = scope.same;
   if (tag || scope.tag) query.tag = tag || scope.tag;
   try {
-    const [found, chain] = await Promise.all([api("/api/files", query),
-      scope.folder ? api("/api/chain?folder=1&path=" + encodeURIComponent(scope.folder)) : Promise.resolve({folders: []})]);
+    const [found, chain, sub] = await Promise.all([api("/api/files", query),
+      scope.folder ? api("/api/chain?folder=1&path=" + encodeURIComponent(scope.folder)) : Promise.resolve({folders: []}),
+      direct && !kind ? api("/api/tree?path=" + encodeURIComponent(scope.folder)) : Promise.resolve({folders: []})]);
     if (number !== listed) return;
     $("list-error").classList.add("hidden");
     lastFound = query.rows_only ? {...lastFound, ...found} : found;
-    showFiles(lastFound, chain.folders);
+    showFiles(lastFound, chain.folders, sortFolders(sub.folders).map((f) => ({...f, folder: true})));
   } catch (e) {
     $("list-error").textContent = e.message;
     $("list-error").classList.remove("hidden");
@@ -475,11 +488,12 @@ function chips(box, items, current, onPick) {
   }));
 }
 
-function showFiles(found, chain) {
+function showFiles(found, chain, dirs = []) {
   $("title").textContent = scope.same ? `같은 파일: ${scope.name}` : scope.tag ? `추정: ${scope.name}` : scope.folder ? scope.name
     : chosenDrive() ? `모든 파일 · ${chosenDrive()}` : "모든 파일";
   const where = chain.length ? chain.map((f) => f.name).join(" › ") + " · " : "";
-  $("summary").textContent = `${where}파일 ${found.total.toLocaleString()}개 · ${size(found.bytes)}` + (found.more ? ` · 앞의 ${found.rows.length.toLocaleString()}개만 보여요` : "");
+  $("summary").textContent = `${where}${dirs.length ? `폴더 ${dirs.length.toLocaleString()}개 · ` : ""}파일 ${found.total.toLocaleString()}개 · ${size(found.bytes)}`
+    + (found.more ? ` · 앞의 ${found.rows.length.toLocaleString()}개만 보여요` : "");
   const viewCounts = Object.fromEntries(found.views);
   chips($("filters"), Object.keys(VIEWS).map((v) => [v, viewTitle(v), viewCounts[v]]), filter, (v) => { filter = filter === v ? "" : v; loadFiles(); });
   // 종류는 서버가 많이 누른 순서로 준다(search.chip_order). [전체]는 늘 맨 앞.
@@ -499,12 +513,13 @@ function showFiles(found, chain) {
     th.classList.toggle("sorted", th.dataset.sort === sort);
     th.textContent = th.textContent.replace(/ [↑↓]$/, "") + (th.dataset.sort === sort ? (order === "asc" ? " ↑" : " ↓") : "");
   });
-  rows = found.rows;
+  rows = [...dirs, ...found.rows];  // 폴더 줄도 줄로 다룬다(고르기·Shift 범위·옮기기·휴지통이 그대로 된다).
   for (const key of [...selected.keys()]) if (!rows.some((r) => lower(r.path) === key)) selected.delete(key);  // 목록에서 빠진 줄은 고르지 않은 것으로
   const stale = `${state.settings.stale_days}일 넘게 안 열었어요`;
-  const grouped = state.settings.list_group === "folder" && !scope.same;
+  const grouped = state.settings.list_group === "folder" && !scope.same && !browsing();
   let lastFolder = null;
   $("files").tBodies[0].replaceChildren(...rows.flatMap((row, i) => {
+    if (row.folder) return [folderLine(row, i)];
     const folder = row.path.slice(0, row.path.lastIndexOf("\\"));
     const head = grouped && folder !== lastFolder ? el("tr", {className: "group"}, el("td", {colSpan: 4, textContent: folder, title: folder})) : null;
     lastFolder = folder;
@@ -522,6 +537,31 @@ function showFiles(found, chain) {
   $("empty").textContent = state.counts.all ? "조건에 맞는 파일이 없어요." : "아직 색인이 없어요. 설정(톱니)에서 [색인 갱신]을 누르세요.";
   $("empty").classList.toggle("hidden", rows.length > 0);
   showSelection();
+}
+
+// 가운데 목록의 폴더 줄: 한 번 누르면 상세에 폴더 설명, 두 번 누르면 들어간다. 파일을 끌어 놓으면 그 안으로 옮긴다.
+function folderLine(row, i) {
+  const name = el("td", {className: "name", title: row.path});
+  name.insertAdjacentHTML("beforeend", FOLDER_ICON);
+  name.append(row.name, el("small", {textContent: `파일 ${row.files.toLocaleString()}개`}));
+  const tr = el("tr", {className: "dir"}, el("td", {className: "ck"}, el("input", {type: "checkbox"})), name,
+    el("td", {className: "n mute", textContent: size(row.size)}), el("td", {className: "mute"}));
+  tr.row = row;
+  tr.index = i;
+  dropTarget(tr, (paths) => moveTo(paths, row.path, row.name));
+  return tr;
+}
+
+// 폴더 줄을 두 번 누르면 그 폴더로 들어가고, 왼쪽 나무도 그 폴더까지 펼친다.
+async function enterFolder(row) {
+  openScope({folder: row.path, name: row.name});
+  const {folders} = await api("/api/chain?folder=1&path=" + encodeURIComponent(row.path));
+  for (const f of folders.slice(0, -1)) {
+    const key = lower(f.path);
+    if (!children.has(key)) children.set(key, (await api("/api/tree?path=" + encodeURIComponent(f.path))).folders);
+    opened.add(key);
+  }
+  await drawTree(false);
 }
 
 // 추정 칩의 이름: 종류는 서버의 분류표(recognize.LABELS), 사람은 번호, 내 분류 모델은 설정에서 붙인 이름.
@@ -664,7 +704,7 @@ $("check-all").addEventListener("click", (e) => {
 
 $("files").addEventListener("dblclick", (e) => {
   const tr = e.target.closest("tbody tr:not(.group)");
-  if (tr) openPath(tr.row.path, false);
+  if (tr) tr.row.folder ? enterFolder(tr.row) : openPath(tr.row.path, false);
 });
 
 $("files").addEventListener("mousedown", (e) => {
@@ -789,10 +829,11 @@ async function moveTo(paths, folder, name) {
   }
 }
 
-async function trashPaths(paths) {
+async function trashPaths(paths, isFolder = false) {
   if (!paths.length) return;
   const first = baseName(paths[0]);
-  const folder = !rows.some((r) => lower(r.path) === lower(paths[0]));  // 목록의 파일이 아니면 왼쪽에서 끌어 온 폴더
+  const inList = rows.find((r) => lower(r.path) === lower(paths[0]));
+  const folder = isFolder || !inList || !!inList.folder;  // 목록의 폴더 줄, 왼쪽에서 끌어 온 폴더, 폴더 메뉴의 [폴더 지우기]
   const more = paths.length > 1 ? ` 외 ${(paths.length - 1).toLocaleString()}개 항목` : "";
   const text = `선택한 ${folder ? "폴더" : "파일"} '${first}'${more}${more ? "을" : josa(first, "을", "를")} 휴지통으로 이동하시겠습니까?`;
   if (!(await ask({title: "휴지통으로 보낼까요?", text: text + "\n휴지통에서 다시 꺼낼 수 있어요."}))) return;
@@ -817,6 +858,9 @@ async function showDetail(row) {
   showPanes();  // 상세가 열려 가운데가 좁아지면 저장한 너비보다 줄여 맞춘다(저장값은 그대로).
   say("detail-message", "");
   showSelection();
+  document.querySelectorAll("#detail .file-only").forEach((s) => s.classList.toggle("hidden", !!row?.folder));
+  document.querySelectorAll("#detail .folder-only").forEach((s) => s.classList.toggle("hidden", !row?.folder));
+  if (row?.folder) return showFolderDetail(row);
   showFileInTree(row);
   if (!row) return;
   $("detail-name").textContent = row.name;
@@ -839,6 +883,62 @@ async function showDetail(row) {
   showGuess(row);
   showSame("same-name", "이름이 같은 파일", same.name, "이름이 같은 파일이 없어요.");
   document.querySelector('[data-fold="same-name"]').classList.toggle("hidden", !state.settings.show_same_name);
+}
+
+// 폴더 설명: 자동 요약(색인에서 센 것)과 내 메모.
+async function showFolderDetail(row) {
+  $("detail-name").textContent = row.name;
+  $("detail-pills").replaceChildren();
+  $("detail-rows").replaceChildren();
+  $("folder-note").value = "";
+  say("folder-note-message", "");
+  const q = encodeURIComponent(row.path);
+  const [{summary: s, note}, chain] = await Promise.all([api("/api/folder_summary?path=" + q), api("/api/chain?folder=1&path=" + q)]);
+  if (picked !== row || !s) return;
+  const where = el("div");
+  chain.folders.slice(0, -1).forEach((f, i) => {
+    const button = el("button", {className: "crumb", textContent: f.name, title: f.path});
+    button.addEventListener("click", () => openScope({folder: f.path, name: f.name}));
+    where.append(...(i ? [" › ", button] : [button]));
+  });
+  const same = el("button", {className: "crumb", textContent: s.same ? `${s.same.toLocaleString()}개` : "없음", disabled: !s.same});
+  same.addEventListener("click", () => openScope({folder: row.path, name: row.name}, "duplicates"));
+  const facts = [["종류", "폴더"], ["크기", size(s.size)], ["파일", `${s.files.toLocaleString()}개`],
+    ["하위 폴더", `바로 아래 ${s.children.toLocaleString()}개 · 전체 ${s.below.toLocaleString()}개`], ["위치", where],
+    ["마지막 수정", s.latest ? fullDate(s.latest) : "-"], ["같은 파일 의심", same]];
+  $("detail-rows").replaceChildren(...facts.flatMap(([k, v]) => [el("span", {textContent: k}), typeof v === "string" ? el("div", {textContent: v}) : v]));
+  $("folder-kinds").replaceChildren(...(s.kinds.length ? s.kinds.map(([k, n]) => el("span", {className: "pill", textContent: `${k} ${n.toLocaleString()}`}))
+    : [el("span", {className: "hint", textContent: "파일이 없어요."})]));
+  $("folder-big").replaceChildren(...s.biggest.map((f) => {
+    const b = el("button", {className: "li", title: f.path}, el("span", {textContent: f.name}), el("span", {textContent: size(f.size)}));
+    b.addEventListener("click", () => goToFile({...f, place: ""}));
+    return b;
+  }));
+  $("folder-note").value = note;
+}
+
+$("folder-note-save").addEventListener("click", async () => {
+  if (!picked?.folder) return;
+  try {
+    const {note} = await api("/api/note", {path: picked.path, text: $("folder-note").value});
+    say("folder-note-message", note ? "저장했어요." : "메모를 지웠어요.", "ok");
+  } catch (e) {
+    say("folder-note-message", e.message, "error");
+  }
+});
+
+// 폴더 비우기: 안의 파일·폴더를 모두 휴지통으로(폴더는 남는다). 먼저 개수를 받아 확인을 받는다.
+async function emptyFolder(path) {
+  try {
+    const plan = await api("/api/folder/empty", {path});
+    if (!plan.count) return toast("휴지통으로 보낼 것이 없어요." + (plan.refused.length ? ` 보낼 수 없는 것 ${plan.refused.length}개` : ""));
+    const notes = [plan.hidden ? `숨김·시스템 파일 ${plan.hidden}개는 그대로 둬요.` : "", plan.refused.length ? `차단·잠금·구조 보호 때문에 ${plan.refused.length}개는 빼요.` : ""].filter(Boolean).join("\n");
+    if (!(await ask({title: "폴더를 비울까요?", text: `${path}\n\n안의 파일·폴더 ${plan.count.toLocaleString()}개를 휴지통으로 보내요. 폴더는 남아요.\n휴지통에서 다시 꺼낼 수 있어요.${notes ? "\n" + notes : ""}`}))) return;
+    const result = await runJob((await api("/api/folder/empty", {path, confirm: true})).job);
+    await afterChange(`${result.trashed.toLocaleString()}개를 휴지통으로 보냈어요.${failedText(result)}`);
+  } catch (e) {
+    toast(e.message);
+  }
 }
 
 // 같은 파일 칸은 접어 두고, 펼치거나 접은 상태는 다른 파일을 골라도 그대로 둔다(켜 둔 동안만).
@@ -927,7 +1027,7 @@ document.addEventListener("contextmenu", (e) => {
   e.preventDefault();
   if (!$("dialog").classList.contains("hidden") || !$("picker").classList.contains("hidden")) return;
   const tr = page === "files" && e.target.closest("#files tbody tr:not(.group)");
-  if (tr) return showMenu(e, tr.row.path, "file");
+  if (tr) return showMenu(e, tr.row.path, tr.row.folder ? "folder" : "file");
   const folder = page === "files" && e.target.closest(".fl[data-path]");
   if (folder && !folder.dataset.top) return showMenu(e, folder.dataset.path, "folder");
   hideMenu();
@@ -963,6 +1063,8 @@ $("menu").addEventListener("click", (e) => {
   if (act === "reveal") openPath(menuPath, true);
   if (act === "exclude") changeExclude(menuPath, false);
   if (act === "lock") openLockWindow(menuPath);
+  if (act === "remove") trashPaths([menuPath], true);
+  if (act === "empty") emptyFolder(menuPath);
   if (act === "block") changeBlacklist(menuPath, false);
   if (act === "protect") changeProtect(menuPath, false);
 });

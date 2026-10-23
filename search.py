@@ -87,7 +87,10 @@ def conditions(query, config):
         if rule:
             parts.append(rule)
             values += more
-    if query.get("folder"):
+    if query.get("folder") and query.get("direct"):  # 탐색기처럼: 그 폴더에 바로 든 파일만(아래 폴더는 화면이 폴더 줄로 보여 준다)
+        parts.append("f.folder = ?")
+        values.append(exclude.key(query["folder"]))
+    elif query.get("folder"):
         part, more = under(query["folder"])
         parts.append(part)
         values += more

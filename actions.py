@@ -4,6 +4,7 @@ import os
 import exclude
 import index
 import lock
+import notes
 import organize
 import trash
 
@@ -35,6 +36,7 @@ def move_many(paths, folder, progress=lambda *args: None):
     if done:
         index.moved(done)
         lock.moved(done)  # 옮긴 폴더 안의 잠금 폴더·금고 위치를 비밀 파일에서 고친다.
+        notes.moved(done)
     return {"moved": len(done), "failed": failed, "paths": [after for _, after in done]}
 
 
@@ -51,6 +53,7 @@ def rename(path, name):
     os.rename(path, target)
     index.moved([(path, target)])
     lock.moved([(path, target)])
+    notes.moved([(path, target)])
     return target
 
 
@@ -65,4 +68,23 @@ def trash_many(paths, progress=lambda *args: None):
     progress(len(paths), len(paths))
     if sent:
         index.removed(sent)
+        notes.removed(sent)
     return {"trashed": len(sent), "failed": failed}
+
+
+HIDDEN = 0x2 | 0x4
+
+
+def folder_contents(folder):
+    """폴더 비우기에 보낼 것: 바로 아래의 파일·폴더(숨김·시스템 파일은 빼고, 링크·정션은 링크만). ([경로], 뺀 숨김 수)"""
+    paths, hidden = [], 0
+    with os.scandir(folder) as entries:
+        for entry in entries:
+            try:
+                if entry.stat(follow_symlinks=False).st_file_attributes & HIDDEN:
+                    hidden += 1
+                    continue
+            except OSError:
+                continue
+            paths.append(entry.path)
+    return sorted(paths, key=str.lower), hidden
