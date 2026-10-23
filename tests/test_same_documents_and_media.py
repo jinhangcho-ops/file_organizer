@@ -67,7 +67,8 @@ def test_office_documents_with_only_document_info_changed_or_same_text(home, cli
     docx(home / "다른 문서.docx", "전혀 다른 내용의 문서입니다. 회의록과 출장 보고를 담았습니다.")
     assert Path(a).read_bytes() != Path(b).read_bytes()
     build(home)
-    assert same_as(client, a) == [("계획.docx", "self"), ("계획_굵게.docx", "text"), ("계획_사본.docx", "doc")]
+    found = same_as(client, a)  # 고른 파일이 맨 위, 나머지는 정렬 순서(같은 시각이면 id 순)
+    assert found[0] == ("계획.docx", "self") and sorted(found[1:]) == [("계획_굵게.docx", "text"), ("계획_사본.docx", "doc")]
     detail = client.get("/api/same?path=" + a).json["content"]
     assert [(f["name"], f["why"]) for f in detail] == [("계획_굵게.docx", "text"), ("계획_사본.docx", "doc")]
     rows = {row["name"]: row["duplicate"] for row in client.post("/api/files", json={"view": "duplicates"}).json["rows"]}

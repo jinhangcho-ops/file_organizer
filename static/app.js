@@ -451,9 +451,14 @@ function goBack() {
   toast("이전 폴더로 돌아왔어요");
 }
 
-async function loadFiles() {
+let lastFound = null;  // 직전 목록의 답(정렬만 바꿀 때 개수·칩은 이것을 그대로 쓴다)
+
+// rowsOnly(정확히 true): 정렬만 바뀌었을 때. 서버는 줄만 주고(개수를 다시 세지 않아 빠르다), 나머지는 직전 답을 쓴다.
+// .then(loadFiles)처럼 콜백으로 넘기면 앞 단계의 답이 첫 인자로 들어오므로 true만 받는다.
+async function loadFiles(rowsOnly) {
   const number = ++listed;
   const query = {...more, name: $("name").value, kind, ext, sort, order};
+  if (rowsOnly === true && lastFound) query.rows_only = true;
   if (filter) query.view = filter;
   if (scope.folder) query.folder = scope.folder;
   if (scope.same) query.same_as = scope.same;
@@ -463,7 +468,8 @@ async function loadFiles() {
       scope.folder ? api("/api/chain?folder=1&path=" + encodeURIComponent(scope.folder)) : Promise.resolve({folders: []})]);
     if (number !== listed) return;
     $("list-error").classList.add("hidden");
-    showFiles(found, chain.folders);
+    lastFound = query.rows_only ? {...lastFound, ...found} : found;
+    showFiles(lastFound, chain.folders);
   } catch (e) {
     $("list-error").textContent = e.message;
     $("list-error").classList.remove("hidden");
@@ -571,7 +577,7 @@ document.querySelectorAll("#files th[data-sort]").forEach((th) => th.addEventLis
   const next = th.dataset.sort;
   order = next === sort ? (order === "asc" ? "desc" : "asc") : (next === "name" ? "asc" : "desc");
   sort = next;
-  loadFiles();
+  loadFiles(true);
 }));
 
 function countChip(name) {

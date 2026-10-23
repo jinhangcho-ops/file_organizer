@@ -24,7 +24,14 @@ SAME = {
     "media": "f.id in (select a from media_pair union select b from media_pair)",
 }
 DUPLICATE = "(" + " or ".join(SAME.values()) + ")"
-DUPLICATE_KIND = "case " + " ".join(f"when {condition} then '{name}'" for name, condition in SAME.items()) + " end"
+# 줄마다 붙이는 표시는 그 줄의 지문으로 색인을 찾아본다(위 SAME처럼 표 전체를 묶어 세면 보여 줄 500줄에도 매번 1초 넘게 걸린다).
+SAME_ROW = {
+    "bytes": "f.hash is not null and exists(select 1 from files g where g.hash = f.hash and g.id <> f.id)",
+    "doc": "f.dochash <> '' and exists(select 1 from files g where g.dochash = f.dochash and g.id <> f.id)",
+    "text": "f.texthash <> '' and exists(select 1 from files g where g.texthash = f.texthash and g.id <> f.id)",
+    "media": "(exists(select 1 from media_pair where a = f.id) or exists(select 1 from media_pair where b = f.id))",
+}
+DUPLICATE_KIND = "case " + " ".join(f"when {condition} then '{name}'" for name, condition in SAME_ROW.items()) + " end"
 SEEN = "max(f.accessed, f.modified)"
 VIEWS = {  # 이름 → (조건, 기간 설정, 날짜 칸)
     "duplicates": (DUPLICATE, None, "f.modified"),
@@ -57,9 +64,10 @@ def number(value, name):
 
 
 def under(path):
-    """폴더 path 아래(하위 폴더 포함) 파일의 조건과 값."""
+    """폴더 path 아래(하위 폴더 포함) 파일의 조건과 값. key가 '폴더\' 이상 '폴더]' 미만인 범위로 비교해 key 색인을 탄다
+    (바이트 순서로 '\' 바로 다음 글자가 ']'라서, 이 범위는 정확히 '폴더\'로 시작하는 것들이다)."""
     prefix = os.path.join(exclude.key(path), "")
-    return "substr(f.key, 1, ?) = ?", [len(prefix), prefix]
+    return "f.key >= ? and f.key < ?", [prefix, prefix[:-1] + "]"]
 
 
 def conditions(query, config):
@@ -150,7 +158,9 @@ def listing(query):
     "exts": [[확장자, 개수], …](종류를 골랐을 때 그 종류 안의 확장자, 많은 순)}.
     종류별 개수는 종류·확장자 조건 없이, 확장자별 개수는 확장자 조건 없이, 목록(view)별 개수는 그 목록 조건만 바꿔 센다(나머지 조건은 그대로).
     줄마다 duplicate(같은 파일의 종류: SAME의 이름)·stale 태그와 위치 이름(place)을 붙인다.
-    same_as(경로)가 있으면 그 파일과 같은 파일들만(그 파일이 맨 위) 보여 주고, 줄마다 why(그 파일과 같은 까닭)·score를 붙인다."""
+    same_as(경로)가 있으면 그 파일과 같은 파일들만(그 파일이 맨 위) 보여 주고, 줄마다 why(그 파일과 같은 까닭)·score를 붙인다.
+    rows_only면 줄(rows·more)만 돌려준다(정렬만 바꿀 때: 개수는 바뀌지 않으므로 화면이 직전 값을 쓴다).
+    정렬의 2차 기준은 id라서 이름·크기·날짜 색인(B-트리)을 그대로 타 앞의 몇 줄만 읽는다."""
     config = settings.load()
     parts, values, date = conditions(query, config)
     pairs = {}
@@ -182,6 +192,13 @@ def listing(query):
     snippet = ", (select substr(text, max(1, instr(lower(text), lower(?)) - 40), 120) from body where rowid = f.id) snippet" if text else ""
     db = index.connect()
     try:
+        rows = db.execute(
+            f"""select f.id, {FIELDS}, {date} date, {DUPLICATE_KIND} duplicate, ({SEEN} < ?) stale{snippet}
+                from files f{where(picked)} order by {sort} {order}, f.id {order} limit {LIMIT + 1}""",
+            [stale_since] + ([text] if text else []) + picked_values).fetchall()
+        places = place_names(db)
+        if query.get("rows_only"):
+            return finish_rows(rows, places, pairs)
         counts = dict(db.execute(f"select f.kind, count(*) from files f{where(parts)} group by f.kind", values).fetchall())
         views = []
         for view in VIEWS:
@@ -193,21 +210,21 @@ def listing(query):
                           by_kind_values).fetchall() if kind else []
         tags = tag_counts(db, picked, picked_values, config) if kind in MEDIA_KINDS else []
         total, size = db.execute(f"select count(*), coalesce(sum(f.size), 0) from files f{where(picked)}", picked_values).fetchone()
-        rows = db.execute(
-            f"""select f.id, {FIELDS}, {date} date, {DUPLICATE_KIND} duplicate, ({SEEN} < ?) stale{snippet}
-                from files f{where(picked)} order by {sort} {order}, f.hash, lower(f.name) limit {LIMIT + 1}""",
-            [stale_since] + ([text] if text else []) + picked_values).fetchall()
-        places = place_names(db)
     finally:
         db.close()
+    return finish_rows(rows, places, pairs) | {
+        "total": total, "bytes": size, "kinds": [[name, counts.get(name, 0)] for name in chip_order(config)], "views": views,
+        "exts": [list(row) for row in exts], "tags": tags}  # JSON 객체는 키가 정렬되므로 목록으로
+
+
+def finish_rows(rows, places, pairs):
+    """조회한 줄 → {"rows", "more"}: 위치 이름을 붙이고, same_as면 고른 파일을 맨 위에 두고 까닭을 붙인다."""
     rows = [dict(row) | {"place": place(row["path"], places)} for row in rows]
     if pairs:
-        rows.sort(key=lambda row: pairs[row["id"]][0] != "self")  # 고른 파일을 맨 위에(나머지 순서는 그대로)
+        rows.sort(key=lambda row: pairs[row["id"]][0] != "self")  # 나머지 순서는 그대로
         for row in rows:
             row["why"], row["score"] = pairs[row["id"]]
-    return {"rows": rows[:LIMIT], "more": len(rows) > LIMIT, "total": total, "bytes": size,
-            "kinds": [[name, counts.get(name, 0)] for name in chip_order(config)], "views": views, "exts": [list(row) for row in exts],
-            "tags": tags}  # JSON 객체는 키가 정렬되므로 목록으로
+    return {"rows": rows[:LIMIT], "more": len(rows) > LIMIT}
 
 
 def chip_order(config):

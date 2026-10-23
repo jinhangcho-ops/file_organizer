@@ -45,6 +45,13 @@ create index if not exists folders_parent on folders(parent);
 create index if not exists files_hash on files(hash);
 create index if not exists files_dochash on files(dochash);
 create index if not exists files_texthash on files(texthash);
+-- 정렬·모아 보기용 B-트리 색인: 정렬하면 앞의 몇 줄만 읽는다(search.listing은 2차 정렬로 id를 써서 이 색인을 그대로 탄다).
+create index if not exists files_name on files(lower(name));
+create index if not exists files_size on files(size);
+create index if not exists files_modified on files(modified);
+create index if not exists files_seen on files(max(accessed, modified));
+create index if not exists files_downloaded on files(downloaded, created);
+create index if not exists files_kind on files(kind, ext);
 create table if not exists media(id integer primary key, kind text, duration real, frames text, made integer, interval integer);
 create table if not exists media_band(band integer, value integer, id integer);
 create index if not exists media_band_value on media_band(band, value);
