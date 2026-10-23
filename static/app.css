@@ -22,6 +22,7 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: rgba(0, 0,
 .win { display: flex; flex-direction: column; height: 100vh; }
 .titlebar { display: flex; align-items: center; height: 32px; background: var(--panel2); border-bottom: 1px solid var(--line); padding-left: 12px; gap: 8px; flex: none; }
 .titlebar b { font-weight: 600; font-size: 12px; }
+.titlebar img { flex: none; -webkit-user-drag: none; }
 .wc { display: flex; margin-left: auto; }
 .wc button { width: 46px; height: 32px; border: 0; background: transparent; display: grid; place-items: center; color: var(--ink); }
 .wc button:hover { background: var(--line); }

@@ -1,5 +1,6 @@
 """프로그램 창을 연다. exe의 실행 파일이자 유일한 실행 방법."""
 import ctypes
+import os
 import threading
 from ctypes import wintypes
 
@@ -72,6 +73,7 @@ def ask_folder():
 server.ask_folder = ask_folder
 server.window_control = control
 lock.close_all()  # 지난번에 창을 정상으로 닫지 못했으면(끄기·강제 종료) 열어 둔 잠금 폴더가 남아 있다.
-webview.start()  # 창을 닫으면 여기서 끝나고, 서버 스레드도 함께 끝난다.
+# 아이콘: 소스로 실행할 때는 icon.ico, exe에서는(파일이 없으므로) exe에 넣은 아이콘을 pywebview가 쓴다.
+webview.start(icon=os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon.ico"))  # 창을 닫으면 여기서 끝나고, 서버 스레드도 함께 끝난다.
 index.finish()  # 색인 중이었으면 지금 파일까지 저장하고 멈춘다(다음에 남은 것부터 이어서 한다).
 lock.close_all()  # 열어 둔 잠금 폴더를 다시 잠근다.
