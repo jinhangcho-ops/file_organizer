@@ -11,6 +11,7 @@ import json
 import os
 import secrets
 import subprocess
+import threading
 from ctypes import wintypes
 
 import drives
@@ -27,12 +28,20 @@ MIN_LENGTH = 4
 DENY = "(OI)(CI)(RD,WD,AD,X,DC,D)"
 HIDE = 0x2 | 0x4  # 숨김 | 시스템
 sid = [None]  # 지금 사용자의 SID(한 번 묻고 기억한다)
+guard = threading.RLock()  # lock.dat 읽고-고치고-쓰기를 한 번에 하나만(옮기기 작업의 moved와 화면 요청이 동시에 쓰면 한쪽이 사라진다)
 kernel = ctypes.WinDLL("kernel32", use_last_error=True)
 kernel.GetFileAttributesW.restype = wintypes.DWORD
 kernel.GetFileAttributesW.argtypes = [wintypes.LPCWSTR]
 kernel.SetFileAttributesW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD]
 kernel.LocalFree.argtypes = [ctypes.c_void_p]
 crypt = ctypes.WinDLL("crypt32", use_last_error=True)
+
+
+def one_at_a_time(work):
+    def run(*args, **kwargs):
+        with guard:
+            return work(*args, **kwargs)
+    return run
 
 
 class NoPlace(ValueError):
@@ -116,6 +125,7 @@ def verify(password):
         raise ValueError("비밀번호가 맞지 않습니다.")
 
 
+@one_at_a_time
 def set_password(new, old=None):
     """비밀번호를 정하거나 바꾼다. 이미 있으면 old가 맞아야 한다."""
     data = load()
@@ -185,9 +195,12 @@ def check_new(path, others):
         raise ValueError(f"잠글 수 있는 폴더가 아닙니다: {path}")
     if fence.overlaps(path, {exclude.key(p) for p in folders()} | set(others)):
         raise ValueError(f"이미 잠갔거나 차단한 폴더(또는 금고)와 겹칩니다: {path}")
+    if any(exclude.key(f["path"]) == exclude.key(path) for f in load()["folders"]):  # 기록은 원래 위치로 찾으므로 겹치면 금고 기록이 덮인다.
+        raise ValueError(f"금고에 같은 원래 위치의 폴더가 있습니다. 먼저 금고에서 꺼내거나 이 폴더의 이름을 바꾸세요: {path}")
     return path
 
 
+@one_at_a_time
 def lock(path, password, others):
     """제자리에서 잠근다. 기록을 먼저 적고, 잠그기가 실패하면 기록을 지운다(잠겼는데 목록에 없는 폴더가 생기지 않게)."""
     verify(password)
@@ -201,6 +214,7 @@ def lock(path, password, others):
         raise
 
 
+@one_at_a_time
 def set_vault(place, password):
     """금고를 place 안의 .vault로 정한다(만들고 잠근다). 금고에 든 것이 있으면 바꾸지 않는다."""
     verify(password)
@@ -230,9 +244,14 @@ class Opened:
 
     def __exit__(self, *error):
         if self.was_sealed:
-            seal(self.vault)
+            try:
+                seal(self.vault)
+            except OSError:
+                save({**load(), "vault_open": True})  # 열린 채로 남았다고 적어 두어 close_all이 다시 잠그게 한다.
+                raise
 
 
+@one_at_a_time
 def collect(path, password, others):
     """금고로 모은다: 같은 디스크의 금고 안으로 무작위 이름으로 옮긴다(이름 바꾸기라 복사하지 않는다). 기록을 먼저 적는다."""
     verify(password)
@@ -244,14 +263,18 @@ def collect(path, password, others):
         raise ValueError("금고와 다른 디스크의 폴더라 금고로 모을 수 없습니다. [잠그기]로 제자리에서 잠그세요.")
     item = {"path": path, "id": secrets.token_hex(8)}
     put(data, item)
+    inside = False
     try:
         with Opened(data):
             os.rename(path, os.path.join(data["vault"], item["id"]))
+            inside = True
     except OSError:
-        put(load(), {"path": path})
+        if not inside:  # 옮긴 뒤 금고를 다시 잠그지 못한 것이면 기록은 남긴다(지우면 금고 안 무작위 이름 폴더의 주인을 잃는다).
+            put(load(), {"path": path})
         raise
 
 
+@one_at_a_time
 def open_folder(path, password):
     """비밀번호가 맞으면 잠시 푼다. 금고 안의 것은 금고를 열고 그 폴더 경로를 돌려준다(창을 닫거나 [다시 잠그기]로 다시 잠근다)."""
     verify(password)
@@ -267,6 +290,7 @@ def open_folder(path, password):
     return found["path"]
 
 
+@one_at_a_time
 def close(path):
     """열어 둔 것을 다시 잠근다(비밀번호는 묻지 않는다). 금고 안의 것이면 금고를 잠근다."""
     data = load()
@@ -279,6 +303,7 @@ def close(path):
     put(data, {"path": found["path"], "open": False})
 
 
+@one_at_a_time
 def take_out(path, password, folder=None):
     """금고에서 꺼낸다. 원래 위 폴더(또는 고른 folder)에 같은 이름이 있으면 '이름 (2)'. 위 폴더가 없으면 NoPlace."""
     verify(password)
@@ -295,10 +320,11 @@ def take_out(path, password, folder=None):
     target = organize.free_name(parent, os.path.basename(found["path"]), set())
     with Opened(data):
         os.rename(os.path.join(data["vault"], found["id"]), target)
-    put(load(), {"path": found["path"]})
+        put(load(), {"path": found["path"]})  # 금고를 다시 잠그기 전에 지운다(잠그다 실패해도 없는 폴더를 가리키는 기록이 남지 않게).
     return target
 
 
+@one_at_a_time
 def release(path, password):
     """제자리 잠금을 아주 푼다(목록에서 뺀다). 폴더가 사라졌으면(앱 밖에서 옮김·지움) 목록에서만 뺀다."""
     verify(password)
@@ -311,8 +337,9 @@ def release(path, password):
     put(data, {"path": found["path"]})
 
 
+@one_at_a_time
 def moved(pairs):
-    """앱 안에서 옮기거나 이름을 바꾼 (전, 후) 폴더 안에 든 제자리 잠금 폴더·금고의 위치를 고친다."""
+    """앱 안에서 옮기거나 이름을 바꾼 (전, 후) 폴더 안에 든 잠금 폴더(금고 안의 것은 꺼낼 원래 위치)·금고의 위치를 고친다."""
     data = load()
     changed = False
     for before, after in pairs:
@@ -320,7 +347,7 @@ def moved(pairs):
         for item in data["folders"] + [data]:
             name = "vault" if item is data else "path"
             value = item.get(name)
-            if not value or (item is not data and item.get("id")) or not fence.inside(value, {old}):
+            if not value or not fence.inside(value, {old}):
                 continue
             item[name] = after + value[len(before):]
             changed = True
@@ -328,6 +355,7 @@ def moved(pairs):
         save(data)
 
 
+@one_at_a_time
 def close_all():
     """열어 둔 잠금 폴더와 금고를 모두 다시 잠근다(창을 닫을 때와, 지난번에 비정상으로 끝났을 때를 위해 켤 때). 하나가 실패해도 나머지는 한다."""
     data = load()

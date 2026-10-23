@@ -772,11 +772,11 @@ async function showDetail(row) {
   $("detail-name").textContent = row.name;
   $("detail-pills").replaceChildren(...[row.duplicate && "중복 의심", row.stale && `${state.settings.stale_days}일 넘게 안 열었어요`]
     .filter(Boolean).map((t) => el("span", {className: "pill", textContent: t})));
-  $("preview").textContent = "";
+  $("detail-preview").textContent = "";
   const q = encodeURIComponent(row.path);
   const [chain, same, preview] = await Promise.all([api("/api/chain?path=" + q), api("/api/same?path=" + q), api("/api/preview?path=" + q)]);
   if (picked !== row) return;
-  $("preview").textContent = preview.text || (preview.readable ? "아직 내용을 읽지 않았거나 글자가 없어요." : "이 형식은 내용을 읽지 않아요(사진·동영상·hwp 등).");
+  $("detail-preview").textContent = preview.text || (preview.readable ? "아직 내용을 읽지 않았거나 글자가 없어요." : "이 형식은 내용을 읽지 않아요(사진·동영상·hwp 등).");
   const where = el("div");
   chain.folders.forEach((f, i) => {
     const button = el("button", {className: "crumb", textContent: f.name, title: f.path});

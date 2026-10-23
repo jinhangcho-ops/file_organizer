@@ -261,10 +261,13 @@ def trash():
     return jsonify(job=jobs.start("휴지통으로 보내기", lambda progress: actions.trash_many(paths, progress)))
 
 
-def not_indexing():
-    """색인하는 동안에는 차단·잠금을 바꾸지 않는다(돌고 있는 색인이 시작할 때 읽은 목록으로 그 폴더를 다시 넣는다)."""
+def not_busy():
+    """색인이나 뒤의 작업(옮기기·휴지통 등)이 도는 동안에는 차단·구조 보호·잠금을 바꾸지 않는다.
+    색인은 시작할 때 읽은 목록으로 그 폴더를 다시 넣고, 작업은 시작할 때 검사를 마쳤기 때문이다(그사이 안의 폴더를 잠그면 휴지통으로 함께 간다)."""
     if index.status["running"]:
         raise ValueError("색인하는 중입니다. 색인이 끝난 뒤(또는 [멈추기] 뒤)에 하세요.")
+    if jobs.status["running"]:
+        raise ValueError(f"'{jobs.status['name']}' 작업이 끝난 뒤에 하세요.")
 
 
 @app.post("/api/blacklist")
@@ -274,7 +277,7 @@ def change_blacklist():
     path = data.get("path")
     if not isinstance(path, str) or not path:
         raise ValueError("폴더를 고르세요.")
-    not_indexing()
+    not_busy()
     if data.get("remove"):
         return jsonify(blacklist=blacklist.remove(path))
     paths = blacklist.add(path, {exclude.key(p) for p in lock.folders()})
@@ -289,6 +292,7 @@ def change_protect():
     path = data.get("path")
     if not isinstance(path, str) or not path:
         raise ValueError("폴더를 고르세요.")
+    not_busy()
     return jsonify(protected=protect.remove(path) if data.get("remove") else protect.add(path))
 
 
@@ -311,7 +315,7 @@ def lock_folder():
     """색인에 있는 폴더를 제자리에서 잠그거나(vault가 아니면) 금고로 모은다(vault: true). 색인한 맨 위 폴더는 다루지 않는다.
     끝나면 그 아래의 색인 기록을 지운다."""
     data = body()
-    not_indexing()
+    not_busy()
     path = indexed_path()
     if not os.path.isdir(path) or index.is_root(path):
         raise ValueError(f"잠글 수 없는 폴더입니다(색인한 맨 위 폴더나 파일): {path}")

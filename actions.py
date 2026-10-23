@@ -26,6 +26,9 @@ def move_many(paths, folder, progress=lambda *args: None):
             target = organize.free_name(folder, os.path.basename(path), set())
             (organize.move_folder if os.path.isdir(path) else organize.move)(path, target)
             done.append((path, target))
+        except organize.Partial as e:  # 옮긴 곳의 것을 색인에 넣는다(원래 폴더에 남은 것은 다음 색인 때 들어간다).
+            done.append((path, target))
+            failed.append({"from": path, "error": str(e)})
         except (OSError, ValueError) as e:
             failed.append({"from": path, "error": getattr(e, "strerror", None) or str(e)})
     progress(len(paths), len(paths))

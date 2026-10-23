@@ -8,10 +8,15 @@ import shutil
 
 import drives
 import exclude
+import fence
 import filetime
 import index
 import kinds
 import settings
+
+class Partial(OSError):
+    """폴더를 다른 디스크로 옮겼지만 그동안 생기거나 바뀐 파일은 원래 폴더에 남겼다(사본은 옮긴 곳에 있다)."""
+
 
 PARTIAL = {".crdownload", ".part", ".partial", ".download", ".tmp", ".opdownload"}  # 받는 중인 파일
 LOG = "moves.json"
@@ -68,7 +73,8 @@ def move(before, after):
 
 
 def move_folder(before, after):
-    """폴더를 통째로 옮긴다. 다른 디스크면 모든 파일을 복사해 크기를 확인한 뒤에야 원본 폴더를 지운다(복사가 실패하면 만든 사본만 치운다)."""
+    """폴더를 통째로 옮긴다. 다른 디스크면 모든 파일을 복사해 크기를 확인한 뒤에야 복사한 원본 파일만 지운다(복사가 실패하면 만든 사본만 치운다).
+    복사하는 동안 새로 생기거나 바뀐 파일은 지우지 않는다: 원래 폴더에 남기고 실패로 알린다(통째로 지우면 그 파일이 영구 삭제된다)."""
     if drives.same_drive(before, after):
         os.rename(before, after)
         return
@@ -79,14 +85,28 @@ def move_folder(before, after):
             os.makedirs(target, exist_ok=True)
             for name in names:
                 source = os.path.join(folder, name)
+                st = os.stat(source)
                 filetime.copy(source, os.path.join(target, name))
-                copied.append((source, os.path.join(target, name)))
-        if any(os.stat(a).st_size != os.stat(b).st_size for a, b in copied):
+                copied.append((source, os.path.join(target, name), st))
+        if any(os.stat(copy).st_size != st.st_size for _, copy, st in copied):
             raise OSError("복사한 파일의 크기가 원본과 다릅니다.")
     except OSError:
         shutil.rmtree(after, ignore_errors=True)  # 이번에 만든 사본만 치운다. 원본은 그대로.
         raise
-    shutil.rmtree(before)  # 옮기기: 사본을 확인했으므로 원본 자리를 비운다(탐색기의 '이동'과 같다).
+    kept = False
+    for source, _, st in copied:
+        now = os.stat(source)
+        if (now.st_size, now.st_mtime_ns) == (st.st_size, st.st_mtime_ns):
+            os.remove(source)
+        else:
+            kept = True
+    try:
+        for folder, _, _ in os.walk(before, topdown=False):  # 빈 폴더만 지운다.
+            os.rmdir(folder)
+    except OSError:
+        kept = True
+    if kept:
+        raise Partial("옮기는 동안 새로 생기거나 바뀐 파일은 원래 폴더에 남겼습니다(나머지는 옮겼습니다).")
 
 
 def apply(moves, progress=lambda *args: None):
@@ -123,9 +143,15 @@ def undo(progress=lambda *args: None):
     moves = last()
     if not moves:
         raise ValueError("되돌릴 정리가 없습니다.")
+    fences = fence.keys()  # 그사이 차단하거나 잠근 폴더 안의 것은 건드리지 않는다.
+    blocked, open_moves = [], []
+    for item in moves:
+        (blocked if fence.inside(item["to"], fences) or fence.inside(item["from"], fences) else open_moves).append(item)
+    moves = open_moves
     back = [(item["to"], item["from"]) for item in moves if os.path.exists(item["to"])]
     missing = [{"from": item["to"], "to": item["from"], "error": "옮긴 파일이 없습니다."} for item in moves if not os.path.exists(item["to"])]
+    missing += [{"from": item["to"], "to": item["from"], "error": "차단하거나 잠근 폴더라 되돌리지 않았습니다."} for item in blocked]
     done, failed = apply(back, progress)
     left = {after for _, after in back} - {after for _, after in done}  # 실패한 것만 기록에 남겨 다시 되돌릴 수 있게 한다.
-    settings.write(LOG, [item for item in moves if item["from"] in left])
+    settings.write(LOG, [item for item in moves if item["from"] in left] + blocked)  # 막힌 것도 남겨 차단·잠금을 푼 뒤 되돌릴 수 있게 한다.
     return {"moved": len(done), "failed": missing + failed}
