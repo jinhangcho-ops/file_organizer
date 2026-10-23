@@ -9,6 +9,7 @@ from werkzeug.exceptions import HTTPException
 import actions
 import archive
 import blacklist
+import browse
 import drives
 import exclude
 import fence
@@ -26,10 +27,10 @@ import tree
 
 app = Flask(__name__, static_folder="static")
 KEY = secrets.token_urlsafe(32)  # 실행할 때마다 새로 만든다. desktop.py가 창의 첫 주소에 넣는다.
-ask_folder = None  # 폴더 고르는 대화상자(→ 경로 또는 None). desktop.py가 채운다.
-ask_model = None  # 내 분류 모델(.onnx) 고르는 대화상자(→ 경로 또는 None). desktop.py가 채운다.
-window_control = None  # 제목 줄 없는 창의 버튼·크기 조절(동작, 값 → 답). desktop.py가 채운다.
-WINDOW_ACTIONS = {"minimize", "toggle", "close", "bounds", "place"}
+window_control = None  # 창 동작(동작, 값 → 답). desktop.py가 채운다.
+lock_target = ""  # 잠금 창이 다룰 폴더(본 창의 폴더 메뉴 [잠금…]으로 연 경우). 주소에 넣지 않고 여기 둔다.
+# 제목 줄 없는 본 창의 버튼·크기 조절, lock: 잠금 창 열기(path: 다룰 폴더), refresh: 본 창의 목록·숫자 다시 읽기(잠금 창이 바꾼 뒤)
+WINDOW_ACTIONS = {"minimize", "toggle", "close", "bounds", "place", "lock", "refresh"}
 CSP = "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:"
 
 
@@ -65,6 +66,13 @@ def page():
     return response
 
 
+@app.get("/lock")
+def lock_page():
+    """잠금 창(화면 캡처·공유에서 빠지는 따로 뜨는 창)의 화면. 잠금 관련 화면은 모두 여기에만 있다."""
+    response = send_from_directory(app.static_folder, "lock.html")
+    response.set_cookie("key", KEY, httponly=True, samesite="Strict")
+    return response
+
 def body():
     return request.get_json(silent=True) or {}
 
@@ -74,7 +82,7 @@ def state():
     return jsonify(settings=settings.load(), drives=drives.list_drives(), known=drives.known_folders(), kinds=kinds.NAMES,
                    last_access=drives.last_access_on(), undo=len(organize.last()), index=index.status, counts=search.counts(),
                    places=tree.places(), exclude=exclude.load(), blacklist=blacklist.load(), protected=protect.load(), admin=blacklist.is_admin(),
-                   locks=lock.listing(), lock_vault=lock.vault_info(), lock_password=lock.has_password(), panes=settings.PANES,
+                   panes=settings.PANES,
                    steps=settings.STEPS, step_list=settings.step_list(settings.load()), models=models.status(), labels=recognize.LABELS,
                    custom_count=recognize.custom_count(settings.load()["custom_model_path"]), numbers={name: {"min": low, "max": high} for name, (low, high, _) in settings.NUMBERS.items()})
 
@@ -84,15 +92,17 @@ def save_settings():
     return jsonify(settings=settings.save(body()))
 
 
-def pick_folder():
-    if ask_folder is None:
-        raise ValueError("폴더 고르기는 프로그램 창에서만 됩니다.")
-    return ask_folder()
+@app.get("/api/browse")
+def browse_folder():
+    """앱 안의 폴더·파일 고르기 창: path 바로 아래(없으면 디스크·알려진 폴더). ext가 있으면 그 확장자의 파일도."""
+    return jsonify(browse.listing(request.args.get("path", ""), request.args.get("ext") or None))
 
 
-@app.post("/api/pick")
-def pick():
-    return jsonify(path=pick_folder())
+@app.post("/api/mkdir")
+def make_folder():
+    """앱 안의 고르기 창의 [새 폴더]."""
+    data = body()
+    return jsonify(path=browse.make_folder(data.get("path"), data.get("name")))
 
 
 @app.post("/api/organize/preview")
@@ -203,14 +213,8 @@ def download_models():
 
 @app.post("/api/custom_model")
 def custom_model():
-    """내 분류 모델 파일을 정하거나(path, pick이면 파일 고르기 창으로) 뺀다(""). 분류 수에 맞춰 분류 설정을 늘리거나 줄인다(있던 이름·기준은 둔다)."""
+    """내 분류 모델 파일을 정하거나(path) 뺀다(""). 분류 수에 맞춰 분류 설정을 늘리거나 줄인다(있던 이름·기준은 둔다)."""
     path = body().get("path")
-    if body().get("pick"):
-        if ask_model is None:
-            raise ValueError("파일 고르기는 프로그램 창에서만 됩니다.")
-        path = ask_model()
-        if not path:
-            return jsonify(settings=settings.load(), custom_count=recognize.custom_count(settings.load()["custom_model_path"]))
     config = settings.save({"custom_model_path": path if isinstance(path, str) else None})
     count = recognize.custom_count(config["custom_model_path"]) if config["custom_model_path"] else 0
     labels = config["custom_labels"][:count]
@@ -282,16 +286,9 @@ def indexed_paths(movable=True):
 
 @app.post("/api/move")
 def move():
-    """파일·폴더들을 folder(나무에 끌어 놓은 폴더)로 옮긴다. folder가 없으면 폴더 고르기 창으로 묻고, 고르지 않으면 job이 null."""
+    """파일·폴더들을 folder(나무에 끌어 놓은 폴더나 앱 안의 고르기 창으로 고른 폴더)로 옮긴다."""
     paths = indexed_paths()
-    folder = body().get("folder")
-    if folder:
-        checked(folder)
-    else:
-        folder = pick_folder()
-        if not folder:
-            return jsonify(job=None)
-        fence.refuse(folder)
+    folder = settings.folder_text(body().get("folder"), "옮길 곳")  # 있는 폴더이고 차단·잠금 폴더가 아니어야 한다.
     for path in paths:  # 잠금 폴더를 품은 폴더는 같은 디스크 안에서만 옮긴다(위치는 lock.moved가 고친다).
         fence.refuse_holding(path, drives.same_drive(path, folder), moving=True)
         lock.refuse_clash(path, os.path.join(folder, os.path.basename(path)))
@@ -385,13 +382,15 @@ def lock_folder():
 
 @app.post("/api/lock/vault")
 def lock_vault():
-    """금고 위치를 정한다(폴더 고르기 창). 고르지 않으면 vault가 null."""
-    password = body().get("password")
-    lock.verify(password)  # 창을 띄우기 전에 비밀번호부터 본다.
-    place = pick_folder()
-    if not place:
-        return jsonify(vault=None)
-    return jsonify(vault=lock.set_vault(place, password))
+    """금고 위치를 place(잠금 창의 고르기 창으로 고른 폴더) 안으로 정한다."""
+    data = body()
+    return jsonify(vault=lock.set_vault(data.get("place"), data.get("password")))
+
+
+@app.get("/api/lock/state")
+def lock_state():
+    """잠금 창이 그리는 것: 잠금 목록, 금고, 비밀번호를 정했는지, 화면 색."""
+    return jsonify(locks=lock.listing(), vault=lock.vault_info(), password=lock.has_password(), theme=settings.load()["theme"], target=lock_target)
 
 
 @app.post("/api/lock/open")
@@ -405,15 +404,10 @@ def lock_open():
 
 @app.post("/api/lock/take_out")
 def lock_take_out():
-    """금고에서 꺼내 원래 자리로. 원래 위 폴더가 없으면 need_folder로 알리고, 화면이 pick: true로 다시 부르면 폴더 고르기 창으로 묻는다."""
+    """금고에서 꺼내 원래 자리로. 원래 위 폴더가 없으면 need_folder로 알리고, 화면이 고른 folder로 다시 부른다."""
     data = body()
-    folder = None
-    if data.get("pick"):
-        folder = pick_folder()
-        if not folder:
-            return jsonify(path=None, locks=lock.listing())
     try:
-        path = lock.take_out(data.get("path"), data.get("password"), folder)
+        path = lock.take_out(data.get("path"), data.get("password"), data.get("folder") or None)
     except lock.NoPlace as e:
         return jsonify(need_folder=str(e))
     return jsonify(path=path, locks=lock.listing())

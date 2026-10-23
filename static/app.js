@@ -2,7 +2,6 @@
 // 화면: 제목 줄(직접 그림) · 도구 줄 · 왼쪽 폴더 목록 · 가운데 파일 표 · 오른쪽 상세(파일을 고를 때만). 설정·정리·보관은 본문 전체를 바꿔 연다.
 // 목록에서 여러 줄을 고르고(체크·Ctrl·Shift·끌어서 사각형) 왼쪽 폴더나 위쪽 휴지통에 끌어 놓을 수 있다. 서버는 server.py.
 
-const $ = (id) => document.getElementById(id);
 let state = null;                 // /api/state의 답
 let page = "files";               // files, organize, archive, setup
 let scope = {all: true};          // 목록의 범위: {all} | {folder, name}
@@ -23,7 +22,6 @@ const selected = new Map();       // 고른 줄: 경로(소문자) → 줄
 const opened = new Set();         // 펼쳐 둔 폴더(소문자 경로). 다시 그려도 펼친 채로 둔다.
 const children = new Map();       // 읽어 둔 하위 폴더: 경로(소문자) → [폴더]
 const DRAG = "application/x-file-organizer";  // 끌어 놓기로 넘기는 경로 목록의 형식
-const FOLDER_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M3 6.5A2.5 2.5 0 0 1 5.5 4h4l2 2.5h7A2.5 2.5 0 0 1 21 9v8.5a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/></svg>';
 
 const VIEWS = {  // 위쪽 필터 칩이자 설정 화면의 숫자 카드(이 순서). warn: 정리할 거리라 숫자를 경고 색으로.
   // 날짜 열의 내용은 서버가 고른다(받은 파일은 받은 날짜, 안 본 파일은 마지막으로 연 날짜, 그 밖은 수정한 날짜).
@@ -36,63 +34,12 @@ const PAGES = {files: "파일 정리", setup: "설정", organize: "다운로드 
 // 같은 파일의 까닭(search.SAME)과 태그 글자. 태그를 누르면 그 파일과 같은 파일들만 경로와 함께 본다.
 const WHY = {bytes: "중복 의심", doc: "내용 같은 문서", text: "글자 같은 문서", media: "보이는 내용 같음"};
 
-// ---------- 도움 함수 ----------
-async function api(path, data) {
-  const options = data === undefined ? {} : {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(data)};
-  const response = await fetch(path, options);
-  const body = await response.json().catch(() => ({error: `응답을 읽지 못했습니다 (${response.status})`}));
-  if (!response.ok) throw new Error(body.error || String(response.status));
-  return body;
-}
-
-// 요청하는 동안 버튼을 잠그고, 실패하면 messageId에 문구를 보여 준다.
-async function busy(button, messageId, work) {
-  button.disabled = true;
-  try {
-    await work();
-  } catch (e) {
-    say(messageId, e.message, "error");
-  } finally {
-    button.disabled = false;
-  }
-}
-
-function say(id, text, kind = "") {
-  $(id).textContent = text;
-  $(id).className = "message " + kind;
-}
-
-let toastTimer;
-function toast(text) {
-  $("toast").textContent = text;
-  $("toast").classList.add("on");
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => $("toast").classList.remove("on"), 3000);
-}
-
-function el(tag, props = {}, ...kids) {
-  const node = document.createElement(tag);
-  Object.assign(node, props);
-  node.append(...kids.filter((kid) => kid !== null && kid !== undefined && kid !== false));
-  return node;
-}
-
+// ---------- 도움 함수(요청·글자·크기·대화상자·고르기 창은 common.js) ----------
 const lower = (path) => path.toLowerCase();
 const two = (n) => String(n).padStart(2, "0");
 const baseName = (path) => path.slice(path.lastIndexOf("\\") + 1);
 const extOf = (name) => (name.includes(".") ? name.slice(name.lastIndexOf(".")) : "");
 const viewTitle = (view) => (typeof VIEWS[view].title === "function" ? VIEWS[view].title() : VIEWS[view].title);
-
-// Windows 탐색기와 같은 크기 표기: 1,024바이트 미만은 바이트, 그 위는 KB·MB·GB·TB에 유효 숫자 세 자리(버림). 예: 88.0 KB, 1.20 MB, 182 MB
-function size(bytes) {
-  const units = ["KB", "MB", "GB", "TB"];
-  if (!bytes || bytes < 1024) return `${bytes || 0}바이트`;
-  let n = bytes / 1024, i = 0;
-  while (n >= 1000 && i < units.length - 1) { n /= 1024; i++; }
-  const digits = n < 10 ? 2 : n < 100 ? 1 : 0;
-  const cut = Math.floor(n * 10 ** digits) / 10 ** digits;
-  return `${cut.toFixed(digits)} ${units[i]}`;
-}
 
 function shortDate(seconds) {
   if (!seconds) return "";
@@ -729,10 +676,22 @@ $("page-files").addEventListener("click", (e) => {
 function startDrag(e, paths, label) {
   e.dataTransfer.setData(DRAG, JSON.stringify(paths));
   e.dataTransfer.effectAllowed = "move";
+  // 끌기 그림은 Windows가 따로 그려 창 하나 공유에서 빠진다. 그래서 빈 그림을 주고, 창 안의 표시가 마우스를 따라가게 한다.
+  e.dataTransfer.setDragImage(BLANK, 0, 0);
   const badge = $("drag-badge");
   badge.textContent = paths.length > 1 ? `${paths.length.toLocaleString()}개 항목 이동 중` : `${label} 이동 중`;
-  e.dataTransfer.setDragImage(badge, -12, -12);
+  moveBadge(e);
 }
+
+const BLANK = Object.assign(new Image(), {src: "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"});
+function moveBadge(e) {
+  if (!e.clientX && !e.clientY) return;  // 끌기가 끝날 때 좌표가 0,0으로 온다.
+  Object.assign($("drag-badge").style, {left: e.clientX + 14 + "px", top: e.clientY + 14 + "px"});
+  $("drag-badge").classList.add("on-drag");
+}
+document.addEventListener("dragover", moveBadge);
+document.addEventListener("dragend", () => $("drag-badge").classList.remove("on-drag"));
+document.addEventListener("drop", () => $("drag-badge").classList.remove("on-drag"));
 
 $("files").addEventListener("dragstart", (e) => {
   const tr = e.target.closest("tbody tr");
@@ -883,7 +842,9 @@ async function changed(row, path) {
 
 $("act-move").addEventListener("click", (e) => busy(e.currentTarget, "detail-message", async () => {
   const paths = selectedPaths();
-  const result = await runJob((await api("/api/move", {paths})).job);  // 폴더 고르기 창을 닫으면 job이 null
+  const folder = await pickPath({title: "옮길 곳 고르기"});
+  if (!folder) return;
+  const result = await runJob((await api("/api/move", {paths, folder})).job);
   if (!result) return;
   if (paths.length === 1 && result.paths.length === 1) {
     await changed(picked, result.paths[0]);
@@ -906,44 +867,13 @@ $("act-rename").addEventListener("click", async (e) => {
 
 $("act-trash").addEventListener("click", () => trashPaths(selectedPaths()));
 
-// ---------- 대화상자: 입력(value가 있으면)이나 확인. 확인하면 입력값 또는 true, 취소하면 null ----------
-function ask({title, text = "", value, secret = false}) {
-  $("dialog-title").textContent = title;
-  $("dialog-text").textContent = text;
-  const input = $("dialog-input");
-  input.type = secret ? "password" : "text";  // secret: 비밀번호(가려서 보인다)
-  input.classList.toggle("hidden", value === undefined);
-  $("dialog").classList.remove("hidden");
-  if (value !== undefined) {
-    input.value = value;
-    input.focus();
-    const dot = value.lastIndexOf(".");
-    input.setSelectionRange(0, dot > 0 ? dot : value.length);  // 확장자 앞까지 골라 둔다.
-  } else {
-    $("dialog-ok").focus();
-  }
-  return new Promise((resolve) => {
-    const finish = (answer) => {
-      $("dialog").classList.add("hidden");
-      $("dialog-form").onsubmit = $("dialog-cancel").onclick = null;
-      resolve(answer);
-    };
-    $("dialog-form").onsubmit = (e) => { e.preventDefault(); finish(value === undefined ? true : input.value); };
-    $("dialog-cancel").onclick = () => finish(null);
-  });
-}
-
-document.addEventListener("keydown", (e) => {
-  if (e.key !== "Escape") return;
-  hideMenu();
-  if (!$("dialog").classList.contains("hidden")) $("dialog-cancel").click();
-});
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") hideMenu(); });  // 대화상자·고르기 창은 common.js가 닫는다.
 
 // ---------- 오른쪽 클릭: 파일 줄 위는 메뉴, 그 밖은 이전 폴더로(설정 등에서는 목록으로) ----------
 document.addEventListener("contextmenu", (e) => {
   if (e.target.closest("input")) return;  // 입력 칸은 붙여넣기 메뉴 그대로
   e.preventDefault();
-  if (!$("dialog").classList.contains("hidden")) return;
+  if (!$("dialog").classList.contains("hidden") || !$("picker").classList.contains("hidden")) return;
   const tr = page === "files" && e.target.closest("#files tbody tr");
   if (tr) return showMenu(e, tr.row.path, "file");
   const folder = page === "files" && e.target.closest(".fl[data-path]");
@@ -980,13 +910,24 @@ $("menu").addEventListener("click", (e) => {
   if (act === "open") openPath(menuPath, false);
   if (act === "reveal") openPath(menuPath, true);
   if (act === "exclude") changeExclude(menuPath, false);
-  if (act === "lock") lockFolder(menuPath, false);
-  if (act === "vault") lockFolder(menuPath, true);
+  if (act === "lock") openLockWindow(menuPath);
   if (act === "block") changeBlacklist(menuPath, false);
   if (act === "protect") changeProtect(menuPath, false);
 });
 
-// ---------- 차단 폴더(관리자 권한일 때만 바꾼다)와 잠금 폴더 ----------
+// ---------- 잠금 폴더: 화면 캡처·공유에서 빠지는 잠금 창(lock.html)에서만 다룬다 ----------
+function openLockWindow(path = "") {
+  api("/api/window", {action: "lock", path}).catch((e) => toast(e.message));
+}
+$("lock-open").addEventListener("click", () => openLockWindow());
+
+// 잠금 창이 잠그거나 풀거나 꺼낸 뒤 desktop.py가 부른다(목록·숫자가 바뀐다).
+async function refreshAfterLock() {
+  await loadState();
+  if (page === "files") await loadFiles();
+}
+
+// ---------- 차단 폴더(관리자 권한일 때만 바꾼다) ----------
 async function changeBlacklist(path, remove) {
   if (!remove && !await ask({title: "차단 폴더로 지정할까요?", text: `${path}\n\n이 폴더와 그 아래 전부를 색인하지 않고 어디서도 다루지 않아요. 지금까지의 색인 기록은 지워요(실제 파일은 그대로).`})) return;
   try {
@@ -1011,12 +952,12 @@ async function changeProtect(path, remove) {
 }
 
 $("protect-pick").addEventListener("click", async () => {
-  const {path} = await api("/api/pick", {}).catch((e) => (toast(e.message), {}));
+  const path = await pickPath({title: "구조 보호 폴더 고르기"});
   if (path) await changeProtect(path, false);
 });
 
 $("block-pick").addEventListener("click", async () => {
-  const {path} = await api("/api/pick", {}).catch((e) => (toast(e.message), {}));
+  const path = await pickPath({title: "차단 폴더 고르기"});
   if (path) await changeBlacklist(path, false);
 });
 
@@ -1028,100 +969,6 @@ $("block-find").addEventListener("click", async () => {
     return button;
   }) : [el("span", {className: "hint", textContent: "찾은 게임 폴더가 없어요."})]));
 });
-
-const password = (title, text = "") => ask({title, text, value: "", secret: true});
-
-async function lockCall(url, data, done) {
-  try {
-    state.locks = (await api(url, data)).locks;
-    await loadState();
-    if (page === "files") await loadFiles();
-    if (done) toast(done);
-  } catch (e) {
-    toast(e.message);
-  }
-}
-
-async function lockFolder(path, vault) {
-  if (!state.lock_password) return toast("먼저 설정에서 잠금 비밀번호를 정하세요.");
-  if (vault && !state.lock_vault.path) return toast("먼저 설정에서 금고 위치를 정하세요.");
-  const pw = vault
-    ? await password("금고로 모을까요?", `${path}\n\n금고(${state.lock_vault.path}) 안으로 옮기고 금고를 잠가요. 비밀번호를 넣어야 열리고, [꺼내기]로 이 자리에 되돌려요.`)
-    : await password("폴더를 잠글까요?", `${path}\n\n비밀번호를 넣어야 열려요. 잠그면 목록과 검색에서 빠져요.`);
-  if (pw !== null) await lockCall("/api/lock", {path, password: pw, vault}, vault ? "금고로 모았어요." : "잠갔어요.");
-}
-
-$("lock-vault").addEventListener("click", async () => {
-  if (!state.lock_password) return toast("먼저 잠금 비밀번호를 정하세요.");
-  const pw = await password("금고 위치 정하기", "다음 창에서 금고를 둘 곳을 고르세요. 그 안에 숨긴 .vault 폴더를 만들어 잠가요. 금고와 같은 디스크의 폴더만 모을 수 있어요.");
-  if (pw === null) return;
-  try {
-    const {vault} = await api("/api/lock/vault", {password: pw});
-    await loadState();
-    if (vault) toast("금고를 정했어요: " + vault);
-  } catch (e) {
-    toast(e.message);
-  }
-});
-
-async function takeOut(item) {
-  const pw = await password("금고에서 꺼낼까요?", `${item.path}\n\n원래 자리로 되돌려요. 같은 이름이 있으면 ‘이름 (2)’로 둬요.`);
-  if (pw === null) return;
-  try {
-    let answer = await api("/api/lock/take_out", {path: item.path, password: pw});
-    if (answer.need_folder) {
-      if (!(await ask({title: "꺼낼 곳을 골라 주세요", text: answer.need_folder}))) return;
-      answer = await api("/api/lock/take_out", {path: item.path, password: pw, pick: true});
-    }
-    await loadState();
-    if (answer.path) toast(`꺼냈어요: ${answer.path}. 다음 [색인 갱신]부터 목록에 나와요.`);
-  } catch (e) {
-    toast(e.message);
-  }
-}
-
-$("lock-password").addEventListener("click", async () => {
-  let old;
-  if (state.lock_password) {
-    old = await password("지금 비밀번호");
-    if (old === null) return;
-  }
-  const next = await password("새 비밀번호", "4자 이상. 잊으면 README의 ‘비밀번호를 잊었을 때’ 명령으로 풀어요.");
-  if (next === null) return;
-  if (await password("새 비밀번호 확인") !== next) return toast("두 번 넣은 비밀번호가 달라요.");
-  try {
-    await api("/api/lock/password", {old, new: next});
-    await loadState();
-    toast("비밀번호를 정했어요.");
-  } catch (e) {
-    toast(e.message);
-  }
-});
-
-function lockRow(item) {
-  const row = el("div");
-  row.insertAdjacentHTML("beforeend", FOLDER_ICON);
-  const where = item.vault ? "금고" : "제자리";
-  const status = item.missing ? "찾을 수 없음" : item.open ? "열림" : "잠김";
-  row.append(el("span", {className: "mono", textContent: `${where}·${status}  ${item.path}`,
-    title: item.missing ? "앱 밖에서 옮기거나 지운 것 같아요. [잠금 풀기]로 목록에서 뺄 수 있어요." : item.path}));
-  const button = (text, act) => {
-    const b = el("button", {className: "btn s", textContent: text});
-    b.addEventListener("click", act);
-    row.append(b);
-  };
-  if (item.open) button("다시 잠그기", () => lockCall("/api/lock/close", {path: item.path}, item.vault ? "금고를 다시 잠갔어요." : "다시 잠갔어요."));
-  else if (!item.missing) button("열기", async () => {
-    const pw = await password(item.vault ? "금고에서 열기" : "잠금 폴더 열기", item.vault ? `${item.path}\n\n금고를 잠시 풀고 열어요.` : item.path);
-    if (pw !== null) await lockCall("/api/lock/open", {path: item.path, password: pw});
-  });
-  if (item.vault) button("꺼내기", () => takeOut(item));
-  else button("잠금 풀기", async () => {
-    const pw = await password("잠금을 아주 풀까요?", `${item.path}\n\n다음 [색인 갱신]부터 목록에 다시 나와요.`);
-    if (pw !== null) await lockCall("/api/lock/release", {path: item.path, password: pw}, "잠금을 풀었어요.");
-  });
-  return row;
-}
 
 async function changeExclude(path, remove) {
   try {
@@ -1237,8 +1084,9 @@ $("archive-run").addEventListener("click", async (e) => {
   });
 });
 
+const PICK_TITLES = {source: "정리할 곳", dest: "놓을 곳", archive: "보관할 곳", root: "색인할 폴더"};
 document.querySelectorAll("[data-pick]").forEach((button) => button.addEventListener("click", async () => {
-  const {path} = await api("/api/pick", {}).catch((e) => (toast(e.message), {}));
+  const path = await pickPath({title: PICK_TITLES[button.dataset.pick] + " 고르기"});
   if (!path) return;
   if (button.dataset.pick === "source") setSource(path);
   else if (button.dataset.pick === "dest") { dest = path; clearPreview(); showOrganize(); }
@@ -1305,12 +1153,6 @@ function showSetup() {
   $("protected-empty").classList.toggle("hidden", state.protected.length > 0);
   showSteps();
   showRecognize();
-  $("locks").replaceChildren(...state.locks.map(lockRow));
-  $("locks-empty").classList.toggle("hidden", state.locks.length > 0);
-  $("lock-password").textContent = state.lock_password ? "비밀번호 바꾸기" : "비밀번호 정하기";
-  const vault = state.lock_vault;
-  $("vault-path").textContent = vault.path ? `금고: ${vault.path} (${vault.count.toLocaleString()}개${vault.open ? ", 열림" : ""})` : "금고: 정하지 않음";
-  $("lock-vault").textContent = vault.path ? "금고 위치 바꾸기" : "금고 위치 정하기";
 }
 
 // ---------- 색인 단계: 순서(▲▼)·켜기는 바로 저장, [이것만 하기]는 그 단계만 돌린다 ----------
@@ -1400,7 +1242,10 @@ async function setCustomModel(data) {
     say("recognize-message", err.message, "error");
   }
 }
-$("custom-pick").addEventListener("click", () => setCustomModel({pick: true}));
+$("custom-pick").addEventListener("click", async () => {
+  const path = await pickPath({title: "내 분류 모델(.onnx) 고르기", ext: ".onnx"});
+  if (path) await setCustomModel({path});
+});
 $("custom-clear").addEventListener("click", () => setCustomModel({path: ""}));
 $("custom-save").addEventListener("click", async () => {
   const labels = state.settings.custom_labels.map((label) => ({...label}));

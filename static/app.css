@@ -203,7 +203,25 @@ button.li:hover span:first-child { color: var(--acc); text-decoration: underline
 .job.done .bar i { width: 100% !important; }
 .toast { position: fixed; left: 50%; bottom: 44px; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 9px 16px; border-radius: 8px; box-shadow: var(--shadow); opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 60; white-space: pre-line; max-width: 70vw; }
 .toast.on { opacity: 1; }
-.drag-badge { position: fixed; top: -100px; left: 0; }
+.drag-badge { position: fixed; top: -100px; left: 0; z-index: 70; pointer-events: none; }
+.drag-badge:not(.on-drag) { visibility: hidden; }
+/* 창 안의 말풍선(common.js): 브라우저 말풍선은 따로 뜨는 창이라 창 하나 공유에서 빠진다. */
+.tip { position: fixed; z-index: 80; max-width: 420px; padding: 5px 9px; border-radius: 6px; background: var(--ink); color: var(--bg); font-size: 12px;
+  white-space: pre-line; word-break: break-all; pointer-events: none; box-shadow: var(--shadow); }
+/* 앱 안의 폴더·파일 고르기 창(common.js의 pickPath) */
+.dialog-box.picker { width: 560px; }
+.picker-list { height: 300px; overflow: auto; margin-top: 10px; }
+.picker-row { display: flex; align-items: center; gap: 8px; width: 100%; border: 0; border-bottom: 1px solid var(--line); background: none; padding: 6px 10px; text-align: left; }
+.picker-row:hover { background: var(--panel2); }
+.picker-row span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picker-row svg { color: var(--mute); flex: none; }
+.picker-row.file span { color: var(--acc); }
+.picker-row small { color: var(--mute); }
+/* 잠금 창(lock.html) */
+body.lock-page { overflow: auto; }
+.lock-wrap { display: grid; gap: 14px; padding: 16px; }
+.lock-wrap .hint { margin-bottom: 8px; }
+.lock-wrap .list > div { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
 .marquee { position: fixed; z-index: 20; border: 1px solid var(--acc); background: rgba(11, 110, 117, .12); pointer-events: none; }
 
 /* 가장자리 크기 조절 손잡이(테두리 없는 창이라 직접 한다). 최대화하면 숨긴다. */

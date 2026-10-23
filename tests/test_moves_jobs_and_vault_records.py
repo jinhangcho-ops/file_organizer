@@ -65,8 +65,7 @@ def vault(home, client, monkeypatch):
     client.post("/api/lock/password", json={"new": PASSWORD})
     place = home.parent / "금고 둘 곳"
     place.mkdir()
-    monkeypatch.setattr(server, "ask_folder", lambda: str(place))
-    return client.post("/api/lock/vault", json={"password": PASSWORD}).json["vault"]
+    return client.post("/api/lock/vault", json={"password": PASSWORD, "place": str(place)}).json["vault"]
 
 
 def test_vault_item_follows_its_parent_folder(home, client, vault, unlock_after):

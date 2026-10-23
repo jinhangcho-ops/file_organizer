@@ -72,8 +72,7 @@ def test_vault_collect_open_take_out(locked, client, monkeypatch, unlock_after):
     assert client.post("/api/lock", json={"path": trip, "password": PASSWORD, "vault": True}).status_code == 400  # 금고 전
     place = locked.parent / "금고 둘 곳"
     place.mkdir()
-    monkeypatch.setattr(server, "ask_folder", lambda: str(place))
-    vault = client.post("/api/lock/vault", json={"password": PASSWORD}).json["vault"]
+    vault = client.post("/api/lock/vault", json={"password": PASSWORD, "place": str(place)}).json["vault"]
     assert vault == str(place / ".vault") and os.stat(vault).st_file_attributes & 0x6 == 0x6
     assert client.post("/api/lock", json={"path": trip, "password": PASSWORD, "vault": True}).json["locks"] == [
         {"path": trip, "open": False, "vault": True, "missing": False}]
@@ -86,7 +85,7 @@ def test_vault_collect_open_take_out(locked, client, monkeypatch, unlock_after):
     lock.close_all()
     with pytest.raises(PermissionError):
         os.listdir(vault)
-    assert client.post("/api/lock/vault", json={"password": PASSWORD}).status_code == 400  # 든 것이 있으면 금고를 못 바꾼다
+    assert client.post("/api/lock/vault", json={"password": PASSWORD, "place": str(place)}).status_code == 400  # 든 것이 있으면 금고를 못 바꾼다
     os.mkdir(trip)  # 원래 자리에 같은 이름이 생겼다
     assert client.post("/api/lock/take_out", json={"path": trip, "password": PASSWORD}).json["path"] == trip + " (2)"
     assert os.listdir(trip + " (2)") == ["1.jpg"] and lock.listing() == []
@@ -99,16 +98,14 @@ def test_take_out_asks_for_a_folder_when_the_parent_is_gone(locked, client, monk
     build(locked)
     place = locked.parent / "금고"
     place.mkdir()
-    monkeypatch.setattr(server, "ask_folder", lambda: str(place))
-    client.post("/api/lock/vault", json={"password": PASSWORD})
+    client.post("/api/lock/vault", json={"password": PASSWORD, "place": str(place)})
     item = str(locked / "위" / "모음")
     client.post("/api/lock", json={"path": item, "password": PASSWORD, "vault": True})
     os.rmdir(locked / "위")  # 원래 위 폴더가 사라졌다
     assert "need_folder" in client.post("/api/lock/take_out", json={"path": item, "password": PASSWORD}).json
     target = locked / "새 자리"
     target.mkdir()
-    monkeypatch.setattr(server, "ask_folder", lambda: str(target))
-    assert client.post("/api/lock/take_out", json={"path": item, "password": PASSWORD, "pick": True}).json["path"] == str(target / "모음")
+    assert client.post("/api/lock/take_out", json={"path": item, "password": PASSWORD, "folder": str(target)}).json["path"] == str(target / "모음")
 
 
 def test_collect_refuses_another_drive(locked, client, monkeypatch, unlock_after):
@@ -116,8 +113,7 @@ def test_collect_refuses_another_drive(locked, client, monkeypatch, unlock_after
     build(locked)
     place = locked.parent / "금고"
     place.mkdir()
-    monkeypatch.setattr(server, "ask_folder", lambda: str(place))
-    client.post("/api/lock/vault", json={"password": PASSWORD})
+    client.post("/api/lock/vault", json={"password": PASSWORD, "place": str(place)})
     monkeypatch.setattr(lock.drives, "same_drive", lambda a, b: False)
     answer = client.post("/api/lock", json={"path": str(locked / "모음"), "password": PASSWORD, "vault": True})
     assert answer.status_code == 400 and "다른 디스크" in answer.json["error"]

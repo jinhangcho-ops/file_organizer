@@ -28,6 +28,10 @@ maximized = [None]  # 최대화했을 때 되돌아갈 창의 실제 픽셀 사�
 user32 = ctypes.windll.user32
 user32.MonitorFromWindow.restype = wintypes.HANDLE
 user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
+user32.SetWindowDisplayAffinity.argtypes = [wintypes.HWND, wintypes.DWORD]
+user32.GetWindowDisplayAffinity.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+EXCLUDE_FROM_CAPTURE = 0x11  # WDA_EXCLUDEFROMCAPTURE: 화면 캡처·공유·녹화에서 이 창을 뺀다(Windows 10 2004 이상).
+lock_window = [None]  # 열려 있는 잠금 창
 
 
 class MonitorInfo(ctypes.Structure):
@@ -62,7 +66,12 @@ def control(action, data):
             maximize()
         return {"maximized": bool(maximized[0])}
     elif action == "close":
+        close_lock()
         window.destroy()
+    elif action == "lock":
+        open_lock(data.get("path"))
+    elif action == "refresh":
+        window.evaluate_js("refreshAfterLock()")
     elif action == "bounds":
         return {"x": window.x, "y": window.y, "width": window.width, "height": window.height, "maximized": bool(maximized[0])}
     elif action == "place":
@@ -71,21 +80,41 @@ def control(action, data):
         window.resize(width, height)
 
 
-def ask_folder():
-    """폴더 고르는 대화상자. 고른 경로 또는 취소하면 None."""
-    chosen = window.create_file_dialog(webview.FileDialog.FOLDER)
-    return chosen[0] if chosen else None
+def open_lock(path):
+    """잠금 창(잠금 관련 화면은 모두 여기)을 연다. path: 다룰 폴더(잠금 창이 /api/lock/state로 가져간다). 이미 열려 있으면 앞으로 가져와 다시 읽는다.
+    나타나기 전에 캡처에서 빼므로, 창 하나 공유든 화면 전체 공유든 이 창은 나가지 않는다(사용자 화면에는 보인다)."""
+    server.lock_target = path if isinstance(path, str) else ""
+    if lock_window[0] is not None:
+        lock_window[0].restore()
+        lock_window[0].evaluate_js("load()")
+        return
+    url = f"http://127.0.0.1:{http.server_port}/lock?key={server.KEY}"
+    lock = webview.create_window("잠금", url, width=760, height=640, min_size=(560, 480))
+
+    def hide_from_capture():
+        """보이기 전과 보인 뒤에 모두 건다(WinForms가 처음 보일 때 창 핸들을 다시 만들면 앞의 설정이 없어진다).
+        걸리지 않으면(Windows 10 2004보다 오래된 Windows 등) 잠금 창을 닫는다: 공유 화면에 나가는 것보다 안 여는 쪽이 낫다."""
+        hwnd = wintypes.HWND(lock.native.Handle.ToInt64())
+        user32.SetWindowDisplayAffinity(hwnd, EXCLUDE_FROM_CAPTURE)
+        now = wintypes.DWORD()
+        user32.GetWindowDisplayAffinity(hwnd, ctypes.byref(now))
+        if now.value != EXCLUDE_FROM_CAPTURE:
+            lock.destroy()
+            window.evaluate_js("toast('이 Windows에서는 잠금 창을 화면 공유에서 뺄 수 없어 열지 않았어요(Windows 10 2004 이상 필요).')")
+
+    lock.events.before_show += hide_from_capture
+    lock.events.shown += hide_from_capture
+    lock.events.closed += lambda: lock_window.__setitem__(0, None)
+    lock_window[0] = lock
 
 
-def ask_model():
-    """내 분류 모델(.onnx) 파일을 고르는 대화상자. 고른 경로 또는 None."""
-    chosen = window.create_file_dialog(webview.FileDialog.OPEN, file_types=("ONNX 모델 (*.onnx)",))
-    return chosen[0] if chosen else None
+def close_lock():
+    if lock_window[0] is not None:
+        lock_window[0].destroy()
 
 
-server.ask_folder = ask_folder
-server.ask_model = ask_model
 server.window_control = control
+window.events.closed += close_lock  # 본 창을 닫으면 잠금 창도 닫는다.
 lock.close_all()  # 지난번에 창을 정상으로 닫지 못했으면(끄기·강제 종료) 열어 둔 잠금 폴더가 남아 있다.
 # 아이콘: 소스로 실행할 때는 icon.ico, exe에서는(파일이 없으므로) exe에 넣은 아이콘을 pywebview가 쓴다.
 webview.start(icon=os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon.ico"))  # 창을 닫으면 여기서 끝나고, 서버 스레드도 함께 끝난다.
