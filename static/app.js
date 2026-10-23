@@ -927,6 +927,7 @@ $("menu").addEventListener("click", (e) => {
   if (act === "lock") lockFolder(menuPath, false);
   if (act === "vault") lockFolder(menuPath, true);
   if (act === "block") changeBlacklist(menuPath, false);
+  if (act === "protect") changeProtect(menuPath, false);
 });
 
 // ---------- 차단 폴더(관리자 권한일 때만 바꾼다)와 잠금 폴더 ----------
@@ -941,6 +942,22 @@ async function changeBlacklist(path, remove) {
     toast(e.message);
   }
 }
+
+async function changeProtect(path, remove) {
+  if (!remove && !await ask({title: "구조 보호 폴더로 지정할까요?", text: `${path}\n\n이 폴더를 옮기거나 이름을 바꾸거나 지울 수 없고, 안의 것도 이름 바꾸기·휴지통·보관을 하지 않아요. 목록과 검색에는 그대로 나와요.`})) return;
+  try {
+    await api("/api/protect", {path, remove});
+    await loadState();
+    toast(remove ? "구조 보호를 풀었어요." : "구조 보호 폴더로 지정했어요.");
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+$("protect-pick").addEventListener("click", async () => {
+  const {path} = await api("/api/pick", {}).catch((e) => (toast(e.message), {}));
+  if (path) await changeProtect(path, false);
+});
 
 $("block-pick").addEventListener("click", async () => {
   const {path} = await api("/api/pick", {}).catch((e) => (toast(e.message), {}));
@@ -1218,14 +1235,18 @@ function showSetup() {
   $("excludes-empty").classList.toggle("hidden", state.exclude.length > 0);
   $("not-admin").classList.toggle("hidden", state.admin);
   document.querySelectorAll(".admin-only").forEach((box) => box.classList.toggle("hidden", !state.admin));
-  $("blocked").replaceChildren(...state.blacklist.map((path) => {
-    if (state.admin) return listRow(path, () => changeBlacklist(path, true));
+  const adminRow = (path, onRemove) => {  // 관리자면 [빼기]가 있고, 아니면 보기만
+    if (state.admin) return listRow(path, onRemove);
     const row = el("div");
     row.insertAdjacentHTML("beforeend", FOLDER_ICON);
     row.append(el("span", {className: "mono", textContent: path}));
     return row;
-  }));
+  };
+  $("blocked").replaceChildren(...state.blacklist.map((path) => adminRow(path, () => changeBlacklist(path, true))));
   $("blocked-empty").classList.toggle("hidden", state.blacklist.length > 0);
+  $("not-admin-protect").classList.toggle("hidden", state.admin);
+  $("protected").replaceChildren(...state.protected.map((path) => adminRow(path, () => changeProtect(path, true))));
+  $("protected-empty").classList.toggle("hidden", state.protected.length > 0);
   $("locks").replaceChildren(...state.locks.map(lockRow));
   $("locks-empty").classList.toggle("hidden", state.locks.length > 0);
   $("lock-password").textContent = state.lock_password ? "비밀번호 바꾸기" : "비밀번호 정하기";

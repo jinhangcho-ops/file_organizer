@@ -2,7 +2,7 @@
 zip을 다시 열어 CRC와 크기를 확인한 뒤에만 원본을 휴지통으로 보낸다(trash). 영구 삭제는 하지 않는다.
 - zip 안의 경로는 원래 경로를 살린다(C:\\Users\\a.docx → C/Users/a.docx).
 - 이미 압축된 형식(압축, 동영상, 음악, 사진 등)은 다시 압축하지 않고 그대로 넣는다(ZIP_STORED).
-- 설치파일(exe 등), 보관할 곳 안의 파일, 예외로 지정한 곳, 휴지통으로 보낼 수 없는 곳(trash.problem)의 파일은 넣지 않는다.
+- 설치파일(exe 등), 보관할 곳 안의 파일, 예외로 지정한 곳, 구조 보호 폴더 안, 휴지통으로 보낼 수 없는 곳(trash.problem)의 파일은 넣지 않는다.
   보낼 수 없는 파일을 넣으면 zip과 원본이 둘 다 남아 자리만 더 차지하기 때문이다."""
 import datetime
 import os
@@ -10,10 +10,12 @@ import time
 import zipfile
 
 import exclude
+import fence
 import filetime
 import index
 import kinds
 import organize
+import protect
 import settings
 import trash
 
@@ -35,7 +37,8 @@ def candidates(days, dest=""):
     finally:
         db.close()
     inside = os.path.join(exclude.key(dest), "") if dest else None
-    return [dict(row) for row in rows if not (inside and exclude.key(row["path"]).startswith(inside))]
+    kept = protect.keys()  # 구조 보호 폴더 안의 원본은 휴지통으로 보내지 않는다.
+    return [dict(row) for row in rows if not (inside and exclude.key(row["path"]).startswith(inside)) and not fence.inside(row["path"], kept)]
 
 
 def preview(days, dest=""):

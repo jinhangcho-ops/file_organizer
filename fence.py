@@ -4,6 +4,7 @@ import os
 import blacklist
 import exclude
 import lock
+import protect
 
 
 def keys():
@@ -34,11 +35,15 @@ def refuse(path, fences=None):
     return path
 
 
-def refuse_holding(path, locks_ok):
-    """옮기기·이름 바꾸기·휴지통 전에: 차단 폴더를 품은 폴더는 늘 거부한다(차단 목록은 관리자만 고칠 수 있어 위치를 따라 고칠 수 없다).
+def refuse_holding(path, locks_ok, moving=False):
+    """옮기기(moving)·이름 바꾸기·휴지통 전에: 차단 폴더를 품은 폴더는 늘 거부한다(차단 목록은 관리자만 고칠 수 있어 위치를 따라 고칠 수 없다).
+    구조 보호 폴더는 그 자신과 그것을 품은 폴더를 거부하고, 이름 바꾸기·휴지통이면 그 안의 것도 거부한다(안의 것을 밖으로 옮기기는 된다).
     잠금 폴더·금고를 품은 폴더는 locks_ok(같은 디스크 안 옮기기·이름 바꾸기: lock.moved가 위치를 고친다)일 때만 받는다.
     다른 디스크로 옮기기는 복사가 잠긴 내용을 읽지 못하고, 휴지통은 비우면 잠긴 내용까지 사라지기 때문이다."""
     if holds(path, {exclude.key(p) for p in blacklist.load()}):
         raise ValueError(f"차단 폴더가 들어 있어 옮기거나 지울 수 없습니다: {path}")
+    kept = protect.keys()
+    if holds(path, kept) or (exclude.key(path) in kept if moving else inside(path, kept)):
+        raise ValueError(f"구조 보호 폴더라 {'옮길' if moving else '이름을 바꾸거나 지울'} 수 없습니다: {path}")
     if not locks_ok and holds(path, {exclude.key(p) for p in lock.folders()}):
         raise ValueError(f"잠금 폴더(또는 금고)가 들어 있어 휴지통으로 보내거나 다른 디스크로 옮길 수 없습니다: {path}")

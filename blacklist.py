@@ -22,9 +22,10 @@ def folder():
     return Path(os.environ.get("PROGRAMDATA") or r"C:\ProgramData", "file_organizer")
 
 
-def load():
+def load(name=FILE):
+    """관리자 목록 하나(차단은 blacklist.json, 구조 보호는 protect.py의 protected.json)."""
     try:
-        paths = json.loads(Path(folder(), FILE).read_text(encoding="utf-8"))
+        paths = json.loads(Path(folder(), name).read_text(encoding="utf-8"))
     except (FileNotFoundError, ValueError):
         return []
     return [path for path in paths if isinstance(path, str)]
@@ -45,12 +46,12 @@ def restrict(path):
             raise OSError(f"차단 목록 폴더의 권한을 맞추지 못했습니다: {(result.stdout or result.stderr).strip()}")
 
 
-def save(paths):
+def save(paths, name=FILE):
     if not is_admin():
-        raise ValueError("차단 폴더는 관리자 권한으로 실행했을 때만 바꿀 수 있습니다.")
+        raise ValueError("차단 폴더·구조 보호 폴더는 관리자 권한으로 실행했을 때만 바꿀 수 있습니다.")
     folder().mkdir(parents=True, exist_ok=True)
     restrict(folder())
-    path = Path(folder(), FILE)
+    path = Path(folder(), name)
     temp = path.with_suffix(".tmp")
     temp.write_text(json.dumps(paths, ensure_ascii=False, indent=1), encoding="utf-8")
     os.replace(temp, path)
