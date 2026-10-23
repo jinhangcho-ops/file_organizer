@@ -317,13 +317,20 @@ async function toggleFolder(folder, open) {
   await drawTree(false);
 }
 
+// 왼쪽에서 고른 드라이브(설정 drive). 연결되지 않은 드라이브면 전체로 본다.
+const chosenDrive = () => (state.drives.some((d) => d.path === state.settings.drive) ? state.settings.drive : "");
+const drivePlaces = () => (chosenDrive() ? state.places.filter((p) => lower(p.path).startsWith(lower(chosenDrive()))) : state.places);
+
 async function drawTree(reload = true) {
   if (reload) children.clear();
-  const places = bySize(state.places);
+  const drive = chosenDrive();
+  $("drive").textContent = (drive || "전체 드라이브") + " ▾";
+  const places = bySize(drivePlaces());
   const biggest = Math.max(1, ...places.map((p) => p.size));
   const total = places.reduce((sum, p) => sum + p.size, 0);  // 색인한 맨 위 폴더끼리는 겹치지 않는다.
-  const all = el("div", {className: "fl"}, el("div", {className: "nm"}, el("span", {className: "c"}), el("span", {textContent: "모든 파일", style: "font-weight:600"})),
-    el("div", {className: "m"}, el("div", {style: "flex:1"}), ...amounts(total, state.counts.all)));
+  const count = drive ? places.reduce((sum, p) => sum + p.files, 0) : state.counts.all;
+  const all = el("div", {className: "fl"}, el("div", {className: "nm"}, el("span", {className: "c"}), el("span", {textContent: drive ? `모든 파일 (${drive})` : "모든 파일", style: "font-weight:600"})),
+    el("div", {className: "m"}, el("div", {style: "flex:1"}), ...amounts(total, count)));
   all.dataset.all = "1";
   all.addEventListener("click", () => openScope({all: true}));
   const list = [all];
@@ -339,10 +346,46 @@ async function drawTree(reload = true) {
     }
   };
   await add(places, 0, true);
+  if (drive && !places.length) list.push(emptyDrive(drive));
   $("tree").replaceChildren(...list);
   $("folders-sum").textContent = `용량이 큰 폴더부터 · 합계 ${size(total)}`;
   markTree();
 }
+
+// 고른 드라이브에 색인한 폴더가 없을 때: 드라이브 전체를 색인할 폴더에 넣고 색인을 시작하는 단추.
+function emptyDrive(drive) {
+  const button = el("button", {className: "btn s", textContent: "이 드라이브 색인에 넣기"});
+  button.addEventListener("click", async () => {
+    if (!(await saveSettings({roots: [...state.settings.roots, drive]}, "index-progress"))) return toast($("index-progress").textContent);
+    try {
+      showIndex(await api("/api/index", {}));
+      pollIndex();
+    } catch (e) {
+      toast(e.message);
+    }
+  });
+  return el("div", {className: "fl-empty"}, el("span", {textContent: `${drive}에서 색인한 폴더가 없어요.`}), button);
+}
+
+$("drive").addEventListener("click", (e) => {
+  e.stopPropagation();
+  const menu = $("drive-menu");
+  const items = [["", "전체 드라이브"], ...state.drives.map((d) => [d.path, `${d.path} (${d.type})`])];
+  menu.replaceChildren(...items.map(([value, label]) => {
+    const b = el("button", {textContent: (value === chosenDrive() ? "✓ " : "") + label});
+    b.addEventListener("click", async () => {
+      menu.classList.add("hidden");
+      if (!(await saveSettings({drive: value}, "index-progress"))) return;
+      await drawTree(false);
+      if (scope.all) loadFiles();
+    });
+    return b;
+  }));
+  menu.classList.remove("hidden");
+  const box = e.currentTarget.getBoundingClientRect();
+  Object.assign(menu.style, {left: Math.min(box.left, innerWidth - menu.offsetWidth - 4) + "px", top: box.bottom + 4 + "px"});
+});
+document.addEventListener("click", (e) => { if (!e.target.closest("#drive-menu")) $("drive-menu").classList.add("hidden"); });
 
 function markTree() {
   $("tree").querySelectorAll(".fl").forEach((row) => {
@@ -408,6 +451,7 @@ async function loadFiles(rowsOnly) {
   if (rowsOnly === true && lastFound) query.rows_only = true;
   if (filter) query.view = filter;
   if (scope.folder) query.folder = scope.folder;
+  if (scope.all && chosenDrive()) query.drive = chosenDrive();
   if (scope.same) query.same_as = scope.same;
   if (tag || scope.tag) query.tag = tag || scope.tag;
   try {
@@ -432,7 +476,8 @@ function chips(box, items, current, onPick) {
 }
 
 function showFiles(found, chain) {
-  $("title").textContent = scope.same ? `같은 파일: ${scope.name}` : scope.tag ? `추정: ${scope.name}` : scope.folder ? scope.name : "모든 파일";
+  $("title").textContent = scope.same ? `같은 파일: ${scope.name}` : scope.tag ? `추정: ${scope.name}` : scope.folder ? scope.name
+    : chosenDrive() ? `모든 파일 · ${chosenDrive()}` : "모든 파일";
   const where = chain.length ? chain.map((f) => f.name).join(" › ") + " · " : "";
   $("summary").textContent = `${where}파일 ${found.total.toLocaleString()}개 · ${size(found.bytes)}` + (found.more ? ` · 앞의 ${found.rows.length.toLocaleString()}개만 보여요` : "");
   const viewCounts = Object.fromEntries(found.views);
@@ -457,7 +502,12 @@ function showFiles(found, chain) {
   rows = found.rows;
   for (const key of [...selected.keys()]) if (!rows.some((r) => lower(r.path) === key)) selected.delete(key);  // 목록에서 빠진 줄은 고르지 않은 것으로
   const stale = `${state.settings.stale_days}일 넘게 안 열었어요`;
-  $("files").tBodies[0].replaceChildren(...rows.map((row, i) => {
+  const grouped = state.settings.list_group === "folder" && !scope.same;
+  let lastFolder = null;
+  $("files").tBodies[0].replaceChildren(...rows.flatMap((row, i) => {
+    const folder = row.path.slice(0, row.path.lastIndexOf("\\"));
+    const head = grouped && folder !== lastFolder ? el("tr", {className: "group"}, el("td", {colSpan: 4, textContent: folder, title: folder})) : null;
+    lastFolder = folder;
     const name = el("td", {className: "name"}, el("span", {className: "ext", textContent: (extOf(row.name).slice(1) || "?").slice(0, 5).toUpperCase()}), row.name,
       scope.same ? whyPill(row) : samePill(row),
       row.stale ? el("span", {className: "pill", textContent: stale}) : null,
@@ -467,7 +517,7 @@ function showFiles(found, chain) {
       el("td", {className: "n mute", textContent: size(row.size)}), el("td", {className: "mute", textContent: shortDate(row.date)}));
     tr.row = row;
     tr.index = i;
-    return tr;
+    return head ? [head, tr] : [tr];
   }));
   $("empty").textContent = state.counts.all ? "조건에 맞는 파일이 없어요." : "아직 색인이 없어요. 설정(톱니)에서 [색인 갱신]을 누르세요.";
   $("empty").classList.toggle("hidden", rows.length > 0);
@@ -562,19 +612,20 @@ function scroller(bar) {
 // ---------- 고르기 ----------
 // 클릭: 그 줄만. 체크 칸·Ctrl+클릭: 더하거나 빼기. Shift+클릭: anchor부터 그 줄까지. 고르지 않은 줄이나 표 아래 빈 곳에서 끌기: 사각형 안의 줄.
 function showSelection() {
-  document.querySelectorAll("#files tbody tr").forEach((tr) => {
+  document.querySelectorAll("#files tbody tr:not(.group)").forEach((tr) => {
     const on = selected.has(lower(tr.row.path));
     tr.classList.toggle("sel", on);
     tr.classList.toggle("cur", !!picked && lower(picked.path) === lower(tr.row.path));
     tr.querySelector("input").checked = on;
   });
   const n = selected.size;
+  const bytes = [...selected.values()].reduce((sum, r) => sum + (r.size || 0), 0);
   $("check-all").checked = n > 0 && n === rows.length;
   $("sbar").replaceChildren(...(n
-    ? [el("b", {textContent: `${n.toLocaleString()}개 선택됨`}), el("span", {textContent: "위쪽 휴지통이나 왼쪽 폴더에 끌어다 놓을 수 있어요"})]
+    ? [el("b", {textContent: `${n.toLocaleString()}개 선택됨 · ${size(bytes)}`}), el("span", {textContent: "위쪽 휴지통이나 왼쪽 폴더에 끌어다 놓을 수 있어요"})]
     : [el("span", {textContent: "파일을 누르면 상세 정보가 열리고, 빈 곳을 누르면 닫혀요. 빈 곳을 오른쪽 클릭하면 이전 폴더로 돌아가요."})]));
   $("detail-multi").classList.toggle("hidden", n < 2);
-  $("detail-multi").textContent = `${n.toLocaleString()}개 선택됨 · 옮기기와 휴지통은 고른 것 모두에 해요.`;
+  $("detail-multi").textContent = `${n.toLocaleString()}개 선택됨 · ${size(bytes)} · 옮기기와 휴지통은 고른 것 모두에 해요.`;
   $("act-rename").disabled = n > 1;
 }
 
@@ -585,7 +636,7 @@ function selectedPaths() {
 let marqueeJustEnded = false;  // 사각형으로 고른 직후의 click은 무시한다.
 
 $("files").addEventListener("click", (e) => {
-  const tr = e.target.closest("tbody tr");
+  const tr = e.target.closest("tbody tr:not(.group)");
   if (!tr || marqueeJustEnded) return;
   e.stopPropagation();
   const key = lower(tr.row.path);
@@ -612,12 +663,12 @@ $("check-all").addEventListener("click", (e) => {
 });
 
 $("files").addEventListener("dblclick", (e) => {
-  const tr = e.target.closest("tbody tr");
+  const tr = e.target.closest("tbody tr:not(.group)");
   if (tr) openPath(tr.row.path, false);
 });
 
 $("files").addEventListener("mousedown", (e) => {
-  const tr = e.target.closest("tbody tr");
+  const tr = e.target.closest("tbody tr:not(.group)");
   if (e.button !== 0 || e.target.type === "checkbox") return;
   if (tr && selected.has(lower(tr.row.path)) && !e.ctrlKey && !e.shiftKey) {
     tr.draggable = true;  // 고른 줄에서 끌면 끌어 놓기
@@ -643,7 +694,7 @@ function startMarquee(e) {
     box.classList.remove("hidden");
     selected.clear();
     before.forEach((v, k) => selected.set(k, v));
-    document.querySelectorAll("#files tbody tr").forEach((tr) => {
+    document.querySelectorAll("#files tbody tr:not(.group)").forEach((tr) => {
       const r = tr.getBoundingClientRect();
       if (r.bottom > top && r.top < bottom && r.right > left && r.left < right) selected.set(lower(tr.row.path), tr.row);
     });
@@ -694,7 +745,7 @@ document.addEventListener("dragend", () => $("drag-badge").classList.remove("on-
 document.addEventListener("drop", () => $("drag-badge").classList.remove("on-drag"));
 
 $("files").addEventListener("dragstart", (e) => {
-  const tr = e.target.closest("tbody tr");
+  const tr = e.target.closest("tbody tr:not(.group)");
   if (!tr) return;
   const paths = selected.has(lower(tr.row.path)) ? selectedPaths() : [tr.row.path];
   startDrag(e, paths, `파일 '${tr.row.name}'`);
@@ -787,6 +838,7 @@ async function showDetail(row) {
   showSame("same-content", "내용이 같은 파일", same.content, "내용이 같은 파일이 없어요.");
   showGuess(row);
   showSame("same-name", "이름이 같은 파일", same.name, "이름이 같은 파일이 없어요.");
+  document.querySelector('[data-fold="same-name"]').classList.toggle("hidden", !state.settings.show_same_name);
 }
 
 // 같은 파일 칸은 접어 두고, 펼치거나 접은 상태는 다른 파일을 골라도 그대로 둔다(켜 둔 동안만).
@@ -874,7 +926,7 @@ document.addEventListener("contextmenu", (e) => {
   if (e.target.closest("input")) return;  // 입력 칸은 붙여넣기 메뉴 그대로
   e.preventDefault();
   if (!$("dialog").classList.contains("hidden") || !$("picker").classList.contains("hidden")) return;
-  const tr = page === "files" && e.target.closest("#files tbody tr");
+  const tr = page === "files" && e.target.closest("#files tbody tr:not(.group)");
   if (tr) return showMenu(e, tr.row.path, "file");
   const folder = page === "files" && e.target.closest(".fl[data-path]");
   if (folder && !folder.dataset.top) return showMenu(e, folder.dataset.path, "folder");
@@ -1153,6 +1205,7 @@ function showSetup() {
   $("protected-empty").classList.toggle("hidden", state.protected.length > 0);
   showSteps();
   showRecognize();
+  showView();
 }
 
 // ---------- 색인 단계: 순서(▲▼)·켜기는 바로 저장, [이것만 하기]는 그 단계만 돌린다 ----------
@@ -1279,6 +1332,24 @@ $("numbers-save").addEventListener("click", async () => {
     $("steps-message").className = "message error";
   }
 });
+
+function showView() {
+  document.querySelectorAll("input[name=list_group]").forEach((r) => { r.checked = r.value === state.settings.list_group; });
+  $("pin_installers").checked = state.settings.pin_installers;
+  $("show_same_name").checked = state.settings.show_same_name;
+}
+
+async function saveView(changes) {
+  if (await saveSettings(changes, "view-message")) {
+    say("view-message", "저장했어요.", "ok");
+    loadFiles();
+  } else {
+    $("view-message").className = "message error";
+  }
+}
+document.querySelectorAll("input[name=list_group]").forEach((r) => r.addEventListener("change", () => saveView({list_group: r.value})));
+$("pin_installers").addEventListener("change", (e) => saveView({pin_installers: e.target.checked}));
+$("show_same_name").addEventListener("change", (e) => saveView({show_same_name: e.target.checked}));
 
 $("days-save").addEventListener("click", async () => {
   const changes = {recent_days: Number($("recent_days").value), stale_days: Number($("stale_days").value)};

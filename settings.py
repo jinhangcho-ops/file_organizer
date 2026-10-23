@@ -1,6 +1,7 @@
 """설정 폴더(%APPDATA%\\file_organizer)의 JSON 파일 읽기·쓰기와 화면 설정의 검사."""
 import json
 import os
+import re
 from pathlib import Path
 
 import drives
@@ -43,6 +44,8 @@ def defaults():
     return {"source": known["다운로드"], "dest": "", "roots": list(known.values()), "recent_days": 7, "stale_days": 90,
             "chip_counts": {}, "archive_dest": "", "cold_days": 365, "theme": "auto",  # theme: auto(Windows 설정을 따름), light, dark
             "pane_left": 0, "pane_detail": 0,  # 칸 너비(0: 기본)
+            # 목록 보기: 왼쪽 폴더 목록의 드라이브("" 전체, "D:\" 등), 여러 폴더가 섞인 목록을 폴더별로 묶기, 설치파일 맨 위, 상세의 이름이 같은 파일 칸
+            "drive": "", "list_group": "none", "pin_installers": False, "show_same_name": True,
             "index_steps": [{"name": name, "on": name != "recognize"} for name in STEPS], "video_interval": 120, "video_similar": 70,
             # 인식: 얼굴로 같은 사람 찾기, 내 분류 모델 파일과 분류마다 보여 줄 이름·기준 점수(%)·칩으로 보기
             "face_on": True, "custom_model_path": "", "custom_labels": []}
@@ -117,6 +120,18 @@ def check(changes):
                     or not 1 <= item["threshold"] <= 100 or not isinstance(item["show"], bool) for item in value):
                 raise ValueError("내 분류 모델의 분류 설정이 잘못됐습니다(이름 30자, 기준 1~100%).")
             clean[name] = [{"name": item["name"].strip(), "threshold": item["threshold"], "show": item["show"]} for item in value]
+        elif name == "drive":
+            if not isinstance(value, str) or not (value == "" or re.fullmatch(r"[A-Za-z]:\\", value)):
+                raise ValueError(f"드라이브는 'D:\\' 모양으로 쓰세요: {value}")
+            clean[name] = value.upper()
+        elif name == "list_group":
+            if value not in ("none", "folder"):
+                raise ValueError(f"모르는 묶기 방식입니다: {value}")
+            clean[name] = value
+        elif name in ("pin_installers", "show_same_name"):
+            if not isinstance(value, bool):
+                raise ValueError(f"켜기·끄기 값이 잘못됐습니다: {name}")
+            clean[name] = value
         elif name == "theme":
             if value not in ("auto", "light", "dark"):
                 raise ValueError(f"모르는 화면 색입니다: {value}")

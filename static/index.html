@@ -55,7 +55,7 @@
   <div class="body">
     <div class="split page" id="page-files">
       <section class="pane-l">
-        <div class="hd"><h2>폴더</h2><p id="folders-sum"></p></div>
+        <div class="hd"><div class="hd-row"><h2>폴더</h2><button class="chip" id="drive" title="이 드라이브의 폴더만 봐요">전체 드라이브 ▾</button></div><p id="folders-sum"></p></div>
         <div class="folders" id="tree"></div>
         <div class="side-status"><span id="index-status"></span> <button data-stop class="link hidden">멈추기</button></div>
       </section>
@@ -115,6 +115,15 @@
           <p id="steps-message" class="message"></p>
         </div>
         <div class="col">
+          <div class="box">
+            <h3>목록 보기</h3>
+            <div class="hint">모든 파일·검색 결과처럼 여러 폴더의 파일이 섞인 목록에 써요. 이름순은 A-Z 다음 ㄱ-ㅎ이에요.</div>
+            <div class="row"><label><input type="radio" name="list_group" value="none"> 하나로(정렬대로)</label>
+              <label><input type="radio" name="list_group" value="folder"> 폴더별로 묶기</label></div>
+            <div class="row" style="margin-top:6px"><label><input type="checkbox" id="pin_installers"> 설치파일(exe·msi 등)을 맨 위에</label></div>
+            <div class="row" style="margin-top:6px"><label><input type="checkbox" id="show_same_name"> 상세에 ‘이름이 같은 파일’ 보기</label></div>
+            <p id="view-message" class="message"></p>
+          </div>
           <div class="box">
             <h3>기간</h3>
             <div class="hint">목록 위쪽 버튼이 이 기준으로 파일을 골라요.</div>
@@ -223,6 +232,7 @@
 <div class="grip n" data-edge="n"></div><div class="grip s" data-edge="s"></div><div class="grip e" data-edge="e"></div><div class="grip w" data-edge="w"></div>
 <div class="grip ne" data-edge="ne"></div><div class="grip nw" data-edge="nw"></div><div class="grip se" data-edge="se"></div><div class="grip sw" data-edge="sw"></div>
 
+<div id="drive-menu" class="menu hidden"></div>
 <div id="menu" class="menu hidden">
   <button data-act="open" data-for="file">열기</button>
   <button data-act="reveal" data-for="file">폴더 열기</button>

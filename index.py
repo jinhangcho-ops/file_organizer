@@ -52,6 +52,10 @@ create index if not exists files_modified on files(modified);
 create index if not exists files_seen on files(max(accessed, modified));
 create index if not exists files_downloaded on files(downloaded, created);
 create index if not exists files_kind on files(kind, ext);
+-- 폴더별로 묶어 볼 때(search.first_keys): 폴더 안의 기본 정렬 방향(이름 오름차순, 크기·날짜 내림차순)에 맞춘다.
+create index if not exists files_folder_name on files(folder, lower(name));
+create index if not exists files_folder_size on files(folder, size desc);
+create index if not exists files_folder_date on files(folder, modified desc);
 create table if not exists media(id integer primary key, kind text, duration real, frames text, made integer, interval integer);
 create table if not exists media_band(band integer, value integer, id integer);
 create index if not exists media_band_value on media_band(band, value);

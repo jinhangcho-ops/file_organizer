@@ -5,6 +5,7 @@
 모아 보기에는 예외(exclude)를 적용한다. 위치·검색에는 적용하지 않는다."""
 import datetime
 import os
+import re
 import time
 
 import exclude
@@ -88,6 +89,12 @@ def conditions(query, config):
             values += more
     if query.get("folder"):
         part, more = under(query["folder"])
+        parts.append(part)
+        values += more
+    if query.get("drive"):  # 왼쪽에서 고른 드라이브('모든 파일'을 볼 때만 화면이 보낸다)
+        if not re.fullmatch(r"[A-Za-z]:\\", str(query["drive"])):
+            raise ValueError(f"드라이브는 'D:\\' 모양으로 쓰세요: {query['drive']}")
+        part, more = under(query["drive"])
         parts.append(part)
         values += more
     if query.get("tag"):
@@ -192,9 +199,12 @@ def listing(query):
     snippet = ", (select substr(text, max(1, instr(lower(text), lower(?)) - 40), 120) from body where rowid = f.id) snippet" if text else ""
     db = index.connect()
     try:
+        # 두 단계: 안쪽은 정렬해서 앞의 줄만 고르고(가벼운 칸만), 바깥은 그 줄에만 같은 파일 표시 같은 무거운 칸을 붙인다.
+        # 한 번에 하면 색인을 못 타는 정렬(폴더별 묶기 등)에서 모든 줄의 무거운 칸을 먼저 계산해 25만 줄에 13초가 걸렸다.
+        ordering = f"order by {first_keys(config, query)}{sort} {order}, f.id {order}"
         rows = db.execute(
             f"""select f.id, {FIELDS}, {date} date, {DUPLICATE_KIND} duplicate, ({SEEN} < ?) stale{snippet}
-                from files f{where(picked)} order by {sort} {order}, f.id {order} limit {LIMIT + 1}""",
+                from (select * from files f{where(picked)} {ordering} limit {LIMIT + 1}) f {ordering}""",
             [stale_since] + ([text] if text else []) + picked_values).fetchall()
         places = place_names(db)
         if query.get("rows_only"):
@@ -215,6 +225,18 @@ def listing(query):
     return finish_rows(rows, places, pairs) | {
         "total": total, "bytes": size, "kinds": [[name, counts.get(name, 0)] for name in chip_order(config)], "views": views,
         "exts": [list(row) for row in exts], "tags": tags}  # JSON 객체는 키가 정렬되므로 목록으로
+
+
+INSTALLER = "설치파일"
+
+
+def first_keys(config, query):
+    """정렬 앞에 붙는 기준: 폴더별로 묶기(여러 폴더가 섞인 목록일 때, 같은 파일 보기는 빼고)와 설치파일 맨 위(묶으면 폴더 안에서 맨 위).
+    이것이 붙으면 이름·크기·날짜 색인만으로 정렬할 수 없어 조금 느려진다(정렬할 줄 수만큼)."""
+    keys = ["f.folder"] if config.get("list_group") == "folder" and not query.get("same_as") else []
+    if config.get("pin_installers"):
+        keys.append(f"(f.kind = '{INSTALLER}') desc")
+    return "".join(key + ", " for key in keys)
 
 
 def finish_rows(rows, places, pairs):
