@@ -71,7 +71,8 @@ def state():
     return jsonify(settings=settings.load(), drives=drives.list_drives(), known=drives.known_folders(), kinds=kinds.NAMES,
                    last_access=drives.last_access_on(), undo=len(organize.last()), index=index.status, counts=search.counts(),
                    places=tree.places(), exclude=exclude.load(), blacklist=blacklist.load(), protected=protect.load(), admin=blacklist.is_admin(),
-                   locks=lock.listing(), lock_vault=lock.vault_info(), lock_password=lock.has_password(), panes=settings.PANES)
+                   locks=lock.listing(), lock_vault=lock.vault_info(), lock_password=lock.has_password(), panes=settings.PANES,
+                   steps=settings.STEPS, step_list=settings.step_list(settings.load()), numbers={name: {"min": low, "max": high} for name, (low, high, _) in settings.NUMBERS.items()})
 
 
 @app.post("/api/settings")
@@ -138,11 +139,15 @@ def archive_run():
 
 @app.route("/api/index", methods=["GET", "POST"])
 def build_index():
+    """POST: 색인을 시작한다. only가 있으면 그 단계 하나만(설정의 [이것만 하기]) 한다."""
     if request.method == "POST":
+        only = body().get("only")
+        if only is not None and only not in settings.STEPS:
+            raise ValueError(f"모르는 색인 단계입니다: {only}")
         paths = index.roots(settings.load())
         if not paths:
             raise ValueError("색인할 폴더가 없습니다.")
-        if not index.start(paths):
+        if not index.start(paths, only):
             raise ValueError("이미 색인하는 중입니다.")
     return jsonify(index.status)
 

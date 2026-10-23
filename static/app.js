@@ -32,6 +32,8 @@ const VIEWS = {  // 위쪽 필터 칩이자 설정 화면의 숫자 카드(이 �
   stale: {title: () => `${state.settings.stale_days}일 넘게 안 본 파일`, warn: true},
 };
 const PAGES = {files: "파일 정리", setup: "설정", organize: "다운로드 정리하기", archive: "오래된 파일 보관"};
+// 같은 파일의 까닭(search.SAME)과 태그 글자. 태그를 누르면 그 파일과 같은 파일들만 경로와 함께 본다.
+const WHY = {bytes: "중복 의심", doc: "내용 같은 문서", text: "글자 같은 문서", media: "보이는 내용 같음"};
 
 // ---------- 도움 함수 ----------
 async function api(path, data) {
@@ -453,6 +455,7 @@ async function loadFiles() {
   const query = {...more, name: $("name").value, kind, ext, sort, order};
   if (filter) query.view = filter;
   if (scope.folder) query.folder = scope.folder;
+  if (scope.same) query.same_as = scope.same;
   try {
     const [found, chain] = await Promise.all([api("/api/files", query),
       scope.folder ? api("/api/chain?folder=1&path=" + encodeURIComponent(scope.folder)) : Promise.resolve({folders: []})]);
@@ -474,7 +477,7 @@ function chips(box, items, current, onPick) {
 }
 
 function showFiles(found, chain) {
-  $("title").textContent = scope.folder ? scope.name : "모든 파일";
+  $("title").textContent = scope.same ? `같은 파일: ${scope.name}` : scope.folder ? scope.name : "모든 파일";
   const where = chain.length ? chain.map((f) => f.name).join(" › ") + " · " : "";
   $("summary").textContent = `${where}파일 ${found.total.toLocaleString()}개 · ${size(found.bytes)}` + (found.more ? ` · 앞의 ${found.rows.length.toLocaleString()}개만 보여요` : "");
   const viewCounts = Object.fromEntries(found.views);
@@ -498,9 +501,10 @@ function showFiles(found, chain) {
   const stale = `${state.settings.stale_days}일 넘게 안 열었어요`;
   $("files").tBodies[0].replaceChildren(...rows.map((row, i) => {
     const name = el("td", {className: "name"}, el("span", {className: "ext", textContent: (extOf(row.name).slice(1) || "?").slice(0, 5).toUpperCase()}), row.name,
-      row.duplicate ? el("span", {className: "pill", textContent: "중복 의심"}) : null,
+      scope.same ? whyPill(row) : samePill(row),
       row.stale ? el("span", {className: "pill", textContent: stale}) : null,
-      row.snippet ? el("div", {className: "snippet", textContent: "… " + row.snippet.replace(/\s+/g, " ") + " …"}) : null);
+      row.snippet ? el("div", {className: "snippet", textContent: "… " + row.snippet.replace(/\s+/g, " ") + " …"}) : null,
+      scope.same ? el("div", {className: "path", textContent: row.path.slice(0, row.path.lastIndexOf("\\")), title: row.path}) : null);
     const tr = el("tr", {}, el("td", {className: "ck"}, el("input", {type: "checkbox"})), name,
       el("td", {className: "n mute", textContent: size(row.size)}), el("td", {className: "mute", textContent: shortDate(row.date)}));
     tr.row = row;
@@ -510,6 +514,23 @@ function showFiles(found, chain) {
   $("empty").textContent = state.counts.all ? "조건에 맞는 파일이 없어요." : "아직 색인이 없어요. 설정(톱니)에서 [색인 갱신]을 누르세요.";
   $("empty").classList.toggle("hidden", rows.length > 0);
   showSelection();
+}
+
+// 같은 파일 태그: 누르면 그 파일과 같은 파일들만(scope.same) 경로와 함께 보여 준다. 이전 목록은 빈 곳 오른쪽 클릭으로 돌아간다.
+function samePill(row) {
+  if (!row.duplicate) return null;
+  const pill = el("button", {className: "pill link", textContent: WHY[row.duplicate], title: "누르면 이 파일과 같은 파일들을 경로와 함께 봐요"});
+  pill.addEventListener("click", (e) => {
+    e.stopPropagation();
+    openScope({same: row.path, name: row.name});
+  });
+  return pill;
+}
+
+// 같은 파일 목록에서: 고른 파일은 '고른 파일', 나머지는 그 파일과 같은 까닭(사진·동영상은 유사도).
+function whyPill(row) {
+  const text = row.why === "self" ? "고른 파일" : WHY[row.why] + (row.score ? ` ${row.score}%` : "");
+  return el("span", {className: "pill" + (row.why === "self" ? " on" : ""), textContent: text});
 }
 
 let typing = null;
@@ -770,8 +791,8 @@ async function showDetail(row) {
   showFileInTree(row);
   if (!row) return;
   $("detail-name").textContent = row.name;
-  $("detail-pills").replaceChildren(...[row.duplicate && "중복 의심", row.stale && `${state.settings.stale_days}일 넘게 안 열었어요`]
-    .filter(Boolean).map((t) => el("span", {className: "pill", textContent: t})));
+  $("detail-pills").replaceChildren(...[samePill(row), row.stale ? el("span", {className: "pill", textContent: `${state.settings.stale_days}일 넘게 안 열었어요`}) : null]
+    .filter(Boolean));
   $("detail-preview").textContent = "";
   const q = encodeURIComponent(row.path);
   const [chain, same, preview] = await Promise.all([api("/api/chain?path=" + q), api("/api/same?path=" + q), api("/api/preview?path=" + q)]);
@@ -796,7 +817,9 @@ function showSame(id, title, list, none) {
   $(id + "-title").textContent = list.length ? `${title} ${list.length.toLocaleString()}개${list.length >= 50 ? " 이상" : ""}` : `${title} 없음`;
   $(id).replaceChildren(...(list.length ? list.map((f) => {
     const folder = f.path.slice(0, f.path.lastIndexOf("\\"));
-    const button = el("button", {className: "li", title: f.path}, el("span", {textContent: baseName(folder) === f.place ? f.place : `${f.place} › … › ${baseName(folder)}`}), el("span", {textContent: size(f.size)}));
+    const where = baseName(folder) === f.place ? f.place : `${f.place} › … › ${baseName(folder)}`;
+    const why = f.why ? ` · ${WHY[f.why]}${f.score ? " " + f.score + "%" : ""}` : "";
+    const button = el("button", {className: "li", title: f.path}, el("span", {textContent: where + why}), el("span", {textContent: size(f.size)}));
     button.addEventListener("click", () => goToFile(f));
     return button;
   }) : [el("div", {className: "li"}, el("span", {textContent: none}))]));
@@ -1247,6 +1270,7 @@ function showSetup() {
   $("not-admin-protect").classList.toggle("hidden", state.admin);
   $("protected").replaceChildren(...state.protected.map((path) => adminRow(path, () => changeProtect(path, true))));
   $("protected-empty").classList.toggle("hidden", state.protected.length > 0);
+  showSteps();
   $("locks").replaceChildren(...state.locks.map(lockRow));
   $("locks-empty").classList.toggle("hidden", state.locks.length > 0);
   $("lock-password").textContent = state.lock_password ? "비밀번호 바꾸기" : "비밀번호 정하기";
@@ -1254,6 +1278,56 @@ function showSetup() {
   $("vault-path").textContent = vault.path ? `금고: ${vault.path} (${vault.count.toLocaleString()}개${vault.open ? ", 열림" : ""})` : "금고: 정하지 않음";
   $("lock-vault").textContent = vault.path ? "금고 위치 바꾸기" : "금고 위치 정하기";
 }
+
+// ---------- 색인 단계: 순서(▲▼)·켜기는 바로 저장, [이것만 하기]는 그 단계만 돌린다 ----------
+function showSteps() {
+  const list = state.step_list;
+  $("steps").replaceChildren(...list.map((step, i) => {
+    const on = el("input", {type: "checkbox", checked: step.on, title: "끄면 [색인 갱신]에서 빠져요"});
+    on.addEventListener("change", () => saveSteps(list.map((s, j) => (j === i ? {...s, on: on.checked} : s))));
+    const move = (to, text, label) => {
+      const b = el("button", {className: "btn s", textContent: text, title: label, disabled: to < 0 || to >= list.length});
+      b.addEventListener("click", () => {
+        const next = [...list];
+        [next[i], next[to]] = [next[to], next[i]];
+        saveSteps(next);
+      });
+      return b;
+    };
+    const alone = el("button", {className: "btn s", textContent: "이것만 하기"});
+    alone.addEventListener("click", async () => {
+      try {
+        showIndex(await api("/api/index", {only: step.name}));
+        pollIndex();
+      } catch (e) {
+        say("steps-message", e.message, "error");
+      }
+    });
+    return el("div", {className: "step"}, on, el("span", {textContent: `${i + 1}. ${state.steps[step.name]}`}), move(i - 1, "▲", "앞으로"), move(i + 1, "▼", "뒤로"), alone);
+  }));
+  for (const name of ["video_interval", "video_similar"]) {
+    Object.assign($(name), {value: state.settings[name], min: state.numbers[name].min, max: state.numbers[name].max});
+  }
+}
+
+async function saveSteps(list) {
+  if (await saveSettings({index_steps: list}, "steps-message")) {
+    await loadState();
+    say("steps-message", "색인 단계를 저장했어요.", "ok");
+  } else {
+    $("steps-message").className = "message error";
+  }
+}
+
+$("numbers-save").addEventListener("click", async () => {
+  const changes = {video_interval: Number($("video_interval").value), video_similar: Number($("video_similar").value)};
+  if (await saveSettings(changes, "steps-message")) {
+    await loadState();
+    say("steps-message", "저장했어요. 장면 간격을 바꾸면 다음 [사진·동영상 비교]에서 장면을 다시 뽑아요.", "ok");
+  } else {
+    $("steps-message").className = "message error";
+  }
+});
 
 $("days-save").addEventListener("click", async () => {
   const changes = {recent_days: Number($("recent_days").value), stale_days: Number($("stale_days").value)};

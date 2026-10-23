@@ -103,6 +103,14 @@
           <div class="row" style="margin-top:12px"><button class="btn p" id="reindex">색인 갱신</button><button class="btn hidden" data-stop>멈추기</button></div>
           <p id="index-progress" class="hint progress"></p>
         </div>
+        <div class="box">
+          <h3>색인 단계</h3>
+          <div class="hint">파일 목록을 훑은 다음 위에서부터 차례로 해요. 끈 단계는 [색인 갱신]에서 빠지고 [이것만 하기]로만 돌아요.</div>
+          <div class="list" id="steps"></div>
+          <div class="row" style="margin-top:10px">동영상 장면 간격 <input type="number" id="video_interval"> 초 · 같다고 볼 유사도 <input type="number" id="video_similar"> %</div>
+          <div class="row" style="margin-top:8px"><button class="btn p" id="numbers-save">저장</button></div>
+          <p id="steps-message" class="message"></p>
+        </div>
         <div class="col">
           <div class="box">
             <h3>기간</h3>

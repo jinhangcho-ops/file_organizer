@@ -88,6 +88,11 @@ html.pane-dragging, html.pane-dragging * { cursor: col-resize !important; user-s
 .fl .nm span:last-child { overflow: hidden; text-overflow: ellipsis; }
 .fl svg { color: var(--mute); flex: none; }
 .fl .c { width: 12px; color: var(--mute); font-size: 10px; flex: none; text-align: center; }
+.pill.link { cursor: pointer; border: none; font: inherit; }
+.pill.link:hover { text-decoration: underline; }
+td.name .path { color: var(--mute); font-size: 11px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.step { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+.step span { flex: 1; }
 .fl .m { display: flex; align-items: center; gap: 8px; }
 .fl .m .bar { flex: 1; }
 .fl .m span { width: 62px; text-align: right; font-variant-numeric: tabular-nums; font-size: 12px; white-space: nowrap; }

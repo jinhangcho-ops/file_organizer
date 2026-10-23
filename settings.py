@@ -10,6 +10,9 @@ import kinds
 DAYS = (1, 3650)  # 모아 보기 기간(일)의 범위
 # 왼쪽 폴더 목록·오른쪽 상세 칸의 너비(px) 범위와 기본값. 0을 저장하면 기본으로 돌아간다. 화면은 /api/state의 panes로 받는다.
 PANES = {"pane_left": {"min": 200, "max": 700, "default": 380}, "pane_detail": {"min": 260, "max": 700, "default": 340}}
+# 색인의 ① 파일 목록 다음 단계들(화면 이름). 순서·켜기는 설정 index_steps, 처음에는 이 순서이고 인식만 꺼져 있다(모델을 받아야 한다).
+STEPS = {"hash": "중복 확인", "text": "파일 내용 읽기", "doc": "문서 비교", "media": "사진·동영상 비교", "recognize": "사진·동영상 인식"}
+NUMBERS = {"video_interval": (30, 600, "동영상 장면 간격(초)"), "video_similar": (50, 100, "같다고 볼 유사도(%)")}
 
 
 def folder():
@@ -39,11 +42,24 @@ def defaults():
     # chip_counts: 종류 칩을 누른 횟수(많이 누른 칩을 왼쪽에 놓는다). archive_dest·cold_days: 오래된 파일 보관의 보관할 곳과 기간.
     return {"source": known["다운로드"], "dest": "", "roots": list(known.values()), "recent_days": 7, "stale_days": 90,
             "chip_counts": {}, "archive_dest": "", "cold_days": 365, "theme": "auto",  # theme: auto(Windows 설정을 따름), light, dark
-            "pane_left": 0, "pane_detail": 0}  # 칸 너비(0: 기본)
+            "pane_left": 0, "pane_detail": 0,  # 칸 너비(0: 기본)
+            "index_steps": [{"name": name, "on": name != "recognize"} for name in STEPS], "video_interval": 120, "video_similar": 70}
 
 
 def load():
     return {**defaults(), **read("settings.json", {})}
+
+
+def step_list(config):
+    """단계 목록 [{"name", "on"}] 순서대로. 저장된 목록에 없는 단계(새로 생긴 것)는 기본값으로 끝에 붙인다."""
+    saved = [s for s in config["index_steps"] if s["name"] in STEPS]
+    named = {s["name"] for s in saved}
+    return saved + [s for s in defaults()["index_steps"] if s["name"] not in named]
+
+
+def steps(config):
+    """켜 둔 단계 이름들을 순서대로."""
+    return [s["name"] for s in step_list(config) if s["on"]]
 
 
 def folder_text(value, name):
@@ -73,6 +89,16 @@ def check(changes):
             low, high = PANES[name]["min"], PANES[name]["max"]
             if not isinstance(value, int) or isinstance(value, bool) or not (value == 0 or low <= value <= high):
                 raise ValueError(f"칸 너비는 {low}~{high}px 사이의 정수로 쓰세요(0은 기본).")
+            clean[name] = value
+        elif name == "index_steps":
+            if (not isinstance(value, list) or sorted(s.get("name") for s in value if isinstance(s, dict)) != sorted(STEPS)
+                    or any(not isinstance(s.get("on"), bool) or len(s) != 2 for s in value)):
+                raise ValueError("색인 단계 목록이 잘못됐습니다.")
+            clean[name] = [{"name": s["name"], "on": s["on"]} for s in value]
+        elif name in NUMBERS:
+            low, high, label = NUMBERS[name]
+            if not isinstance(value, int) or isinstance(value, bool) or not low <= value <= high:
+                raise ValueError(f"{label}은 {low}~{high} 사이의 정수로 쓰세요.")
             clean[name] = value
         elif name == "theme":
             if value not in ("auto", "light", "dark"):

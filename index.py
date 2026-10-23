@@ -2,16 +2,18 @@
 - files: 파일 하나에 한 줄(경로, 종류, 크기, 만든·고친·연 시각, 다운로드 표시, 중복 비교용 지문, 내용을 읽은 때의 stamp).
 - body: 파일 안의 글자(FTS5 trigram, rowid = files.id). 세 글자 이상은 색인으로 빨리 찾는다.
 - folders: 폴더 구조와 그 아래 전체의 파일 수·용량(사이드바의 위치, 상세의 경로).
-색인은 세 단계다. ① 파일 목록(이름·크기·날짜)만 빠르게 훑는다. ② 중복 비교 지문 ③ 파일 안의 글자.
-②·③은 아직 하지 않았거나 그 뒤에 바뀐 파일만 하므로, 멈추거나 창을 닫았다 다시 하면 남은 것부터 이어서 한다.
+색인은 ① 파일 목록(이름·크기·날짜)을 빠르게 훑은 뒤, 설정(settings.steps)의 순서로 켜 둔 단계를 한다:
+중복 확인(바이트 지문), 파일 내용 읽기(글자, 문서의 글자 지문), 문서 비교(문서 정보를 뺀 Office 문서 지문), 사진·동영상 비교(media), 인식(recognize).
+단계마다 아직 하지 않았거나 그 뒤에 바뀐 파일만 하므로, 멈추거나 창을 닫았다 다시 하면 남은 것부터 이어서 한다. 한 단계만 따로 돌릴 수도 있다(only).
 SAVE_EVERY초마다 저장해서 중간에 끊겨도 거기까지는 남는다. 내용을 읽은 파일은 연 시각을 읽기 전으로 되돌린다.
-지문은 크기가 같은 파일이 둘 이상일 때만 만든다(크기가 다르면 같은 파일일 수 없다)."""
+바이트 지문은 크기가 같은 파일이 둘 이상일 때만 만든다(크기가 다르면 같은 파일일 수 없다)."""
 import hashlib
 import os
 import sqlite3
 import stat as stat_flags
 import threading
 import time
+import zipfile
 
 import exclude
 import extract
@@ -26,18 +28,32 @@ HIDDEN = stat_flags.FILE_ATTRIBUTE_HIDDEN | stat_flags.FILE_ATTRIBUTE_SYSTEM
 SAVE_EVERY = 2  # 이 초마다 저장해서, 색인하는 중에도 목록에 나오고 끊겨도 거기까지는 남게 한다.
 WHOLE = 8 * 1024 * 1024  # 이보다 큰 파일은 앞·가운데·뒤 SAMPLE씩만 읽어 지문을 만든다(그래서 '중복 의심').
 SAMPLE = 1024 * 1024
+# 문서 비교: Office 문서(zip)에서 문서 정보(docProps: 만든·저장한 사람, 시각, 편집 시간)를 뺀 나머지로 만드는 지문.
+DOC_EXTS = (".docx", ".xlsx", ".xlsm", ".pptx")
+# 글자 지문을 만드는 형식(다시 저장해도 글자가 같으면 같다). 이보다 짧은 글자는 우연히 같기 쉬워 만들지 않는다('').
+TEXT_EXTS = DOC_EXTS + (".pdf",)
+TEXT_MIN = 20
 
 SCHEMA = """
 create table if not exists files(id integer primary key, path text, key text unique, folder text, name text, ext text, kind text,
   size integer, created integer, modified integer, accessed integer, downloaded integer, stamp integer, hash text, hashed integer,
-  textstamp integer);
+  textstamp integer, dochash text, dochashed integer, texthash text);
 create index if not exists files_folder on files(folder);
 create virtual table if not exists body using fts5(text, tokenize='trigram');
 create table if not exists folders(key text primary key, path text, parent text, name text, files integer default 0, size integer default 0);
 create index if not exists folders_parent on folders(parent);
 create index if not exists files_hash on files(hash);
+create index if not exists files_dochash on files(dochash);
+create index if not exists files_texthash on files(texthash);
+create table if not exists media(id integer primary key, kind text, duration real, frames text, made integer, interval integer);
+create table if not exists media_band(band integer, value integer, id integer);
+create index if not exists media_band_value on media_band(band, value);
+create index if not exists media_band_id on media_band(id);
+create table if not exists media_pair(a integer, b integer, score integer, primary key(a, b));
+create index if not exists media_pair_b on media_pair(b);
 """
-ADDED = {"hash": "text", "hashed": "integer", "textstamp": "integer"}  # 예전 색인 파일에 없는 칸
+# 예전 색인 파일에 없는 칸. dochash: 문서 비교 지문(dochashed: 만든 때의 stamp), texthash: 글자 지문(''은 만들지 않음).
+ADDED = {"hash": "text", "hashed": "integer", "textstamp": "integer", "dochash": "text", "dochashed": "integer", "texthash": "text"}
 
 # 화면이 1초마다 읽는다. step: 지금 단계 이름, done/total: 그 단계에서 한 수와 할 수(목록 단계는 total 없음).
 status = {"running": False, "step": "", "done": 0, "total": 0, "current": "", "error": "", "finished": None, "stopped": False}
@@ -122,11 +138,13 @@ def save_file(db, path, st):
            values(?,?,?,?,?,?,?,?,?,?,?,?)
            on conflict(key) do update set path=excluded.path, folder=excluded.folder, name=excluded.name, ext=excluded.ext,
              kind=excluded.kind, size=excluded.size, created=excluded.created, modified=excluded.modified,
-             accessed=excluded.accessed, downloaded=excluded.downloaded, stamp=excluded.stamp, hash=null, hashed=null, textstamp=null
+             accessed=excluded.accessed, downloaded=excluded.downloaded, stamp=excluded.stamp, hash=null, hashed=null, textstamp=null,
+             dochash=null, dochashed=null, texthash=null
            returning id""",
         (path, key, os.path.dirname(key), name, ext, kinds.of(ext), st.st_size, int(st.st_birthtime), int(st.st_mtime),
          int(st.st_atime), int(marked), st.st_mtime_ns)).fetchone()
     db.execute("delete from body where rowid = ?", (row["id"],))
+    drop_ids(db, [row["id"]])  # 바뀐 파일: 사진·동영상 지문과 짝도 다시 만든다.
 
 
 def add_folder(db, path, parent):
@@ -150,24 +168,41 @@ def totals(db):
     db.executemany("update folders set files = ?, size = ? where key = ?", [(count[k], size[k], k) for k in parent])
 
 
-def build(paths):
-    """paths 아래를 훑어 색인을 맞추고(①), 지문(②)과 내용(③) 중 남은 것을 한다. 끝까지 훑었으면 사라진 파일·폴더를 지운다.
-    멈추면(stop) 그때까지 한 것은 남기고 끝낸다. 사라진 것 지우기는 끝까지 훑었을 때만 한다(못 본 파일이 사라진 것인지 알 수 없으므로)."""
+def step_work(name):
+    """단계 이름 → 그 단계를 하는 함수(db). 사진·동영상 단계는 그때 불러온다(무거운 라이브러리를 켤 때 올리지 않게)."""
+    if name == "media":
+        import media
+        return media.run
+    if name == "recognize":
+        import recognize
+        return recognize.run
+    return {"hash": fingerprints, "text": read_texts, "doc": documents}[name]
+
+
+def build(paths, only=None):
+    """paths 아래를 훑어 색인을 맞추고(①), 켜 둔 단계를 설정의 순서로 한다. 끝까지 훑었으면 사라진 파일·폴더를 지운다.
+    only: 그 단계 하나만 한다(파일 목록은 훑지 않는다). 멈추면(stop) 그때까지 한 것은 남기고 끝낸다.
+    사라진 것 지우기는 끝까지 훑었을 때만 한다(못 본 파일이 사라진 것인지 알 수 없으므로)."""
     db = connect()
     try:
+        if only:
+            step_work(only)(db)
+            return
         old = {row["key"]: (row["size"], row["stamp"]) for row in db.execute("select key, size, stamp from files")}
         seen, folders = set(), set()
         status.update(step="파일 목록 확인", done=0, total=0)
         done = scan(db, paths, old, seen, folders)
         if done:
             gone = [(key,) for key in old if key not in seen]
-            db.executemany("delete from body where rowid = (select id from files where key = ?)", gone)
+            drop_ids(db, [row[0] for key in gone for row in db.execute("select id from files where key = ?", key)])
             db.executemany("delete from files where key = ?", gone)
             db.executemany("delete from folders where key = ?", [(key,) for (key,) in db.execute("select key from folders") if key not in folders])
         totals(db)
         save_now(db, force=True)
-        fingerprints(db)
-        read_texts(db)
+        for name in settings.steps(settings.load()):
+            if stop.is_set():
+                break
+            step_work(name)(db)
     finally:
         db.close()
 
@@ -210,7 +245,13 @@ def read_text(db, row_id, path, ext, st):
     db.execute("delete from body where rowid = ?", (row_id,))
     if text.strip():
         db.execute("insert into body(rowid, text) values(?, ?)", (row_id, text))
-    db.execute("update files set textstamp = stamp where id = ?", (row_id,))
+    db.execute("update files set textstamp = stamp, texthash = ? where id = ?", (text_hash(text) if ext in TEXT_EXTS else None, row_id))
+
+
+def text_hash(text):
+    """글자 지문: 띄어쓰기·줄바꿈을 하나로 맞춘 글자의 SHA-256. 너무 짧으면 ''(우연히 같은 짧은 문서를 묶지 않게)."""
+    plain = " ".join(text.split())
+    return hashlib.sha256(plain.encode("utf-8")).hexdigest() if len(plain) >= TEXT_MIN else ""
 
 
 def read_texts(db):
@@ -219,6 +260,7 @@ def read_texts(db):
     marks = ", ".join("?" * len(readable))
     rows = db.execute(f"""select id, path, ext, size, stamp from files where (textstamp is null or textstamp <> stamp)
                           and size <= ? and ext in ({marks})""", [extract.MAX_SIZE] + readable).fetchall()
+    fill_text_hashes(db)
     status.update(step="파일 내용 읽기", done=0, total=len(rows))
     for row in rows:
         if stop.is_set():
@@ -231,6 +273,52 @@ def read_texts(db):
         if st.st_mtime_ns != row["stamp"]:  # 목록을 훑은 뒤에 바뀌었다: 다음 색인 때 읽는다.
             continue
         read_text(db, row["id"], row["path"], row["ext"], st)
+        status["done"] += 1
+        save_now(db)
+    save_now(db, force=True)
+
+
+def fill_text_hashes(db):
+    """글자 지문이 생기기 전에 읽어 둔 문서: 저장된 글자로 지문만 만든다(파일을 다시 읽지 않는다)."""
+    marks = ", ".join("?" * len(TEXT_EXTS))
+    rows = db.execute(f"""select f.id, b.text from files f left join body b on b.rowid = f.id
+                          where f.textstamp = f.stamp and f.texthash is null and f.ext in ({marks})""", TEXT_EXTS).fetchall()
+    db.executemany("update files set texthash = ? where id = ?", [(text_hash(row["text"] or ""), row["id"]) for row in rows])
+
+
+def doc_fingerprint(path):
+    """문서 비교 지문: zip 안의 파일 중 문서 정보(docProps/…)를 뺀 나머지의 이름과 내용으로 만든 SHA-256.
+    복사한 뒤 문서 정보만 바뀐 문서끼리 같다. 열지 못하는 파일(깨짐·암호)은 ''."""
+    digest = hashlib.sha256()
+    try:
+        with zipfile.ZipFile(path) as archive:
+            for name in sorted(archive.namelist()):
+                if name.lower().startswith("docprops/") or name.endswith("/"):
+                    continue
+                digest.update(name.encode("utf-8") + b"\0" + hashlib.sha256(archive.read(name)).digest())
+    except (zipfile.BadZipFile, RuntimeError, ValueError, EOFError):
+        return ""
+    return digest.hexdigest()
+
+
+def documents(db):
+    """문서 비교: Office 문서 중 지문이 없거나 그 뒤에 바뀐 것의 문서 비교 지문을 만든다. 읽은 뒤 연 시각은 되돌린다."""
+    marks = ", ".join("?" * len(DOC_EXTS))
+    rows = db.execute(f"select id, path, stamp from files where (dochashed is null or dochashed <> stamp) and ext in ({marks})", DOC_EXTS).fetchall()
+    status.update(step="문서 비교", done=0, total=len(rows))
+    for row in rows:
+        if stop.is_set():
+            break
+        status["current"] = row["path"]
+        try:
+            st = os.stat(row["path"])
+            if st.st_mtime_ns != row["stamp"]:  # 목록을 훑은 뒤에 바뀌었다: 다음 색인 때 한다.
+                continue
+            value = doc_fingerprint(row["path"])
+        except OSError:
+            continue
+        filetime.restore_access(row["path"], st)
+        db.execute("update files set dochash = ?, dochashed = stamp where id = ?", (value, row["id"]))
         status["done"] += 1
         save_now(db)
     save_now(db, force=True)
@@ -270,8 +358,8 @@ def fingerprints(db):
     save_now(db, force=True)
 
 
-def start(paths):
-    """색인을 따로 돌린다. 이미 돌고 있으면 False."""
+def start(paths, only=None):
+    """색인을 따로 돌린다(only: 그 단계 하나만). 이미 돌고 있으면 False."""
     with lock:
         if status["running"]:
             return False
@@ -280,7 +368,7 @@ def start(paths):
 
     def work():
         try:
-            build(paths)
+            build(paths, only)
         except Exception as e:  # 화면에 알리고 끝낸다.
             status["error"] = str(e)
         finally:
@@ -371,10 +459,16 @@ def moved(pairs):
         db.close()
 
 
+def drop_ids(db, ids):
+    """files에서 지울 줄들(id)의 글자·사진·동영상 기록을 지운다(files 줄은 부르는 쪽이 지운다)."""
+    for table, column in (("body", "rowid"), ("media", "id"), ("media_band", "id"), ("media_pair", "a"), ("media_pair", "b")):
+        db.executemany(f"delete from {table} where {column} = ?", [(i,) for i in ids])
+
+
 def forget(db, path):
     """파일 path, 또는 폴더 path와 그 아래 전부를 색인에서 뺀다."""
     key, old = exclude.key(path), prefix(path)
-    db.execute("delete from body where rowid in (select id from files where key = ? or substr(key, 1, ?) = ?)", (key, len(old), old))
+    drop_ids(db, [row[0] for row in db.execute("select id from files where key = ? or substr(key, 1, ?) = ?", (key, len(old), old))])
     db.execute("delete from files where key = ? or substr(key, 1, ?) = ?", (key, len(old), old))
     db.execute("delete from folders where key = ? or substr(key, 1, ?) = ?", (key, len(old), old))
 

@@ -16,7 +16,15 @@ import settings
 LIMIT = 500  # 한 번에 보여 줄 최대 줄 수
 DAY = 86400
 MB = 1024 * 1024
-DUPLICATE = "f.hash in (select hash from files where hash is not null group by hash having count(*) > 1)"
+# 같은 파일의 종류(센 쪽부터): 바이트가 같음, 문서 정보만 다른 문서, 글자가 같은 문서, 보이는 내용이 비슷한 사진·동영상(media).
+SAME = {
+    "bytes": "f.hash in (select hash from files where hash is not null group by hash having count(*) > 1)",
+    "doc": "f.dochash in (select dochash from files where dochash <> '' group by dochash having count(*) > 1)",
+    "text": "f.texthash in (select texthash from files where texthash <> '' group by texthash having count(*) > 1)",
+    "media": "f.id in (select a from media_pair union select b from media_pair)",
+}
+DUPLICATE = "(" + " or ".join(SAME.values()) + ")"
+DUPLICATE_KIND = "case " + " ".join(f"when {condition} then '{name}'" for name, condition in SAME.items()) + " end"
 SEEN = "max(f.accessed, f.modified)"
 VIEWS = {  # 이름 → (조건, 기간 설정, 날짜 칸)
     "duplicates": (DUPLICATE, None, "f.modified"),
@@ -107,9 +115,22 @@ def listing(query):
     """목록 한 쪽. {"rows", "more", "total", "bytes", "kinds": [[종류, 개수], …](모든 종류, 칩 순서 chip_order대로), "views": [[목록, 개수], …],
     "exts": [[확장자, 개수], …](종류를 골랐을 때 그 종류 안의 확장자, 많은 순)}.
     종류별 개수는 종류·확장자 조건 없이, 확장자별 개수는 확장자 조건 없이, 목록(view)별 개수는 그 목록 조건만 바꿔 센다(나머지 조건은 그대로).
-    줄마다 duplicate·stale 태그와 위치 이름(place)을 붙인다."""
+    줄마다 duplicate(같은 파일의 종류: SAME의 이름)·stale 태그와 위치 이름(place)을 붙인다.
+    same_as(경로)가 있으면 그 파일과 같은 파일들만(그 파일이 맨 위) 보여 주고, 줄마다 why(그 파일과 같은 까닭)·score를 붙인다."""
     config = settings.load()
     parts, values, date = conditions(query, config)
+    pairs = {}
+    if query.get("same_as"):
+        db = index.connect()
+        try:
+            me, pairs = partners(db, exclude.key(query["same_as"]))
+        finally:
+            db.close()
+        if me is None:
+            raise ValueError(f"색인에 없는 파일입니다: {query['same_as']}")
+        pairs = {me: ("self", None)} | pairs
+        parts.append(f"f.id in ({', '.join('?' * len(pairs))})")
+        values += list(pairs)
     kind = query.get("kind") or ""
     if kind and kind not in kinds.NAMES:
         raise ValueError(f"모르는 종류입니다: {kind}")
@@ -138,13 +159,17 @@ def listing(query):
                           by_kind_values).fetchall() if kind else []
         total, size = db.execute(f"select count(*), coalesce(sum(f.size), 0) from files f{where(picked)}", picked_values).fetchone()
         rows = db.execute(
-            f"""select {FIELDS}, {date} date, ({DUPLICATE}) duplicate, ({SEEN} < ?) stale{snippet}
+            f"""select f.id, {FIELDS}, {date} date, {DUPLICATE_KIND} duplicate, ({SEEN} < ?) stale{snippet}
                 from files f{where(picked)} order by {sort} {order}, f.hash, lower(f.name) limit {LIMIT + 1}""",
             [stale_since] + ([text] if text else []) + picked_values).fetchall()
         places = place_names(db)
     finally:
         db.close()
     rows = [dict(row) | {"place": place(row["path"], places)} for row in rows]
+    if pairs:
+        rows.sort(key=lambda row: pairs[row["id"]][0] != "self")  # 고른 파일을 맨 위에(나머지 순서는 그대로)
+        for row in rows:
+            row["why"], row["score"] = pairs[row["id"]]
     return {"rows": rows[:LIMIT], "more": len(rows) > LIMIT, "total": total, "bytes": size,
             "kinds": [[name, counts.get(name, 0)] for name in chip_order(config)], "views": views, "exts": [list(row) for row in exts]}  # JSON 객체는 키가 정렬되므로 목록으로
 
@@ -168,22 +193,41 @@ def place(path, places):
 SAME_LIMIT = 50  # 상세에 보여 줄 같은 파일의 최대 수
 
 
+def partners(db, key):
+    """파일 key와 같은 파일들: (그 파일의 id 또는 None, {id: (까닭, 점수)}). 까닭은 SAME의 이름이고, 여러 까닭이면 센 쪽 하나.
+    점수는 사진·동영상의 유사도(%)이고 나머지는 None."""
+    me = db.execute("select id, hash, dochash, texthash from files where key = ?", (key,)).fetchone()
+    if me is None:
+        return None, {}
+    found = {}
+    for name, column in (("bytes", "hash"), ("doc", "dochash"), ("text", "texthash")):
+        if me[column]:
+            for (other,) in db.execute(f"select id from files where {column} = ? and id <> ?", (me[column], me["id"])):
+                found.setdefault(other, (name, None))
+    for other, score in db.execute("select case when a = ? then b else a end, score from media_pair where a = ? or b = ?", (me["id"],) * 3):
+        found.setdefault(other, ("media", score))
+    return me["id"], found
+
+
 def same(path):
-    """상세의 '내용이 같은 파일'(지문이 같음)과 '이름이 같은 파일'(대소문자 무시, 내용은 다를 수 있음). 각각 [{"path", "name", "size", "place"}]."""
+    """상세의 '내용이 같은 파일'(partners: 까닭 why·유사도 score와 함께)과 '이름이 같은 파일'(대소문자 무시, 내용은 다를 수 있음).
+    각각 [{"path", "name", "size", "place", …}], 경로 순으로 SAME_LIMIT개까지."""
     key = exclude.key(path)
     db = index.connect()
     try:
-        row = db.execute("select name, hash from files where key = ?", (key,)).fetchone()
+        row = db.execute("select name from files where key = ?", (key,)).fetchone()
         if row is None:
             return {"content": [], "name": []}
-        found = {}
-        query = f"select path, name, size, modified from files where {{}} and key <> ? order by lower(path) limit {SAME_LIMIT}"
-        found["content"] = db.execute(query.format("hash = ?"), (row["hash"], key)).fetchall() if row["hash"] else []
-        found["name"] = db.execute(query.format("lower(name) = lower(?)"), (row["name"], key)).fetchall()
+        _, pairs = partners(db, key)
+        columns = "id, path, name, size, modified"
+        content = [dict(r) | {"why": pairs[r["id"]][0], "score": pairs[r["id"]][1]} for r in db.execute(
+            f"select {columns} from files where id in ({', '.join('?' * len(pairs))}) order by lower(path) limit {SAME_LIMIT}", list(pairs))] if pairs else []
+        name = [dict(r) for r in db.execute(
+            f"select {columns} from files where lower(name) = lower(?) and key <> ? order by lower(path) limit {SAME_LIMIT}", (row["name"], key))]
         places = place_names(db)
     finally:
         db.close()
-    return {k: [dict(r) | {"place": place(r["path"], places)} for r in rows] for k, rows in found.items()}
+    return {k: [r | {"place": place(r["path"], places)} for r in rows] for k, rows in (("content", content), ("name", name))}
 
 
 PREVIEW = 300  # 상세의 내용 미리보기 글자 수
