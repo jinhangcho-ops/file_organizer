@@ -10,6 +10,7 @@ let trail = [];                   // 지나온 범위(빈 곳 오른쪽 클릭�
 let filter = "";                  // 고른 필터 칩(VIEWS의 이름, "" = 없음)
 let kind = "";                    // 고른 종류 칩("" = 전체)
 let ext = "";                     // 고른 확장자 칩("" = 그 종류 모두). 종류를 골랐을 때만 나온다.
+let tag = "";                     // 고른 추정 칩(search.tag_condition, "" = 없음). 사진·이미지·동영상을 골랐을 때만 나온다.
 let sort = "date", order = "desc";
 let more = {};                    // [조건]의 값
 let picked = null;                // 상세에 보이는 파일(목록의 줄)
@@ -456,6 +457,7 @@ async function loadFiles() {
   if (filter) query.view = filter;
   if (scope.folder) query.folder = scope.folder;
   if (scope.same) query.same_as = scope.same;
+  if (tag || scope.tag) query.tag = tag || scope.tag;
   try {
     const [found, chain] = await Promise.all([api("/api/files", query),
       scope.folder ? api("/api/chain?folder=1&path=" + encodeURIComponent(scope.folder)) : Promise.resolve({folders: []})]);
@@ -477,7 +479,7 @@ function chips(box, items, current, onPick) {
 }
 
 function showFiles(found, chain) {
-  $("title").textContent = scope.same ? `같은 파일: ${scope.name}` : scope.folder ? scope.name : "모든 파일";
+  $("title").textContent = scope.same ? `같은 파일: ${scope.name}` : scope.tag ? `추정: ${scope.name}` : scope.folder ? scope.name : "모든 파일";
   const where = chain.length ? chain.map((f) => f.name).join(" › ") + " · " : "";
   $("summary").textContent = `${where}파일 ${found.total.toLocaleString()}개 · ${size(found.bytes)}` + (found.more ? ` · 앞의 ${found.rows.length.toLocaleString()}개만 보여요` : "");
   const viewCounts = Object.fromEntries(found.views);
@@ -487,11 +489,14 @@ function showFiles(found, chain) {
   chips($("chips"), [["", "전체", all], ...found.kinds.map(([k, n]) => [k, k, n])], kind, (value) => {
     kind = value;
     ext = "";
+    tag = "";
     (value ? countChip(value) : Promise.resolve()).then(loadFiles);
   });
   const inKind = found.exts.reduce((sum, [, n]) => sum + n, 0);
   chips($("exts"), [["", "모두", inKind], ...found.exts.map(([e, n]) => [e, e.replace(".", "") || "(확장자 없음)", n])], ext, (value) => { ext = value; loadFiles(); });
   $("exts-bar").classList.toggle("hidden", !kind || !found.exts.length);
+  chips($("tags"), [["", "추정 모두", found.total], ...found.tags.map(([t, n]) => [t, tagName(t), n])], tag, (value) => { tag = tag === value ? "" : value; loadFiles(); });
+  $("tags-bar").classList.toggle("hidden", !found.tags.length);
   document.querySelectorAll("#files th[data-sort]").forEach((th) => {
     th.classList.toggle("sorted", th.dataset.sort === sort);
     th.textContent = th.textContent.replace(/ [↑↓]$/, "") + (th.dataset.sort === sort ? (order === "asc" ? " ↑" : " ↓") : "");
@@ -514,6 +519,14 @@ function showFiles(found, chain) {
   $("empty").textContent = state.counts.all ? "조건에 맞는 파일이 없어요." : "아직 색인이 없어요. 설정(톱니)에서 [색인 갱신]을 누르세요.";
   $("empty").classList.toggle("hidden", rows.length > 0);
   showSelection();
+}
+
+// 추정 칩의 이름: 종류는 서버의 분류표(recognize.LABELS), 사람은 번호, 내 분류 모델은 설정에서 붙인 이름.
+function tagName(value) {
+  const [kindName, label] = value.split(":");
+  if (kindName === "person") return `사람 ${label}`;
+  if (kindName === "custom") return state.settings.custom_labels[Number(label)]?.name || `분류 ${Number(label) + 1}`;
+  return state.labels[kindName]?.[label] || label;
 }
 
 // 같은 파일 태그: 누르면 그 파일과 같은 파일들만(scope.same) 경로와 함께 보여 준다. 이전 목록은 빈 곳 오른쪽 클릭으로 돌아간다.
@@ -807,11 +820,25 @@ async function showDetail(row) {
   const facts = [["종류", row.kind], ["크기", size(row.size)], ["위치", where], ["마지막 수정", fullDate(row.modified)]];
   $("detail-rows").replaceChildren(...facts.flatMap(([k, v]) => [el("span", {textContent: k}), typeof v === "string" ? el("div", {textContent: v}) : v]));
   showSame("same-content", "내용이 같은 파일", same.content, "내용이 같은 파일이 없어요.");
+  showGuess(row);
   showSame("same-name", "이름이 같은 파일", same.name, "이름이 같은 파일이 없어요.");
 }
 
 // 같은 파일 칸은 접어 두고, 펼치거나 접은 상태는 다른 파일을 골라도 그대로 둔다(켜 둔 동안만).
 document.querySelectorAll(".fold").forEach((box) => box.querySelector(".fold-head").addEventListener("click", () => box.classList.toggle("open")));
+
+// 상세의 추정(사진·동영상 인식 결과): 칩을 누르면 그 추정의 파일들을 모두 본다.
+async function showGuess(row) {
+  const {tags, people} = await api("/api/recognized?path=" + encodeURIComponent(row.path)).catch(() => ({tags: [], people: []}));
+  if (picked !== row || (!tags.length && !people.length)) return;
+  const chipFor = (value, text) => {
+    const b = el("button", {className: "pill link", textContent: text});
+    b.addEventListener("click", () => openScope({all: true, tag: value, name: tagName(value)}));
+    return b;
+  };
+  const box = el("div", {}, ...tags.map(([t, score]) => chipFor(t, `${tagName(t)} ${score}%`)), ...people.map((p) => chipFor(`person:${p}`, `사람 ${p}`)));
+  $("detail-rows").append(el("span", {textContent: "추정"}), box);
+}
 
 function showSame(id, title, list, none) {
   $(id + "-title").textContent = list.length ? `${title} ${list.length.toLocaleString()}개${list.length >= 50 ? " 이상" : ""}` : `${title} 없음`;
@@ -1271,6 +1298,7 @@ function showSetup() {
   $("protected").replaceChildren(...state.protected.map((path) => adminRow(path, () => changeProtect(path, true))));
   $("protected-empty").classList.toggle("hidden", state.protected.length > 0);
   showSteps();
+  showRecognize();
   $("locks").replaceChildren(...state.locks.map(lockRow));
   $("locks-empty").classList.toggle("hidden", state.locks.length > 0);
   $("lock-password").textContent = state.lock_password ? "비밀번호 바꾸기" : "비밀번호 정하기";
@@ -1309,6 +1337,78 @@ function showSteps() {
     Object.assign($(name), {value: state.settings[name], min: state.numbers[name].min, max: state.numbers[name].max});
   }
 }
+
+// ---------- 사진·동영상 인식: 모델 받기, 얼굴 찾기, 내 분류 모델 ----------
+function showRecognize() {
+  $("model-list").replaceChildren(...state.models.map((m) => el("div", {}, el("span", {className: "mono", textContent: `${m.title} · ${size(m.bytes)} · ${m.ready ? "받음" : "안 받음"}`}))));
+  $("models-get").classList.toggle("hidden", state.models.every((m) => m.ready));
+  $("face_on").checked = state.settings.face_on;
+  $("custom-path").textContent = state.settings.custom_model_path || "고르지 않음";
+  const labels = state.settings.custom_labels;
+  const field = (i, name, props) => {  // dataset은 읽기 전용이라 el()의 속성으로 넣을 수 없다.
+    const input = el("input", props);
+    Object.assign(input.dataset, {i, field: name});
+    return input;
+  };
+  $("custom-labels").replaceChildren(...labels.map((label, i) => el("div", {className: "step"},
+    field(i, "name", {type: "text", value: label.name, maxLength: 30}),
+    el("span", {textContent: "기준"}), field(i, "threshold", {type: "number", min: 1, max: 100, value: label.threshold}), el("span", {textContent: "%"}),
+    el("label", {}, field(i, "show", {type: "checkbox", checked: label.show}), " 칩으로 보기"))));
+  $("custom-save-row").classList.toggle("hidden", !labels.length);
+}
+
+$("models-get").addEventListener("click", async (e) => {
+  const missing = state.models.filter((m) => !m.ready);
+  const text = missing.map((m) => `${m.title} ${size(m.bytes)}`).join(", ");
+  if (!(await ask({title: "모델을 받을까요?", text: `${text}\n받는 곳: huggingface.co(Xenova/clip-vit-base-patch32), github.com(opencv/opencv_zoo)\n받은 뒤 크기와 SHA-256을 확인해요.`}))) return;
+  busy(e.currentTarget, "recognize-message", async () => {
+    const result = await runJob((await api("/api/models/download", {groups: missing.map((m) => m.name)})).job);
+    await loadState();
+    say("recognize-message", `${result.done.length}개 받았어요.${failedText(result)}`, result.failed.length ? "error" : "ok");
+  });
+});
+
+$("face_on").addEventListener("change", async (e) => {
+  if (e.target.checked) await saveSettings({face_on: true}, "recognize-message");
+  else await forgetFaces();
+  await loadState();
+});
+$("faces-forget").addEventListener("click", forgetFaces);
+
+async function forgetFaces() {
+  if (!(await ask({title: "얼굴 정보를 지울까요?", text: "모아 둔 얼굴 지문과 ‘같은 사람’ 묶음을 지우고 얼굴 찾기를 꺼요. 사진은 그대로예요."}))) return loadState();
+  try {
+    state.settings = (await api("/api/faces/forget", {})).settings;
+    say("recognize-message", "얼굴 정보를 지웠어요.", "ok");
+  } catch (err) {
+    say("recognize-message", err.message, "error");
+  }
+  await loadState();
+}
+
+async function setCustomModel(data) {
+  try {
+    await api("/api/custom_model", data);
+    await loadState();
+  } catch (err) {
+    say("recognize-message", err.message, "error");
+  }
+}
+$("custom-pick").addEventListener("click", () => setCustomModel({pick: true}));
+$("custom-clear").addEventListener("click", () => setCustomModel({path: ""}));
+$("custom-save").addEventListener("click", async () => {
+  const labels = state.settings.custom_labels.map((label) => ({...label}));
+  $("custom-labels").querySelectorAll("input").forEach((input) => {
+    const {i, field} = input.dataset;
+    labels[i][field] = field === "show" ? input.checked : field === "threshold" ? Number(input.value) : input.value;
+  });
+  if (await saveSettings({custom_labels: labels}, "recognize-message")) {
+    await loadState();
+    say("recognize-message", "저장했어요.", "ok");
+  } else {
+    $("recognize-message").className = "message error";
+  }
+});
 
 async function saveSteps(list) {
   if (await saveSettings({index_steps: list}, "steps-message")) {

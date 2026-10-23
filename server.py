@@ -16,8 +16,10 @@ import index
 import jobs
 import kinds
 import lock
+import models
 import organize
 import protect
+import recognize
 import search
 import settings
 import tree
@@ -25,6 +27,7 @@ import tree
 app = Flask(__name__, static_folder="static")
 KEY = secrets.token_urlsafe(32)  # 실행할 때마다 새로 만든다. desktop.py가 창의 첫 주소에 넣는다.
 ask_folder = None  # 폴더 고르는 대화상자(→ 경로 또는 None). desktop.py가 채운다.
+ask_model = None  # 내 분류 모델(.onnx) 고르는 대화상자(→ 경로 또는 None). desktop.py가 채운다.
 window_control = None  # 제목 줄 없는 창의 버튼·크기 조절(동작, 값 → 답). desktop.py가 채운다.
 WINDOW_ACTIONS = {"minimize", "toggle", "close", "bounds", "place"}
 CSP = "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:"
@@ -72,7 +75,8 @@ def state():
                    last_access=drives.last_access_on(), undo=len(organize.last()), index=index.status, counts=search.counts(),
                    places=tree.places(), exclude=exclude.load(), blacklist=blacklist.load(), protected=protect.load(), admin=blacklist.is_admin(),
                    locks=lock.listing(), lock_vault=lock.vault_info(), lock_password=lock.has_password(), panes=settings.PANES,
-                   steps=settings.STEPS, step_list=settings.step_list(settings.load()), numbers={name: {"min": low, "max": high} for name, (low, high, _) in settings.NUMBERS.items()})
+                   steps=settings.STEPS, step_list=settings.step_list(settings.load()), models=models.status(), labels=recognize.LABELS,
+                   custom_count=recognize.custom_count(settings.load()["custom_model_path"]), numbers={name: {"min": low, "max": high} for name, (low, high, _) in settings.NUMBERS.items()})
 
 
 @app.post("/api/settings")
@@ -180,6 +184,51 @@ def same():
 def file_preview():
     """상세의 내용 미리보기(색인이 읽어 둔 글자의 앞부분)."""
     return jsonify(search.preview(checked(request.args.get("path", ""))))
+
+
+@app.get("/api/recognized")
+def recognized():
+    """상세의 추정 종류와 같은 사람(사진·동영상 인식의 결과)."""
+    return jsonify(search.recognized(checked(request.args.get("path", ""))))
+
+
+@app.post("/api/models/download")
+def download_models():
+    """인식 모델을 받는다(groups: models.FILES의 이름들). 뒤의 작업으로 돌리고 진행은 /api/job으로 본다."""
+    groups = body().get("groups")
+    if not isinstance(groups, list) or not groups or any(g not in models.FILES for g in groups):
+        raise ValueError("받을 모델을 고르세요.")
+    return jsonify(job=jobs.start("모델 받기", lambda progress: models.download(groups, progress)))
+
+
+@app.post("/api/custom_model")
+def custom_model():
+    """내 분류 모델 파일을 정하거나(path, pick이면 파일 고르기 창으로) 뺀다(""). 분류 수에 맞춰 분류 설정을 늘리거나 줄인다(있던 이름·기준은 둔다)."""
+    path = body().get("path")
+    if body().get("pick"):
+        if ask_model is None:
+            raise ValueError("파일 고르기는 프로그램 창에서만 됩니다.")
+        path = ask_model()
+        if not path:
+            return jsonify(settings=settings.load(), custom_count=recognize.custom_count(settings.load()["custom_model_path"]))
+    config = settings.save({"custom_model_path": path if isinstance(path, str) else None})
+    count = recognize.custom_count(config["custom_model_path"]) if config["custom_model_path"] else 0
+    labels = config["custom_labels"][:count]
+    labels += [{"name": f"분류 {i + 1}", "threshold": 80, "show": False} for i in range(len(labels), count)]
+    return jsonify(settings=settings.save({"custom_labels": labels}), custom_count=count)
+
+
+@app.post("/api/faces/forget")
+def forget_faces():
+    """얼굴 찾기를 끄고 모아 둔 얼굴 정보를 모두 지운다(색인 파일 안의 것만, 사진은 그대로)."""
+    not_busy()
+    db = index.connect()
+    try:
+        recognize.forget_faces(db)
+        db.commit()
+    finally:
+        db.close()
+    return jsonify(settings=settings.save({"face_on": False}))
 
 
 @app.post("/api/window")

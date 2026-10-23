@@ -1,15 +1,22 @@
 """프로그램 창을 연다. exe의 실행 파일이자 유일한 실행 방법."""
 import ctypes
 import os
+import sys
 import threading
 from ctypes import wintypes
 
-import webview
-from werkzeug.serving import make_server
+if "--recognize" in sys.argv:  # 사진·동영상 인식 프로세스: 창 없이 인식만 하고 끝난다(recognize.run이 띄운다).
+    import recognize
 
-import index
-import lock
-import server
+    recognize.child_main()
+    sys.exit(0)
+
+import webview  # noqa: E402
+from werkzeug.serving import make_server  # noqa: E402
+
+import index  # noqa: E402
+import lock  # noqa: E402
+import server  # noqa: E402
 
 http = make_server("127.0.0.1", 0, server.app, threaded=True)  # 0: 비어 있는 포트를 자동으로 고른다.
 threading.Thread(target=http.serve_forever, daemon=True).start()
@@ -70,7 +77,14 @@ def ask_folder():
     return chosen[0] if chosen else None
 
 
+def ask_model():
+    """내 분류 모델(.onnx) 파일을 고르는 대화상자. 고른 경로 또는 None."""
+    chosen = window.create_file_dialog(webview.FileDialog.OPEN, file_types=("ONNX 모델 (*.onnx)",))
+    return chosen[0] if chosen else None
+
+
 server.ask_folder = ask_folder
+server.ask_model = ask_model
 server.window_control = control
 lock.close_all()  # 지난번에 창을 정상으로 닫지 못했으면(끄기·강제 종료) 열어 둔 잠금 폴더가 남아 있다.
 # 아이콘: 소스로 실행할 때는 icon.ico, exe에서는(파일이 없으므로) exe에 넣은 아이콘을 pywebview가 쓴다.

@@ -43,7 +43,9 @@ def defaults():
     return {"source": known["다운로드"], "dest": "", "roots": list(known.values()), "recent_days": 7, "stale_days": 90,
             "chip_counts": {}, "archive_dest": "", "cold_days": 365, "theme": "auto",  # theme: auto(Windows 설정을 따름), light, dark
             "pane_left": 0, "pane_detail": 0,  # 칸 너비(0: 기본)
-            "index_steps": [{"name": name, "on": name != "recognize"} for name in STEPS], "video_interval": 120, "video_similar": 70}
+            "index_steps": [{"name": name, "on": name != "recognize"} for name in STEPS], "video_interval": 120, "video_similar": 70,
+            # 인식: 얼굴로 같은 사람 찾기, 내 분류 모델 파일과 분류마다 보여 줄 이름·기준 점수(%)·칩으로 보기
+            "face_on": True, "custom_model_path": "", "custom_labels": []}
 
 
 def load():
@@ -100,6 +102,21 @@ def check(changes):
             if not isinstance(value, int) or isinstance(value, bool) or not low <= value <= high:
                 raise ValueError(f"{label}은 {low}~{high} 사이의 정수로 쓰세요.")
             clean[name] = value
+        elif name == "face_on":
+            if not isinstance(value, bool):
+                raise ValueError("얼굴 찾기 설정이 잘못됐습니다.")
+            clean[name] = value
+        elif name == "custom_model_path":
+            if not isinstance(value, str) or (value and not (os.path.isfile(value) and value.lower().endswith(".onnx"))):
+                raise ValueError("내 분류 모델은 .onnx 파일을 고르세요.")
+            clean[name] = os.path.abspath(value) if value else ""
+        elif name == "custom_labels":
+            if not isinstance(value, list) or len(value) > 50 or any(
+                    not isinstance(item, dict) or set(item) != {"name", "threshold", "show"} or not isinstance(item["name"], str)
+                    or len(item["name"]) > 30 or not isinstance(item["threshold"], int) or isinstance(item["threshold"], bool)
+                    or not 1 <= item["threshold"] <= 100 or not isinstance(item["show"], bool) for item in value):
+                raise ValueError("내 분류 모델의 분류 설정이 잘못됐습니다(이름 30자, 기준 1~100%).")
+            clean[name] = [{"name": item["name"].strip(), "threshold": item["threshold"], "show": item["show"]} for item in value]
         elif name == "theme":
             if value not in ("auto", "light", "dark"):
                 raise ValueError(f"모르는 화면 색입니다: {value}")

@@ -51,6 +51,13 @@ create index if not exists media_band_value on media_band(band, value);
 create index if not exists media_band_id on media_band(id);
 create table if not exists media_pair(a integer, b integer, score integer, primary key(a, b));
 create index if not exists media_pair_b on media_pair(b);
+create table if not exists tags(id integer, kind text, label text, score integer);
+create index if not exists tags_id on tags(id);
+create index if not exists tags_kind on tags(kind, label);
+create table if not exists recognized(id integer primary key, made integer, custom text, faces integer);
+create table if not exists faces(id integer, n integer, person integer, vec blob);
+create index if not exists faces_id on faces(id);
+create index if not exists faces_person on faces(person);
 """
 # 예전 색인 파일에 없는 칸. dochash: 문서 비교 지문(dochashed: 만든 때의 stamp), texthash: 글자 지문(''은 만들지 않음).
 ADDED = {"hash": "text", "hashed": "integer", "textstamp": "integer", "dochash": "text", "dochashed": "integer", "texthash": "text"}
@@ -460,8 +467,9 @@ def moved(pairs):
 
 
 def drop_ids(db, ids):
-    """files에서 지울 줄들(id)의 글자·사진·동영상 기록을 지운다(files 줄은 부르는 쪽이 지운다)."""
-    for table, column in (("body", "rowid"), ("media", "id"), ("media_band", "id"), ("media_pair", "a"), ("media_pair", "b")):
+    """files에서 지울 줄들(id)의 글자·사진·동영상 지문·인식 기록을 지운다(files 줄은 부르는 쪽이 지운다)."""
+    for table, column in (("body", "rowid"), ("media", "id"), ("media_band", "id"), ("media_pair", "a"), ("media_pair", "b"),
+                          ("tags", "id"), ("recognized", "id"), ("faces", "id")):
         db.executemany(f"delete from {table} where {column} = ?", [(i,) for i in ids])
 
 

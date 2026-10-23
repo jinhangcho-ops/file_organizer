@@ -8,3 +8,7 @@ Send2Trash==2.1.0
 Pillow==13.0.0
 pillow-heif==1.8.1
 imageio-ffmpeg==0.6.0
+onnxruntime==1.31.0
+opencv-python-headless==5.0.0.93
+tokenizers==0.23.3
+numpy==2.5.4

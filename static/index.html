@@ -64,6 +64,7 @@
         <div class="hd"><h2 id="title">모든 파일</h2><p id="summary"></p></div>
         <div class="bar2"><div id="chips" class="chips one-line"></div></div>
         <div class="bar2 sub hidden" id="exts-bar"><div id="exts" class="chips one-line"></div></div>
+        <div class="bar2 sub hidden" id="tags-bar"><div id="tags" class="chips one-line"></div></div>
         <p id="list-error" class="error hidden"></p>
         <div class="tw" id="tw">
           <table id="files">
@@ -147,6 +148,20 @@
           <div class="list" id="protected"></div>
           <div class="em" id="protected-empty">구조 보호 폴더가 없어요.</div>
           <div class="admin-only"><div class="row" style="margin-top:10px"><button class="btn s" id="protect-pick">폴더 추가</button></div></div>
+        </div>
+        <div class="box">
+          <h3>사진·동영상 인식</h3>
+          <div class="hint">색인 단계의 ‘사진·동영상 인식’을 켜거나 [이것만 하기]를 누르면 해요. 모델은 이 PC에서만 돌고 사진을 밖으로 보내지 않아요. 결과는 추정이라 틀릴 수 있어요.</div>
+          <div class="list" id="model-list"></div>
+          <div class="row" style="margin-top:8px"><button class="btn s" id="models-get">모델 받기</button></div>
+          <div class="row" style="margin-top:12px"><label><input type="checkbox" id="face_on"> 얼굴로 같은 사람 찾기</label><button class="btn s" id="faces-forget">얼굴 정보 지우기</button></div>
+          <h3 style="margin-top:16px">내 분류 모델</h3>
+          <div class="hint">이미지 분류 모델(.onnx, 옆에 config.json)을 고르면 분류마다 점수를 매겨요. 분류 이름은 여기서 붙인 이름만 보여요.</div>
+          <p class="hint mono" id="custom-path"></p>
+          <div class="row"><button class="btn s" id="custom-pick">파일 고르기</button><button class="btn s" id="custom-clear">빼기</button></div>
+          <div class="list" id="custom-labels"></div>
+          <div class="row hidden" id="custom-save-row" style="margin-top:8px"><button class="btn p" id="custom-save">저장</button></div>
+          <p id="recognize-message" class="message"></p>
         </div>
         <div class="box">
           <h3>잠금 폴더</h3>

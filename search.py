@@ -34,6 +34,7 @@ VIEWS = {  # 이름 → (조건, 기간 설정, 날짜 칸)
 }
 SORTS = {"name": "lower(f.name)", "kind": "f.kind", "size": "f.size"}  # 그 밖에 "date"는 보기마다 다른 날짜 칸
 FIELDS = "f.path, f.name, f.ext, f.kind, f.size, f.created, f.modified, f.accessed, f.downloaded"
+MEDIA_KINDS = ("사진", "이미지", "동영상")  # 추정 칩(tags)을 보여 주는 종류
 
 
 def day(text, end=False):
@@ -81,6 +82,10 @@ def conditions(query, config):
         part, more = under(query["folder"])
         parts.append(part)
         values += more
+    if query.get("tag"):
+        part, more = tag_condition(query["tag"], config)
+        parts.append(part)
+        values += more
     if (query.get("name") or "").strip():  # 이름이나 폴더 이름
         parts.append("(instr(lower(f.name), lower(?)) > 0 or instr(f.folder, lower(?)) > 0)")
         values += [query["name"].strip()] * 2
@@ -105,6 +110,35 @@ def conditions(query, config):
             parts.append("f.id in (select rowid from body where instr(lower(text), lower(?)) > 0)")
             values.append(text)
     return parts, values, date
+
+
+def tag_condition(tag, config):
+    """추정 칩 → 조건. 'group:animal'·'animal:dog'·'food:pizza'(인식한 종류), 'person:3'(같은 사람), 'custom:0'(내 분류 모델, 기준 점수 이상)."""
+    kind, _, label = str(tag).partition(":")
+    if kind == "person" and label.isdigit():
+        return "f.id in (select id from faces where person = ?)", [int(label)]
+    if kind == "custom" and label.isdigit():
+        labels = config.get("custom_labels") or []
+        threshold = labels[int(label)]["threshold"] if int(label) < len(labels) else 50
+        return "f.id in (select id from tags where kind = 'custom' and label = ? and score >= ?)", [label, threshold]
+    if kind in ("group", "animal", "food") and label:
+        return "f.id in (select id from tags where kind = ? and label = ?)", [kind, label]
+    raise ValueError(f"모르는 추정 칩입니다: {tag}")
+
+
+def tag_counts(db, parts, values, config):
+    """지금 조건(종류·확장자 포함)의 파일에서 추정 칩마다 몇 개인지: [[칩, 개수], …](많은 순). 칩으로 보기를 끈 내 분류 모델 분류는 뺀다."""
+    kinds_only = where(parts + ["t.kind in ('group', 'animal', 'food')"])
+    found = [[f"{kind}:{label}", n] for kind, label, n in db.execute(
+        f"select t.kind, t.label, count(distinct t.id) n from tags t join files f on f.id = t.id{kinds_only} group by t.kind, t.label", values)]
+    for person, n in db.execute(f"select p.person, count(distinct p.id) from faces p join files f on f.id = p.id{where(parts)} group by p.person", values):
+        found.append([f"person:{person}", n])
+    for i, label in enumerate(config.get("custom_labels") or []):
+        if label["show"]:
+            n = db.execute(f"select count(*) from files f{where(parts + [tag_condition(f'custom:{i}', config)[0]])}",
+                           values + tag_condition(f"custom:{i}", config)[1]).fetchone()[0]
+            found.append([f"custom:{i}", n])
+    return sorted((item for item in found if item[1]), key=lambda item: -item[1])
 
 
 def where(parts):
@@ -157,6 +191,7 @@ def listing(query):
             views.append([view, db.execute(f"select count(*) from files f{where(view_parts)}", view_values).fetchone()[0]])
         exts = db.execute(f"select f.ext, count(*) n from files f{where(by_kind)} group by f.ext order by n desc, f.ext",
                           by_kind_values).fetchall() if kind else []
+        tags = tag_counts(db, picked, picked_values, config) if kind in MEDIA_KINDS else []
         total, size = db.execute(f"select count(*), coalesce(sum(f.size), 0) from files f{where(picked)}", picked_values).fetchone()
         rows = db.execute(
             f"""select f.id, {FIELDS}, {date} date, {DUPLICATE_KIND} duplicate, ({SEEN} < ?) stale{snippet}
@@ -171,7 +206,8 @@ def listing(query):
         for row in rows:
             row["why"], row["score"] = pairs[row["id"]]
     return {"rows": rows[:LIMIT], "more": len(rows) > LIMIT, "total": total, "bytes": size,
-            "kinds": [[name, counts.get(name, 0)] for name in chip_order(config)], "views": views, "exts": [list(row) for row in exts]}  # JSON 객체는 키가 정렬되므로 목록으로
+            "kinds": [[name, counts.get(name, 0)] for name in chip_order(config)], "views": views, "exts": [list(row) for row in exts],
+            "tags": tags}  # JSON 객체는 키가 정렬되므로 목록으로
 
 
 def chip_order(config):
@@ -228,6 +264,24 @@ def same(path):
     finally:
         db.close()
     return {k: [r | {"place": place(r["path"], places)} for r in rows] for k, rows in (("content", content), ("name", name))}
+
+
+def recognized(path):
+    """상세의 추정: {"tags": [[칩, 점수], …], "people": [사람 번호, …]}. 내 분류 모델은 칩으로 보기를 켠 분류만."""
+    key = exclude.key(path)
+    config = settings.load()
+    labels = config.get("custom_labels") or []
+    db = index.connect()
+    try:
+        row = db.execute("select id from files where key = ?", (key,)).fetchone()
+        if row is None:
+            return {"tags": [], "people": []}
+        tags = [[f"{k}:{label}", score] for k, label, score in db.execute("select kind, label, score from tags where id = ? order by rowid", (row["id"],))
+                if k != "custom" or (int(label) < len(labels) and labels[int(label)]["show"] and score >= labels[int(label)]["threshold"])]
+        people = [p for (p,) in db.execute("select distinct person from faces where id = ? order by person", (row["id"],))]
+    finally:
+        db.close()
+    return {"tags": tags, "people": people}
 
 
 PREVIEW = 300  # 상세의 내용 미리보기 글자 수
