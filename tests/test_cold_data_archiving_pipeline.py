@@ -77,3 +77,19 @@ def test_archive_folder_itself_is_not_archived(home, aged, fake_trash):
     age(old_zip, 500)
     build(home)
     assert old_zip not in {row["path"] for row in archive.candidates(365, str(inside))}
+
+
+def test_game_and_system_files_from_an_old_index_are_not_archived(home, aged, monkeypatch):
+    """예전 판의 색인에 남은 게임 파일, Windows·프로그램 폴더 안의 파일은 보관(원본을 휴지통으로)하지 않는다."""
+    import fence
+    import games
+    files, dest = aged
+    before = {row["path"] for row in archive.candidates(365, str(dest))}
+    assert files["old_doc"] in before and files["old_video"] in before
+    monkeypatch.setattr(games, "launcher_games", lambda: [{"name": "영상 게임", "path": str(home / "영상"), "size": None}])
+    games.forget()  # 색인을 다시 하지 않아 색인에는 그 안의 파일이 남아 있다
+    assert {row["path"] for row in archive.candidates(365, str(dest))} == {files["old_doc"]}
+    monkeypatch.setenv("ProgramFiles", str(home / "보고"))  # 이 폴더를 Program Files로 흉내 낸다
+    monkeypatch.setattr(fence.tempfile, "gettempdir", lambda: str(home / "임시"))  # 시험 폴더가 %TEMP% 안이라
+    monkeypatch.setattr(fence, "SYSTEM_VARS", ("ProgramFiles",))  # LOCALAPPDATA(시험 폴더가 그 안)는 빼고 본다
+    assert archive.candidates(365, str(dest)) == []
