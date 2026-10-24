@@ -1567,6 +1567,7 @@ $("cache-scan").addEventListener("click", (e) => busy(e.target, "cache-message",
 
 $("cache-clean").addEventListener("click", (e) => busy(e.target, "cache-message", async () => {
   const picked = cachePicked();
+  if (!picked.length) return say("cache-message", "보낼 캐시가 없어요. [살펴보기]를 다시 누르세요.");  // busy가 버튼을 다시 켜 둔다
   const count = picked.reduce((s, p) => s + p.count, 0);
   const text = `${picked.map((p) => p.name).join(", ")}\n\n${state.settings.cache_days}일 넘게 안 고친 ${count.toLocaleString()}개(${size(picked.reduce((s, p) => s + p.bytes, 0))})를 휴지통으로 보내요.\n휴지통에서 다시 꺼낼 수 있어요.`;
   if (!(await ask({title: "캐시를 휴지통으로 보낼까요?", text}))) return;

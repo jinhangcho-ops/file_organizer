@@ -53,13 +53,13 @@ def running():
 
 
 def newest_and_size(path):
-    """(그 안에서 가장 늦게 고친 때, 크기). 폴더는 링크를 따라가지 않고 안을 모두 본다."""
+    """(그 안에서 가장 늦게 고친 때, 크기). 폴더는 링크·정션을 따라가지 않고 안을 모두 본다(os.walk는 정션을 따라간다)."""
     st = os.stat(path, follow_symlinks=False)
     if not os.path.isdir(path):
         return st.st_mtime, st.st_size
     newest, total = st.st_mtime, 0
     for folder, dirs, names in os.walk(path):
-        dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(folder, d))]
+        dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(folder, d)) and not os.path.isjunction(os.path.join(folder, d))]
         for name in names:
             try:
                 item = os.stat(os.path.join(folder, name), follow_symlinks=False)

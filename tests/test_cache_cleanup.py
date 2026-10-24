@@ -2,6 +2,7 @@
 캐시 폴더는 환경 변수(TEMP·LOCALAPPDATA·APPDATA)를 임시 폴더로 바꿔 지어낸다. 휴지통은 conftest의 fake_trash."""
 import ctypes
 import os
+import subprocess
 
 import cache
 import settings
@@ -45,3 +46,15 @@ def test_cache_choices_are_remembered(home, client):
     assert settings.load()["cache_skip"] == ["edge", "discord"]
     assert client.post("/api/settings", json={"cache_skip": ["C:\\Windows"]}).status_code == 400
     assert client.post("/api/settings", json={"cache_days": 0}).status_code == 400
+
+
+def test_cache_age_ignores_junction_targets(home, monkeypatch, tmp_path):
+    """정션 너머의 새 파일 때문에 오래된 임시 폴더를 새것으로 보지 않는다(정션은 따라가지 않는다)."""
+    monkeypatch.setenv("TEMP", str(tmp_path / "TEMP"))
+    old = tmp_path / "TEMP" / "옛 설치"
+    write(old / "a.bin")
+    write(tmp_path / "다른 곳" / "새 파일.txt")
+    subprocess.run(["cmd", "/c", "mklink", "/J", str(old / "링크"), str(tmp_path / "다른 곳")], check=True, capture_output=True)
+    for path in (old / "a.bin", old):
+        age(str(path), 30)
+    assert [p for p, _ in cache.old_items([r"%TEMP%"], 7)] == [str(old)]
