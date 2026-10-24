@@ -23,9 +23,18 @@
 
 이 프로그램은 파일을 **영구 삭제하지 않습니다**. 지우는 것은 모두 Windows 휴지통으로 갑니다.
 
+## 설치
+
+[Releases](https://github.com/jinhangcho-ops/file_organizer/releases)에서 `file_organizer_setup.exe`를 받아 실행합니다.
+
+- 설치 위치를 고를 수 있습니다(기본: `%LOCALAPPDATA%\Programs\file_organizer`, 관리자 권한 필요 없음).
+- [바탕 화면에 바로 가기 만들기]를 체크하면 바탕 화면에 아이콘이 생깁니다. 시작 메뉴에는 늘 생깁니다.
+- 설치하는 동안 앱 파일(약 150MB)을 인터넷에서 받고, 받은 파일이 올린 것과 같은지(SHA-256) 확인한 뒤에 설치합니다.
+- 지우기는 Windows 설정 → 앱에서 합니다. 설정·색인(`%APPDATA%\file_organizer`)과 인식 모델은 남습니다.
+
 ## 시작하기
 
-1. `file_organizer.exe`를 실행합니다.
+1. 시작 메뉴나 바탕 화면의 **파일 정리**를 실행합니다.
 2. 오른쪽 위 톱니(설정)에서 **색인할 폴더**를 확인합니다. 처음에는 다운로드·문서·바탕 화면이 들어 있습니다. 칩(`+ D:\` 등)이나 [폴더 추가]로 더하고 [빼기]로 뺍니다.
 3. [색인 갱신]을 누릅니다. 목록·검색·중복 의심은 모두 이 색인을 읽습니다. 처음 한 번은 시간이 걸리고, 그 뒤로는 바뀐 파일만 다시 읽습니다.
 
@@ -248,6 +257,16 @@ exe 만들기(`dist\file_organizer\file_organizer.exe`):
 
 ```bash
 .venv\Scripts\pyinstaller file_organizer.spec
+```
+
+설치 프로그램 만들기(`dist\file_organizer_setup.exe`, [Inno Setup 6.7](https://jrsoftware.org/isinfo.php) 필요). 앱 파일을 zip으로 묶은 뒤 컴파일합니다. 만든 zip(`dist\file_organizer.zip`)은 Releases의 `v1.0.0`에 그대로 올립니다. 설치 프로그램이 컴파일할 때 그 zip의 SHA-256을 넣어 두고, 받은 파일과 비교하기 때문입니다.
+
+```bash
+.venv\Scripts\python -c "import shutil; shutil.make_archive('dist/file_organizer', 'zip', 'dist/file_organizer')"
+```
+
+```bash
+"%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" installer.iss
 ```
 
 ## 검사
