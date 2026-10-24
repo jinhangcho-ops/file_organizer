@@ -338,3 +338,9 @@ Get-FileHash dist\file_organizer_setup.exe, dist\file_organizer.zip | ForEach-Ob
 ```
 
 pytest는 개발용이라 `requirements.txt`에 없습니다(`pip install pytest`). 둘 다 임시 폴더에 만든 파일로만 확인하며 실제 설정과 파일, 실제 휴지통은 건드리지 않습니다. 잠금 폴더 검사는 임시 폴더에 실제 Windows 권한을 걸었다 풉니다. 다른 디스크로 옮기는 것까지 확인하려면 `OTHER_DRIVE` 환경 변수에 디스크(예: `D:\`)를 줍니다.
+
+## 라이선스
+
+GPL-3.0입니다(`LICENSE`). 고치거나 다시 배포할 수 있고, 배포할 때는 소스 코드도 같은 조건으로 공개해야 합니다.
+
+exe에는 FFmpeg(GPL-3.0), HEIC를 읽는 x265(GPL-2.0)·libheif(LGPL-3.0) 등 다른 사람이 만든 부품이 함께 들어 있습니다. 부품마다의 라이선스와 소스 코드를 받을 곳은 `THIRD_PARTY_NOTICES.md`, 라이선스 원문은 `THIRD_PARTY_LICENSES.txt`에 있습니다. 설치한 폴더의 `_internal`에도 같은 파일이 있습니다.
