@@ -22,6 +22,7 @@ class Partial(OSError):
     """폴더를 다른 디스크로 옮겼지만 그동안 생기거나 바뀐 파일은 원래 폴더에 남겼다(사본은 옮긴 곳에 있다)."""
 
 
+FILE_EXISTS = 80  # CopyFileW: 대상이 이미 있다
 PARTIAL = {".crdownload", ".part", ".partial", ".download", ".tmp", ".opdownload"}  # 받는 중인 파일
 LOG = "moves.json"
 PROGRAM_PARTS = {".dll", ".sys", ".ocx", ".pak", ".ini", ".cfg", ".manifest", ".asi", ".vdf"}
@@ -45,7 +46,7 @@ def plan(source, dest):
     moves, taken = [], set()
     with os.scandir(source) as entries:
         files = sorted((entry for entry in entries if entry.is_file() and not entry.is_symlink()), key=lambda e: e.name.lower())
-    base = captures.folders()
+    base, fences = captures.folders(), fence.keys()
     with_parts = any(os.path.splitext(entry.name)[1].lower() in PROGRAM_PARTS for entry in files)
     for entry in files:
         ext = os.path.splitext(entry.name)[1].lower()
@@ -56,6 +57,8 @@ def plan(source, dest):
         if exclude.key(folder) == exclude.key(source):  # 이미 제자리에 있다.
             continue
         target = captures.capture_target(entry.path, taken, base) or free_name(folder, entry.name, taken)
+        if fence.inside(target, fences):
+            continue
         taken.add(exclude.key(target))
         moves.append({"from": entry.path, "to": target, "kind": kind})
     return moves
@@ -72,8 +75,8 @@ def move(before, after):
         filetime.copy(before, after)
         if os.stat(after).st_size != size:
             raise OSError("복사한 파일의 크기가 원본과 다릅니다.")
-    except OSError:
-        if os.path.exists(after):
+    except OSError as e:
+        if getattr(e, "winerror", None) != FILE_EXISTS and os.path.exists(after):  # 이름을 고른 뒤 남이 만든 파일이면 그대로 둔다.
             os.remove(after)
         raise
     os.remove(before)
@@ -86,8 +89,11 @@ def move_folder(before, after):
         os.rename(before, after)
         return
     copied = []
+    os.makedirs(after)  # 이미 있으면 실패한다: 실패했을 때 치우는 사본(after)은 모두 이번에 만든 것이어야 한다.
     try:
-        for folder, _, names in os.walk(before):
+        for folder, dirs, names in os.walk(before):
+            if any(os.path.islink(os.path.join(folder, d)) or os.path.isjunction(os.path.join(folder, d)) for d in dirs):
+                raise OSError("링크·정션이 든 폴더는 다른 디스크로 옮기지 않습니다(가리키는 곳의 파일까지 옮겨진다).")
             target = os.path.join(after, os.path.relpath(folder, before))
             os.makedirs(target, exist_ok=True)
             for name in names:

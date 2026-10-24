@@ -93,6 +93,7 @@ def move_back(pairs, progress=lambda *args: None):
         if os.path.lexists(before) and exclude.key(before) != exclude.key(after):
             raise ValueError("원래 자리에 같은 이름이 있습니다.")
         fence.refuse(os.path.dirname(before))
+        fence.refuse(after)  # 그사이 지금 자리를 차단·잠갔으면 꺼내지 않는다.
         fence.refuse_holding(after, drives.same_drive(after, before), moving=True)
         lock.refuse_clash(after, before)
         return before

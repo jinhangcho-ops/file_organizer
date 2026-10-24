@@ -7,6 +7,7 @@
 import os
 import re
 import subprocess
+from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
 import filetime
@@ -17,7 +18,8 @@ IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tif", ".tiff",
 VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".wmv", ".webm", ".flv", ".m4v", ".ts"}
 IMAGE_BITS = 6  # 사진: 지문이 이만큼(64비트 중) 이하로 다르면 같은 그림
 FRAME_BITS = 10  # 동영상의 한 장면: 이만큼 이하로 다르면 같은 장면
-BANDS = 8  # 사진 지문을 8비트씩 8조각으로 나눠 색인한다. 6비트 이하로 다르면 적어도 한 조각은 같으므로, 같은 조각이 있는 것만 비교한다.
+BANDS = 8  # 사진 지문을 8비트씩 8조각으로 나눈다. IMAGE_BITS(6)비트 이하로 다르면 다른 비트가 든 조각은 많아야 6개라,
+SAME_BANDS = BANDS - IMAGE_BITS  # 적어도 이만큼(2조각)은 같다. 그런 사진만 비교해도 짝을 하나도 놓치지 않는다.
 MIN_FRAMES = 5
 MIN_COMPARED = 3  # 이보다 적은 장면만 비교할 수 있으면 판단하지 않는다.
 LENGTH_GAP = 0.1  # 동영상 길이가 서로 10% 넘게 다르면 비교하지 않는다.
@@ -129,45 +131,59 @@ def todo(db, interval):
 
 
 def fingerprint(db, row, interval):
-    """파일 하나의 지문을 만들어 media(와 사진이면 media_band)에 넣는다. 읽은 뒤 연 시각은 되돌린다."""
+    """파일 하나의 지문을 만들어 media에 넣는다. 읽은 뒤 연 시각은 되돌린다."""
     st = os.stat(row["path"])
     if st.st_mtime_ns != row["stamp"]:  # 목록을 훑은 뒤에 바뀌었다: 다음 색인 때 한다.
-        return False
+        return
     index.drop_ids(db, [row["id"]])
     if row["ext"] in IMAGE_EXTS:
         h = image_hash(row["path"])
         db.execute("insert into media(id, kind, duration, frames, made, interval) values(?, 'image', null, ?, ?, null)",
                    (row["id"], encode([h]) if h is not None else "", row["stamp"]))
         if h is not None:
-            db.executemany("insert into media_band(band, value, id) values(?, ?, ?)", [(n, h >> (8 * n) & 255, row["id"]) for n in range(BANDS)])
+            db.execute("insert or ignore into media_todo(id) values(?)", (row["id"],))
     else:
         length = video_length(row["path"])
         frames = frame_hashes(row["path"], frame_times(length, interval)) if length else []
         db.execute("insert into media(id, kind, duration, frames, made, interval) values(?, 'video', ?, ?, ?, ?)",
                    (row["id"], length, encode(frames), row["stamp"], interval))
+        db.execute("delete from meta where name = 'video_similar'")  # 동영상 짝을 다시 맞추게 한다
     filetime.restore_access(row["path"], st)
-    return True
 
 
 def pair(db, a, b, score):
     db.execute("insert or replace into media_pair(a, b, score) values(?, ?, ?)", (min(a, b), max(a, b), score))
 
 
-def match_images(db, ids):
-    """새로 지문을 만든 사진(ids)마다, 같은 조각이 있는 사진과만 비교해 IMAGE_BITS 안쪽이면 짝으로 남긴다.
-    사진 지문은 한 번에 읽어 둔다(후보마다 따로 읽으면 사진 10만 장에서 수억 번 묻게 된다)."""
+def match_images(db):
+    """아직 짝을 맞추지 않은 사진(media_todo)마다, 같은 조각이 SAME_BANDS개 이상인 사진과만 비교해 IMAGE_BITS 안쪽이면 짝으로 남긴다.
+    사진 지문과 조각 표는 메모리에 한 번 만든다(후보마다 DB에 묻거나, 조각 하나만 같은 것까지 비교하면 사진 수십만 장에서 수십억 번이 된다).
+    멈추면(index.stop) 남은 사진은 media_todo에 남아 다음 색인 때 이어서 한다."""
+    ids = [i for (i,) in db.execute("select id from media_todo")]
     if not ids:
         return
-    hashes = {r["id"]: decode(r["frames"]) for r in db.execute("select id, frames from media where kind = 'image'")}
+    hashes = {}
+    for r in db.execute("select id, frames from media where kind = 'image'"):
+        frames = decode(r["frames"])
+        if frames and frames[0] is not None:
+            hashes[r["id"]] = frames[0]
+    bands = defaultdict(list)
+    for i, h in hashes.items():
+        for n in range(BANDS):
+            bands[n, h >> (8 * n) & 255].append(i)
+    index.status.update(step="사진 짝 맞추기", done=0, total=len(ids))
     for me in ids:
-        mine = hashes.get(me) or []
-        if not mine or mine[0] is None:
+        if index.stop.is_set():
+            return
+        db.execute("delete from media_todo where id = ?", (me,))
+        index.status["done"] += 1
+        index.save_now(db)
+        h = hashes.get(me)
+        if h is None:
             continue
-        h = mine[0]
-        others = {other for n in range(BANDS) for (other,) in db.execute(
-            "select id from media_band where band = ? and value = ? and id <> ?", (n, h >> (8 * n) & 255, me))}
-        for other in others:
-            d = distance(h, hashes[other][0])
+        same = Counter(other for n in range(BANDS) for other in bands[n, h >> (8 * n) & 255] if other != me)
+        for other in (o for o, c in same.items() if c >= SAME_BANDS):
+            d = distance(h, hashes[other])
             if d <= IMAGE_BITS:
                 pair(db, me, other, round(100 * (1 - d / 64)))
 
@@ -191,18 +207,19 @@ def run(db):
     config = settings.load()
     rows = todo(db, config["video_interval"])
     index.status.update(step="사진·동영상 비교", done=0, total=len(rows))
-    made = []
     for row in rows:
         if index.stop.is_set():
             break
         index.status["current"] = row["path"]
         try:
-            if fingerprint(db, row, config["video_interval"]):
-                made.append(row["id"])
+            fingerprint(db, row, config["video_interval"])
         except (OSError, subprocess.SubprocessError):
             continue
         index.status["done"] += 1
         index.save_now(db)
-    match_images(db, made)
-    match_videos(db, config["video_similar"])
+    match_images(db)
+    last = db.execute("select value from meta where name = 'video_similar'").fetchone()
+    if not index.stop.is_set() and (last is None or last[0] != config["video_similar"]):  # 새 동영상 지문은 이 표시를 지운다. 지운 동영상의 짝은 drop_ids가 함께 지운다.
+        match_videos(db, config["video_similar"])
+        db.execute("insert or replace into meta(name, value) values('video_similar', ?)", (config["video_similar"],))
     index.save_now(db, force=True)

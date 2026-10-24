@@ -18,7 +18,7 @@ send = send2trash  # 검사는 이것을 바꿔 끼워 실제 휴지통에 넣�
 def volume_id(path):
     """경로가 있는 디스크의 볼륨 번호({GUID}). 모르면 None."""
     buffer = ctypes.create_unicode_buffer(64)
-    if not ctypes.windll.kernel32.GetVolumeNameForVolumeMountPointW(os.path.splitdrive(path)[0] + "\\", buffer, 64):
+    if not ctypes.windll.kernel32.GetVolumeNameForVolumeMountPointW(drives.volume_root(path), buffer, 64):
         return None
     value = buffer.value  # \\?\Volume{...}\
     return value[value.find("{"):value.find("}") + 1] or None
@@ -44,9 +44,19 @@ def recycle_settings(path):
 
 
 def size_of(path):
-    if not os.path.isdir(path):
-        return os.path.getsize(path)
-    return sum(os.path.getsize(os.path.join(folder, name)) for folder, _, names in os.walk(path) for name in names)
+    """휴지통에 들어갈 크기. 링크·정션은 따라가지 않고(링크만 간다), 읽을 수 없는 파일(깨진 링크 등)은 건너뛴다."""
+    link = lambda p: os.path.islink(p) or os.path.isjunction(p)  # noqa: E731
+    if link(path) or not os.path.isdir(path):
+        return os.lstat(path).st_size
+    total = 0
+    for folder, dirs, names in os.walk(path):
+        dirs[:] = [d for d in dirs if not link(os.path.join(folder, d))]
+        for name in names:
+            try:
+                total += os.lstat(os.path.join(folder, name)).st_size
+            except OSError:
+                pass
+    return total
 
 
 def problem(path):
@@ -55,11 +65,13 @@ def problem(path):
         return "없는 파일입니다"
     if drives.drive_type(path) != FIXED:
         return "휴지통이 없는 곳(네트워크·이동식 디스크)입니다"
+    if not volume_id(path):  # subst로 만든 드라이브 등: 휴지통이 없어 그대로 지워질 수 있다.
+        return "휴지통을 확인할 수 없는 디스크입니다"
     off, capacity = recycle_settings(path)
     if off:
         return "이 디스크는 휴지통을 쓰지 않도록 설정되어 있습니다"
     if capacity is None:  # 설정 값이 없는 디스크(새로 단 디스크 등)는 Windows 기본값보다 작게 디스크 크기의 5%로 본다.
-        capacity = shutil.disk_usage(os.path.splitdrive(os.path.abspath(path))[0] + "\\").total // 20  # 크기를 모른 채 보내면 '확인 없이'라 큰 것은 영구 삭제될 수 있다.
+        capacity = shutil.disk_usage(drives.volume_root(path)).total // 20  # 크기를 모른 채 보내면 '확인 없이'라 큰 것은 영구 삭제될 수 있다.
     if size_of(path) > capacity:
         return "휴지통 최대 크기보다 큽니다"
     return None

@@ -342,6 +342,8 @@ def move():
 @app.post("/api/rename")
 def rename():
     path = fence.refuse_system(indexed_path())
+    if index.is_root(path):  # 색인한 맨 위 폴더의 이름을 바꾸면 색인 밖이 되어 그 아래 기록이 모두 사라진다(설정의 폴더도 없는 곳을 가리킨다).
+        raise ValueError(f"색인한 맨 위 폴더는 이름을 바꿀 수 없습니다. 설정에서 색인할 폴더를 바꾸세요: {path}")
     fence.refuse_holding(path, True)
     lock.refuse_clash(path, os.path.join(os.path.dirname(path), str(body().get("name") or "").strip()))
     return jsonify(path=actions.rename(path, body().get("name")))

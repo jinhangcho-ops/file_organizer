@@ -56,9 +56,17 @@ def last_access_on():
     return not value & 1
 
 
+def volume_root(path):
+    """경로가 있는 볼륨의 맨 위(C:\\, 폴더에 탑재한 디스크면 그 폴더\\). 모르면 드라이브 맨 위."""
+    buffer = ctypes.create_unicode_buffer(1024)
+    if ctypes.windll.kernel32.GetVolumePathNameW(os.path.abspath(path), buffer, 1024):
+        return buffer.value
+    return os.path.splitdrive(os.path.abspath(path))[0] + "\\"
+
+
 def drive_type(path):
     """경로가 있는 디스크의 종류 번호(GetDriveTypeW: 2 이동식, 3 고정, 4 네트워크 …)."""
-    return ctypes.windll.kernel32.GetDriveTypeW(os.path.splitdrive(os.path.abspath(path))[0] + "\\")
+    return ctypes.windll.kernel32.GetDriveTypeW(volume_root(path))
 
 
 def same_drive(a, b):

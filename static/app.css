@@ -1,4 +1,4 @@
-/* 색은 여기 두 벌(라이트, 다크)에만 둔다. 다크는 html의 data-theme=dark(app.js의 applyTheme이 설정·Windows 설정에 따라 붙인다). */
+/* 색은 여기 두 벌(라이트, 다크)에만 둔다. 다크는 html의 data-theme=dark(common.js의 followTheme이 설정·Windows 설정에 따라 붙인다). */
 :root {
   --bg: #E9ECE7; --panel: #fff; --panel2: #F4F6F2; --line: #D5D9D1; --ink: #18222D; --mute: #58646F;
   --acc: #0B6E75; --accink: #fff; --accbg: #D9EEEE; --warn: #7A4E00; --warnbg: #FAEBC0; --bad: #A8322A; --badbg: #F7DCD8;

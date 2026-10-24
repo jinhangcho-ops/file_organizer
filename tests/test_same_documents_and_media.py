@@ -160,3 +160,26 @@ def test_scenes_grabbed_together_match_one_at_a_time(tmp_path, monkeypatch):
     assert media.frame_hashes(path, seconds) == expected
     monkeypatch.setattr(media, "WORKERS", 1)
     assert media.frame_hashes(path, seconds) == expected
+
+
+def test_matching_resumes_after_an_interrupted_run(home, client, monkeypatch):
+    """지문을 만든 뒤 짝을 맞추기 전에 끊겨도(창을 닫는 등) 다음 색인이 이어서 짝을 맞춘다."""
+    build(home)  # 한 번 끝까지: 동영상 짝을 맞췄다는 표시(meta)가 남는다
+    original = picture(home / "원본.png", (800, 600), seed=1)
+    with Image.open(original) as img:
+        img.resize((200, 150)).save(home / "작게.jpg", quality=70)
+    make_video(home / "영상.mp4", "testsrc2", "320x240")
+    real_images, real_videos, calls = media.match_images, media.match_videos, []
+
+    def cut(db, *args):
+        db.commit()  # 2초마다 저장(save_now)이 지문을 이미 남긴 뒤에 끊긴 것처럼
+        raise RuntimeError("끊김")
+
+    monkeypatch.setattr(media, "match_images", cut)
+    with pytest.raises(RuntimeError):
+        build(home)
+    monkeypatch.setattr(media, "match_images", real_images)
+    monkeypatch.setattr(media, "match_videos", lambda db, similar: (calls.append(similar), real_videos(db, similar)))
+    build(home)
+    assert same_as(client, original) == [("원본.png", "self"), ("작게.jpg", "media")]
+    assert calls  # 새 동영상의 짝도 다시 맞췄다

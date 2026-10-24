@@ -11,6 +11,7 @@ import hashlib
 import os
 import sqlite3
 import stat as stat_flags
+import sys
 import threading
 import time
 import zipfile
@@ -61,9 +62,9 @@ create index if not exists files_folder_name on files(folder, lower(name));
 create index if not exists files_folder_size on files(folder, size desc);
 create index if not exists files_folder_date on files(folder, modified desc);
 create table if not exists media(id integer primary key, kind text, duration real, frames text, made integer, interval integer);
-create table if not exists media_band(band integer, value integer, id integer);
-create index if not exists media_band_value on media_band(band, value);
-create index if not exists media_band_id on media_band(id);
+drop table if exists media_band;
+create table if not exists meta(name text primary key, value);
+create table if not exists media_todo(id integer primary key);
 create table if not exists media_pair(a integer, b integer, score integer, primary key(a, b));
 create index if not exists media_pair_b on media_pair(b);
 create table if not exists tags(id integer, kind text, label text, score integer);
@@ -227,7 +228,8 @@ def build(paths, only=None):
         if only:
             step_work(only)(db)
             return
-        old = {row["key"]: tuple(row)[1:] for row in db.execute("select key, size, stamp, accessed, kind, id from files")}
+        old = {row["key"]: (row["size"], row["stamp"], row["accessed"], sys.intern(row["kind"] or ""))
+               for row in db.execute("select key, size, stamp, accessed, kind from files")}  # 종류 글자는 하나로(파일 수십만 개의 기억을 줄인다)
         seen, folders, found_games = set(), set(), []
         status.update(step="파일 목록 확인", done=0, total=0)
         done = scan(db, paths, old, seen, folders, found_games)
@@ -239,7 +241,7 @@ def build(paths, only=None):
                            [(exclude.key(p), p, sizes.get(exclude.key(p))) for p in found_games])
             games.forget()
             gone = [(key,) for key in old if key not in seen]
-            drop_ids(db, [old[key][4] for (key,) in gone])
+            drop_ids(db, [row[0] for key in gone for row in db.execute("select id from files where key = ?", key)])
             db.executemany("delete from files where key = ?", gone)
             db.executemany("delete from folders where key = ?", [(key,) for (key,) in db.execute("select key from folders") if key not in folders])
         totals(db)
@@ -483,12 +485,12 @@ def prefix(path):
 
 def move_folder_rows(db, before, after):
     """폴더 before(와 그 아래 전부)를 after로 옮긴 것을 반영한다. 내용·지문은 그대로 두고 경로만 바꾼다."""
-    old = prefix(before)
-    folders = db.execute("select key, path from folders where key = ? or substr(key, 1, ?) = ?", (exclude.key(before), len(old), old)).fetchall()
+    where, values = below(before)
+    folders = db.execute(f"select key, path from folders where {where}", values).fetchall()
     paths = [(after + row["path"][len(before):], row["key"]) for row in folders]
     db.executemany("update folders set key = ?, path = ?, parent = ?, name = ? where key = ?",
                    [(exclude.key(path), path, exclude.key(os.path.dirname(path)), os.path.basename(path), key) for path, key in paths])
-    files = [(after + row["path"][len(before):], row["id"]) for row in db.execute("select id, path from files where substr(key, 1, ?) = ?", (len(old), old))]
+    files = [(after + row["path"][len(before):], row["id"]) for row in db.execute(f"select id, path from files where {where}", values)]
     db.executemany("update files set path = ?, key = ?, folder = ? where id = ?",
                    [(path, exclude.key(path), os.path.dirname(exclude.key(path)), id_) for path, id_ in files])
 
@@ -504,6 +506,8 @@ def moved(pairs):
                 forget(db, before)
                 continue
             add_chain(db, folder, known)
+            if exclude.key(after) != exclude.key(before):  # 대소문자만 바꾼 이름 바꾸기는 자기 줄이다.
+                forget(db, after)
             if os.path.isdir(after):
                 move_folder_rows(db, before, after)
                 continue
@@ -526,17 +530,23 @@ def moved(pairs):
 
 def drop_ids(db, ids):
     """files에서 지울 줄들(id)의 글자·사진·동영상 지문·인식 기록을 지운다(files 줄은 부르는 쪽이 지운다)."""
-    for table, column in (("body", "rowid"), ("media", "id"), ("media_band", "id"), ("media_pair", "a"), ("media_pair", "b"),
+    for table, column in (("body", "rowid"), ("media", "id"), ("media_todo", "id"), ("media_pair", "a"), ("media_pair", "b"),
                           ("tags", "id"), ("recognized", "id"), ("faces", "id")):
         db.executemany(f"delete from {table} where {column} = ?", [(i,) for i in ids])
 
 
+def below(path):
+    """path(파일 또는 폴더)와 그 아래 전부의 key 조건과 값. '폴더\' 이상 '폴더]' 미만인 범위라 key 색인을 탄다(search.under와 같다)."""
+    old = prefix(path)
+    return "(key = ? or (key >= ? and key < ?))", (exclude.key(path), old, old[:-1] + "]")
+
+
 def forget(db, path):
     """파일 path, 또는 폴더 path와 그 아래 전부를 색인에서 뺀다."""
-    key, old = exclude.key(path), prefix(path)
-    drop_ids(db, [row[0] for row in db.execute("select id from files where key = ? or substr(key, 1, ?) = ?", (key, len(old), old))])
-    db.execute("delete from files where key = ? or substr(key, 1, ?) = ?", (key, len(old), old))
-    db.execute("delete from folders where key = ? or substr(key, 1, ?) = ?", (key, len(old), old))
+    where, values = below(path)
+    drop_ids(db, [row[0] for row in db.execute(f"select id from files where {where}", values)])
+    db.execute(f"delete from files where {where}", values)
+    db.execute(f"delete from folders where {where}", values)
 
 
 def removed(paths):

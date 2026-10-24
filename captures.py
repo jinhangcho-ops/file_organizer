@@ -104,7 +104,7 @@ def plan():
         if fence.inside(path, fences):
             continue
         to = target(base, path, game, taken)
-        if to:  # 둘 곳(사진\스크린샷, 동영상\게임 녹화)은 찾는 곳에 들지 않아 이미 옮긴 것은 다시 나오지 않는다.
+        if to and not fence.inside(to, fences):  # 둘 곳(사진\스크린샷, 동영상\게임 녹화)은 찾는 곳에 들지 않아 이미 옮긴 것은 다시 나오지 않는다.
             taken.add(exclude.key(to))
             moves.append({"from": path, "to": to, "game": safe_name(game), "source": source})
     return moves

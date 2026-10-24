@@ -89,9 +89,10 @@ const applyTheme = followTheme(() => state?.settings.theme);
 
 $("theme").addEventListener("click", async () => {
   const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
-  state.settings.theme = next;
+  const windows = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  state.settings.theme = next === windows ? "auto" : next;  // Windows와 같은 쪽이면 auto: 다시 Windows 색을 따른다.
   applyTheme();
-  await api("/api/settings", {theme: next}).catch(() => {});
+  await api("/api/settings", {theme: state.settings.theme}).catch(() => {});
 });
 
 const windowCall = (action, data = {}) => api("/api/window", {action, ...data}).catch(() => null);  // 창 밖(검사용 브라우저)에서는 아무 일도 없다
@@ -129,8 +130,8 @@ document.querySelectorAll(".grip").forEach((grip) => grip.addEventListener("mous
     const box = {x: start.x, y: start.y, width: start.width, height: start.height};
     if (edge.includes("e")) box.width = start.width + dx;
     if (edge.includes("s")) box.height = start.height + dy;
-    if (edge.includes("w")) { box.width = start.width - dx; box.x = start.x + dx; }
-    if (edge.includes("n")) { box.height = start.height - dy; box.y = start.y + dy; }
+    if (edge.includes("w")) { box.width = Math.max(start.width - dx, start.min[0]); box.x = start.x + start.width - box.width; }
+    if (edge.includes("n")) { box.height = Math.max(start.height - dy, start.min[1]); box.y = start.y + start.height - box.height; }
     pending = box;
     send();
   };
@@ -434,8 +435,9 @@ function openScope(next, view = "", remember = true) {
   selected.clear();
   showDetail(null);
   showPage("files");
-  loadFiles();
+  const loading = loadFiles();
   markTree();
+  return loading;
 }
 
 function goBack() {
@@ -685,6 +687,7 @@ $("files").addEventListener("click", (e) => {
   if (e.target.type === "checkbox" || e.ctrlKey || e.metaKey) {
     selected.has(key) ? selected.delete(key) : selected.set(key, tr.row);
     anchor = tr.index;
+    if (!selected.has(key)) return showDetail(selected.size === 1 ? [...selected.values()][0] : null);
   } else if (e.shiftKey && anchor >= 0) {
     selected.clear();
     const [from, to] = [Math.min(anchor, tr.index), Math.max(anchor, tr.index)];
@@ -988,8 +991,7 @@ function showSame(id, title, list, none) {
 async function goToFile(file) {
   // 같은 파일 목록에서 누른 파일로: 그 폴더를 열고 그 파일을 고른다.
   const folder = dirName(file.path);
-  openScope({folder, name: baseName(folder)});
-  await loadFiles();
+  await openScope({folder, name: baseName(folder)});
   const row = rows.find((r) => lower(r.path) === lower(file.path));
   if (row) {
     selected.set(lower(row.path), row);
@@ -1439,10 +1441,11 @@ function showRecognize() {
 }
 
 $("models-get").addEventListener("click", async (e) => {
+  const button = e.currentTarget;
   const missing = state.models.filter((m) => !m.ready);
   const text = missing.map((m) => `${m.title} ${size(m.bytes)}`).join(", ");
   if (!(await ask({title: "모델을 받을까요?", text: `${text}\n받는 곳: huggingface.co(Xenova/clip-vit-base-patch32), github.com(opencv/opencv_zoo)\n받은 뒤 크기와 SHA-256을 확인해요.`}))) return;
-  busy(e.currentTarget, "recognize-message", async () => {
+  busy(button, "recognize-message", async () => {
     const result = await runJob((await api("/api/models/download", {groups: missing.map((m) => m.name)})).job);
     await loadState();
     say("recognize-message", `${result.done.length}개 받았어요.${failedText(result)}`, result.failed.length ? "error" : "ok");

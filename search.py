@@ -4,6 +4,7 @@
 - 최근 받은 파일: 다운로드 표시가 있고 만든 시각(받은 시각)이 기간 안.
 모아 보기에는 예외(exclude)를 적용한다. 위치·검색에는 적용하지 않는다."""
 import datetime
+import json
 import time
 
 import exclude
@@ -179,8 +180,8 @@ def listing(query):
         if me is None:
             raise ValueError(f"색인에 없는 파일입니다: {query['same_as']}")
         pairs = {me: ("self", None)} | pairs
-        parts.append(f"f.id in ({', '.join('?' * len(pairs))})")
-        values += list(pairs)
+        parts.append("f.id in (select value from json_each(?))")  # 같은 파일이 SQLite 값 한도(32,766)보다 많아도 되게 하나로 넘긴다.
+        values.append(json.dumps(list(pairs)))
     kind = query.get("kind") or ""
     if kind and kind not in kinds.NAMES:
         raise ValueError(f"모르는 종류입니다: {kind}")
@@ -293,7 +294,7 @@ def same(path):
         _, pairs = partners(db, key)
         columns = "id, path, name, size, modified"
         content = [dict(r) | {"why": pairs[r["id"]][0], "score": pairs[r["id"]][1]} for r in db.execute(
-            f"select {columns} from files where id in ({', '.join('?' * len(pairs))}) order by lower(path) limit {SAME_LIMIT}", list(pairs))] if pairs else []
+            f"select {columns} from files where id in (select value from json_each(?)) order by lower(path) limit {SAME_LIMIT}", [json.dumps(list(pairs))])] if pairs else []
         name = [dict(r) for r in db.execute(
             f"select {columns} from files where lower(name) = lower(?) and key <> ? order by lower(path) limit {SAME_LIMIT}", (row["name"], key))]
         places = place_names(db)

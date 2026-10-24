@@ -24,8 +24,9 @@ threading.Thread(target=http.serve_forever, daemon=True).start()
 # 열쇠를 아는 이 창만 화면을 열 수 있다(브라우저로 주소만 열면 거부된다).
 # 제목 줄은 화면(index.html)이 그린다. 끌기는 pywebview의 drag region, 버튼과 가장자리 크기 조절은 /api/window → control.
 BACKGROUND = {True: "#0F151B", False: "#E9ECE7"}  # 화면이 뜨기 전 창의 바탕(app.css의 --bg, 다크·라이트)
+MIN_SIZE = (1160, 660)  # 창의 가장 작은 크기. 가장자리 끌기(화면)도 bounds로 받아 같은 값으로 막는다.
 window = webview.create_window("파일 정리", f"http://127.0.0.1:{http.server_port}/?key={server.KEY}", width=1400, height=900,
-                               frameless=True, easy_drag=False, min_size=(1160, 660), background_color=BACKGROUND[settings.dark()])
+                               frameless=True, easy_drag=False, min_size=MIN_SIZE, background_color=BACKGROUND[settings.dark()])
 maximized = [None]  # 최대화했을 때 되돌아갈 창의 실제 픽셀 사각형(RECT). 최대화가 아니면 None.
 user32 = ctypes.windll.user32
 user32.MonitorFromWindow.restype = wintypes.HANDLE
@@ -75,9 +76,9 @@ def control(action, data):
     elif action == "refresh":
         window.evaluate_js("refreshAfterLock()")
     elif action == "bounds":
-        return {"x": window.x, "y": window.y, "width": window.width, "height": window.height, "maximized": bool(maximized[0])}
+        return {"x": window.x, "y": window.y, "width": window.width, "height": window.height, "maximized": bool(maximized[0]), "min": MIN_SIZE}
     elif action == "place":
-        width, height = max(int(data["width"]), 1160), max(int(data["height"]), 660)
+        width, height = max(int(data["width"]), MIN_SIZE[0]), max(int(data["height"]), MIN_SIZE[1])
         window.move(int(data["x"]), int(data["y"]))
         window.resize(width, height)
 
