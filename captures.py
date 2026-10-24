@@ -61,10 +61,10 @@ def target(base, path, game, taken):
     return organize.free_name(folder, os.path.basename(path), taken)
 
 
-def capture_target(path, taken):
-    """다운로드 정리: 게임 캡처 이름이면 둘 곳, 아니면 None."""
+def capture_target(path, taken, base):
+    """다운로드 정리: 게임 캡처 이름이면 둘 곳, 아니면 None. base: folders()(정리 한 번에 한 번 읽는다)."""
     game = game_from_name(os.path.basename(path))
-    return target(folders(), path, game, taken) if game else None
+    return target(base, path, game, taken) if game else None
 
 
 def files_in(folder):

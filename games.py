@@ -16,7 +16,9 @@ MARKERS = {"steam_api.dll", "steam_api64.dll", "steam_appid.txt", "unityplayer.d
            "galaxy.dll", "galaxy64.dll", "uplay_r1_loader64.dll", "upc_r2_loader64.dll"}
 STEAM_FOLDERS = {"steam", "steamapps", "steamlibrary"}  # 그 안의 게임은 Steam 기록(appmanifest)으로 안다.
 FRESH = 60  # 런처 기록을 다시 읽기까지의 초(검사할 때마다 레지스트리와 폴더를 읽지 않게)
+KEYS_FRESH = 5  # 게임 폴더 key를 다시 읽기까지의 초. 휴지통·폴더 비우기가 항목마다 묻는데, 한 번 읽는 데 약 9ms라 5,000개면 1분이 넘었다.
 memo = {"at": 0.0, "games": []}
+keys_memo = {"at": 0.0, "keys": set()}
 
 
 def is_game(file_names, folder_names):
@@ -138,8 +140,15 @@ def found_games():
 
 
 def keys():
-    """게임 폴더들의 비교용 key(exclude.key)."""
-    return {exclude.key(g["path"]) for g in launcher_games()} | {exclude.key(g["path"]) for g in found_games()}
+    """게임 폴더들의 비교용 key(exclude.key). KEYS_FRESH초 동안은 읽어 둔 것을 쓴다(색인이 games 표를 고치면 forget)."""
+    if time.time() - keys_memo["at"] > KEYS_FRESH:
+        keys_memo.update(at=time.time(), keys={exclude.key(g["path"]) for g in launcher_games()} | {exclude.key(g["path"]) for g in found_games()})
+    return keys_memo["keys"]
+
+
+def forget():
+    """games 표가 바뀌었다: 다음 keys()가 다시 읽게 한다."""
+    keys_memo["at"] = 0.0
 
 
 def listing():
@@ -184,6 +193,8 @@ def measure(progress):
             db.execute("insert into games(key, path, size) values(?, ?, ?) on conflict(key) do update set size = excluded.size",
                        (exclude.key(g["path"]), g["path"], size))
             db.commit()
+        index.totals(db)  # 왼쪽 폴더 목록의 용량에 센 크기를 더한다.
+        db.commit()
     finally:
         db.close()
     progress(len(todo), len(todo))

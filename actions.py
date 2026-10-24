@@ -80,6 +80,9 @@ def move_back(pairs, progress=lambda *args: None):
             lock.refuse_clash(after, before)
             (organize.move_folder if os.path.isdir(after) else organize.move)(after, before)
             done.append((after, before))
+        except organize.Partial as e:  # move_many와 같다: 옮긴 것은 반영하고, 원래 폴더에 남은 것은 알린다.
+            done.append((after, before))
+            failed.append({"from": after, "error": str(e)})
         except (OSError, ValueError) as e:
             failed.append({"from": after, "error": getattr(e, "strerror", None) or str(e)})
     progress(len(pairs), len(pairs))

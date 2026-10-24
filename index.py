@@ -187,15 +187,18 @@ def add_folder(db, path, parent):
 
 
 def totals(db):
-    """폴더마다 그 아래 전체(하위 폴더 포함)의 파일 수·용량을 다시 센다."""
+    """폴더마다 그 아래 전체(하위 폴더 포함)의 파일 수·용량을 다시 센다. 안을 읽지 않은 게임 폴더는 런처가 아는 크기나
+    센 크기(games 표)를 더한다(왼쪽 폴더 목록에서 큰 게임 폴더가 빠지지 않게)."""
     parent = dict(db.execute("select key, parent from folders").fetchall())
     count = dict.fromkeys(parent, 0)
     size = dict.fromkeys(parent, 0)
-    for row in db.execute("select folder, count(*) n, sum(size) s from files group by folder"):
-        folder = row["folder"]
+    game_sizes = {exclude.key(g["path"]): g["size"] for g in games.launcher_games() if g.get("size")}
+    game_sizes.update({key: s for key, s in db.execute("select key, size from games where size is not null")})
+    rows = [(row["folder"], row["n"], row["s"] or 0) for row in db.execute("select folder, count(*) n, sum(size) s from files group by folder")]
+    for folder, n, s in rows + [(key, 0, s) for key, s in game_sizes.items()]:
         while folder in parent:  # 그 폴더와 위의 모든 폴더에 더한다.
-            count[folder] += row["n"]
-            size[folder] += row["s"] or 0
+            count[folder] += n
+            size[folder] += s
             folder = parent[folder]
     db.executemany("update folders set files = ?, size = ? where key = ?", [(count[k], size[k], k) for k in parent])
 
@@ -226,9 +229,11 @@ def build(paths, only=None):
         done = scan(db, paths, old, seen, folders, found_games)
         if done:
             sizes = dict(db.execute("select key, size from games").fetchall())  # 세어 둔 크기는 남긴다.
-            db.execute("delete from games")
+            launcher = {exclude.key(g["path"]) for g in games.launcher_games()}  # 런처가 아는 게임의 센 크기도 남긴다.
+            db.executemany("delete from games where key = ?", [(k,) for k in sizes if k not in launcher])
             db.executemany("insert or ignore into games(key, path, size) values(?, ?, ?)",
                            [(exclude.key(p), p, sizes.get(exclude.key(p))) for p in found_games])
+            games.forget()
             gone = [(key,) for key in old if key not in seen]
             drop_ids(db, [row[0] for key in gone for row in db.execute("select id from files where key = ?", key)])
             db.executemany("delete from files where key = ?", gone)
@@ -271,6 +276,11 @@ def scan(db, paths, old, seen, folders, found_games):
                     save_file(db, entry.path, st)
                 status["done"] += 1
                 save_now(db)
+    for path in found_games:  # 게임 폴더(와 Riot Games 같은 게임 묶음 폴더)도 폴더 목록에 둔다. 용량은 totals가 더한다.
+        for folder in (os.path.dirname(path), path):
+            if exclude.key(folder) not in folders and exclude.key(os.path.dirname(folder)) in folders:
+                add_folder(db, folder, os.path.dirname(folder))
+                folders.add(exclude.key(folder))
     return True
 
 

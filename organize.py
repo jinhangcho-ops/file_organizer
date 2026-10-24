@@ -45,6 +45,7 @@ def plan(source, dest):
     moves, taken = [], set()
     with os.scandir(source) as entries:
         files = sorted((entry for entry in entries if entry.is_file() and not entry.is_symlink()), key=lambda e: e.name.lower())
+    base = captures.folders()
     with_parts = any(os.path.splitext(entry.name)[1].lower() in PROGRAM_PARTS for entry in files)
     for entry in files:
         ext = os.path.splitext(entry.name)[1].lower()
@@ -54,7 +55,7 @@ def plan(source, dest):
         folder = os.path.join(dest, kind)
         if exclude.key(folder) == exclude.key(source):  # 이미 제자리에 있다.
             continue
-        target = captures.capture_target(entry.path, taken) or free_name(folder, entry.name, taken)
+        target = captures.capture_target(entry.path, taken, base) or free_name(folder, entry.name, taken)
         taken.add(exclude.key(target))
         moves.append({"from": entry.path, "to": target, "kind": kind})
     return moves
