@@ -1,11 +1,14 @@
 """정리: 정리할 곳 바로 아래의 파일을 놓을 곳의 종류별 폴더(문서, 사진 …)로 옮긴다. 하위 폴더는 건드리지 않는다.
 - 받는 중인 파일과 숨김·시스템 파일은 옮기지 않는다.
+- 게임 캡처(Game Bar·NVIDIA 이름 모양)는 종류별 폴더 대신 captures의 게임별 폴더로.
+- 프로그램 부품(PROGRAM_PARTS)은 옮기지 않고, 부품이 함께 있으면 exe도 옮기지 않는다(압축을 푼 게임·프로그램이 흩어지지 않게).
 - 같은 이름이 있으면 덮어쓰지 않고 '이름 (2).확장자'로.
 - 같은 디스크면 이름 바꾸기, 다른 디스크면 복사 → 크기 확인 → 원본 지우기.
 - 옮긴 기록(moves.json)으로 마지막 정리를 되돌린다."""
 import os
 import shutil
 
+import captures
 import drives
 import exclude
 import fence
@@ -21,6 +24,7 @@ class Partial(OSError):
 
 PARTIAL = {".crdownload", ".part", ".partial", ".download", ".tmp", ".opdownload"}  # 받는 중인 파일
 LOG = "moves.json"
+PROGRAM_PARTS = {".dll", ".sys", ".ocx", ".pak", ".ini", ".cfg", ".manifest", ".asi", ".vdf"}
 
 
 def free_name(folder, name, taken):
@@ -41,15 +45,16 @@ def plan(source, dest):
     moves, taken = [], set()
     with os.scandir(source) as entries:
         files = sorted((entry for entry in entries if entry.is_file() and not entry.is_symlink()), key=lambda e: e.name.lower())
+    with_parts = any(os.path.splitext(entry.name)[1].lower() in PROGRAM_PARTS for entry in files)
     for entry in files:
         ext = os.path.splitext(entry.name)[1].lower()
-        if ext in PARTIAL or index.hidden(entry.stat()):
+        if ext in PARTIAL or ext in PROGRAM_PARTS or (with_parts and ext == ".exe") or index.hidden(entry.stat()):
             continue
         kind = kinds.of(ext)
         folder = os.path.join(dest, kind)
         if exclude.key(folder) == exclude.key(source):  # 이미 제자리에 있다.
             continue
-        target = free_name(folder, entry.name, taken)
+        target = captures.capture_target(entry.path, taken) or free_name(folder, entry.name, taken)
         taken.add(exclude.key(target))
         moves.append({"from": entry.path, "to": target, "kind": kind})
     return moves

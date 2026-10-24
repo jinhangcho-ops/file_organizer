@@ -1,8 +1,11 @@
 """색인과 작업에서 빼는 폴더: 차단 폴더(blacklist)와 잠금 폴더·금고(lock). 그 폴더와 그 아래 전부를 다루지 않는다."""
 import os
+import tempfile
 
 import blacklist
 import exclude
+import games
+import index
 import lock
 import protect
 
@@ -35,6 +38,29 @@ def refuse(path, fences=None):
     return path
 
 
+SYSTEM_VARS = ("WINDIR", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "PROGRAMDATA", "APPDATA", "LOCALAPPDATA")
+
+
+def system_folder(path):
+    """Windows·프로그램 폴더(그 안 포함)인지: 드라이브 바로 아래의 index.SKIP 이름(Windows, Program Files, $Recycle.Bin …)과
+    환경 변수가 가리키는 실제 위치(Windows, Program Files, ProgramData, AppData). 임시 폴더(%TEMP%)는 AppData 안이지만 뺀다."""
+    parts = exclude.key(path).split(os.sep)
+    if len(parts) > 1 and parts[1] in index.SKIP:
+        return True
+    places = {exclude.key(os.environ[name]) for name in SYSTEM_VARS if os.environ.get(name)}
+    return inside(path, places) and not inside(path, {exclude.key(tempfile.gettempdir())})
+
+
+def refuse_system(path, game_keys=None):
+    """Windows·프로그램 폴더(system_folder)나 게임 폴더(games.keys)와 그 안이면 거부한다.
+    옮기기·이름 바꾸기·휴지통·정리처럼 사용자가 고른 것을 바꾸는 일 앞에서 부른다. game_keys: 여러 개를 볼 때 미리 만든 games.keys()."""
+    if system_folder(path):
+        raise ValueError(f"Windows·프로그램 폴더라 다루지 않습니다: {path}")
+    if inside(path, games.keys() if game_keys is None else game_keys):
+        raise ValueError(f"게임 폴더라 다루지 않습니다: {path}")
+    return path
+
+
 def refuse_holding(path, locks_ok, moving=False):
     """옮기기(moving)·이름 바꾸기·휴지통 전에: 차단 폴더를 품은 폴더는 늘 거부한다(차단 목록은 관리자만 고칠 수 있어 위치를 따라 고칠 수 없다).
     구조 보호 폴더는 그 자신과 그것을 품은 폴더를 거부하고, 이름 바꾸기·휴지통이면 그 안의 것도 거부한다(안의 것을 밖으로 옮기기는 된다).
@@ -42,6 +68,8 @@ def refuse_holding(path, locks_ok, moving=False):
     다른 디스크로 옮기기는 복사가 잠긴 내용을 읽지 못하고, 휴지통은 비우면 잠긴 내용까지 사라지기 때문이다."""
     if holds(path, {exclude.key(p) for p in blacklist.load()}):
         raise ValueError(f"차단 폴더가 들어 있어 옮기거나 지울 수 없습니다: {path}")
+    if holds(path, games.keys()):
+        raise ValueError(f"게임 폴더가 들어 있어 옮기거나 지울 수 없습니다: {path}")
     kept = protect.keys()
     if holds(path, kept) or (exclude.key(path) in kept if moving else inside(path, kept)):
         raise ValueError(f"구조 보호 폴더라 {'옮길' if moving else '이름을 바꾸거나 지울'} 수 없습니다: {path}")

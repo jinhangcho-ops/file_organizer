@@ -4,6 +4,7 @@ import os
 import re
 from pathlib import Path
 
+import cache
 import drives
 import fence
 import kinds
@@ -13,7 +14,8 @@ DAYS = (1, 3650)  # 모아 보기 기간(일)의 범위
 PANES = {"pane_left": {"min": 200, "max": 700, "default": 380}, "pane_detail": {"min": 260, "max": 700, "default": 340}}
 # 색인의 ① 파일 목록 다음 단계들(화면 이름). 순서·켜기는 설정 index_steps, 처음에는 이 순서이고 인식만 꺼져 있다(모델을 받아야 한다).
 STEPS = {"hash": "중복 확인", "text": "파일 내용 읽기", "doc": "문서 비교", "media": "사진·동영상 비교", "recognize": "사진·동영상 인식"}
-NUMBERS = {"video_interval": (30, 600, "동영상 장면 간격(초)"), "video_similar": (50, 100, "같다고 볼 유사도(%)")}
+NUMBERS = {"video_interval": (30, 600, "동영상 장면 간격(초)"), "video_similar": (50, 100, "같다고 볼 유사도(%)"),
+           "cache_days": (1, 365, "캐시를 지울 기준(일)")}
 
 
 def folder():
@@ -48,7 +50,9 @@ def defaults():
             "drive": "", "list_group": "none", "pin_installers": False, "show_same_name": True,
             "index_steps": [{"name": name, "on": name != "recognize"} for name in STEPS], "video_interval": 120, "video_similar": 70,
             # 인식: 얼굴로 같은 사람 찾기, 내 분류 모델 파일과 분류마다 보여 줄 이름·기준 점수(%)·칩으로 보기
-            "face_on": True, "custom_model_path": "", "custom_labels": []}
+            "face_on": True, "custom_model_path": "", "custom_labels": [],
+            # 캐시 정리: 이 일수보다 오래된 것만, 체크를 끈 캐시(cache.IDS)
+            "cache_days": 7, "cache_skip": []}
 
 
 def load():
@@ -73,7 +77,7 @@ def folder_text(value, name):
     path = os.path.abspath(value.strip())
     if not os.path.isdir(path):
         raise ValueError(f"{name}: 없는 폴더입니다. {path}")
-    return fence.refuse(path)
+    return fence.refuse_system(fence.refuse(path))
 
 
 def check(changes):
@@ -120,6 +124,8 @@ def check(changes):
                     or not 1 <= item["threshold"] <= 100 or not isinstance(item["show"], bool) for item in value):
                 raise ValueError("내 분류 모델의 분류 설정이 잘못됐습니다(이름 30자, 기준 1~100%).")
             clean[name] = [{"name": item["name"].strip(), "threshold": item["threshold"], "show": item["show"]} for item in value]
+        elif name == "cache_skip":
+            clean[name] = cache.check_ids(value)
         elif name == "drive":
             if not isinstance(value, str) or not (value == "" or re.fullmatch(r"[A-Za-z]:\\", value)):
                 raise ValueError(f"드라이브는 'D:\\' 모양으로 쓰세요: {value}")

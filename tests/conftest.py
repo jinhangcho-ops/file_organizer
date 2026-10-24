@@ -18,6 +18,8 @@ os.environ["APPDATA"] = str(SAFE / "appdata")
 os.environ["PROGRAMDATA"] = str(SAFE / "programdata")
 
 import blacklist  # noqa: E402
+import captures  # noqa: E402
+import games  # noqa: E402
 import index  # noqa: E402
 import jobs  # noqa: E402
 import lock  # noqa: E402
@@ -44,6 +46,8 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
     monkeypatch.setenv("PROGRAMDATA", str(tmp_path / "programdata"))
     monkeypatch.setattr(blacklist, "restrict", lambda path: None)
+    monkeypatch.setattr(games, "launcher_games", lambda: [])  # 이 PC의 Steam 등은 읽지 않는다.
+    monkeypatch.setattr(captures, "folders", lambda: {"pictures": str(tmp_path / "사진"), "videos": str(tmp_path / "동영상"), "steam": str(tmp_path / "Steam")})
     undo.history.clear()  # 되돌리기 기록은 프로세스에 남으므로 검사마다 비운다.
     root = tmp_path / "root"
     root.mkdir()

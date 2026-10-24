@@ -15,10 +15,12 @@ import threading
 import time
 import zipfile
 
+import blacklist
 import exclude
 import extract
 import fence
 import filetime
+import games
 import kinds
 import settings
 
@@ -67,6 +69,7 @@ create index if not exists tags_id on tags(id);
 create index if not exists tags_kind on tags(kind, label);
 create table if not exists recognized(id integer primary key, made integer, custom text, faces integer);
 create table if not exists faces(id integer, n integer, person integer, vec blob);
+create table if not exists games(key text primary key, path text, size integer);
 create index if not exists faces_id on faces(id);
 create index if not exists faces_person on faces(person);
 """
@@ -112,13 +115,19 @@ def roots(config):
     return [path for k, path in keys.items() if not any(k != other and k.startswith(os.path.join(other, "")) for other in keys)]
 
 
-def walk(root, fences=frozenset()):
+def walk(root, fences=frozenset(), game_keys=frozenset(), found_games=None):
     """root 아래의 (폴더 경로, [파일 DirEntry]) 들. 링크·정션, 숨김·시스템 폴더, SKIP의 폴더, 차단·잠금 폴더(fences, key)는
-    들어가지 않는다. 읽을 수 없는 폴더는 건너뛴다."""
+    들어가지 않는다. 읽을 수 없는 폴더는 건너뛴다.
+    게임 폴더(런처가 아는 폴더 game_keys, 게임 폴더 이름 blacklist.GAMES, 안의 이름으로 판별 games.is_game)는 판별만 하고
+    안을 읽지 않는다. 찾은 게임 폴더는 found_games에 더한다."""
     stack = [root]
     while stack:
         folder = stack.pop()
-        files = []
+        files, folders = [], []
+        if exclude.key(folder) in game_keys or os.path.basename(folder).lower() in blacklist.GAMES:
+            if found_games is not None:
+                found_games += [folder] if exclude.key(folder) in game_keys else games.container_games(folder)
+            continue
         try:
             with os.scandir(folder) as entries:
                 for entry in entries:
@@ -127,13 +136,18 @@ def walk(root, fences=frozenset()):
                             continue
                         if entry.is_dir():
                             if entry.name.lower() not in SKIP and not hidden(entry.stat()) and exclude.key(entry.path) not in fences:
-                                stack.append(entry.path)
+                                folders.append(entry.path)
                         elif entry.is_file() and not hidden(entry.stat()):
                             files.append(entry)
                     except OSError:
                         continue
         except OSError:
             continue
+        if games.is_game({e.name.lower() for e in files}, {os.path.basename(p).lower() for p in folders}):
+            if found_games is not None:
+                found_games.append(folder)
+            continue
+        stack += folders
         yield folder, files
 
 
@@ -207,10 +221,14 @@ def build(paths, only=None):
             step_work(only)(db)
             return
         old = {row["key"]: (row["size"], row["stamp"]) for row in db.execute("select key, size, stamp from files")}
-        seen, folders = set(), set()
+        seen, folders, found_games = set(), set(), []
         status.update(step="파일 목록 확인", done=0, total=0)
-        done = scan(db, paths, old, seen, folders)
+        done = scan(db, paths, old, seen, folders, found_games)
         if done:
+            sizes = dict(db.execute("select key, size from games").fetchall())  # 세어 둔 크기는 남긴다.
+            db.execute("delete from games")
+            db.executemany("insert or ignore into games(key, path, size) values(?, ?, ?)",
+                           [(exclude.key(p), p, sizes.get(exclude.key(p))) for p in found_games])
             gone = [(key,) for key in old if key not in seen]
             drop_ids(db, [row[0] for key in gone for row in db.execute("select id from files where key = ?", key)])
             db.executemany("delete from files where key = ?", gone)
@@ -225,11 +243,13 @@ def build(paths, only=None):
         db.close()
 
 
-def scan(db, paths, old, seen, folders):
-    """① paths 아래의 파일 목록을 색인에 맞춘다. 본 파일·폴더의 key를 seen·folders에 모은다. 끝까지 했으면 True, 멈췄으면 False."""
+def scan(db, paths, old, seen, folders, found_games):
+    """① paths 아래의 파일 목록을 색인에 맞춘다. 본 파일·폴더의 key를 seen·folders에, 게임 폴더를 found_games에 모은다.
+    끝까지 했으면 True, 멈췄으면 False."""
     fences = fence.keys()
+    game_keys = {exclude.key(g["path"]) for g in games.launcher_games()}
     for root in paths:
-        for folder, entries in walk(root, fences):
+        for folder, entries in walk(root, fences, game_keys, found_games):
             if stop.is_set():
                 return False
             add_folder(db, folder, None if folder == root else os.path.dirname(folder))

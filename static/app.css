@@ -124,6 +124,10 @@ th.sorted { color: var(--acc); }
 th.ck, td.ck { width: 34px; }
 td.n, th.n { text-align: right; }
 td.mute { color: var(--mute); }
+.cache-list label { display: flex; gap: 6px; align-items: center; padding: 2px 0; }
+.cache-list label.group { font-weight: 600; margin-top: 6px; }
+.cache-list label:not(.group) { padding-left: 22px; }
+.cache-list small { color: var(--mute); margin-left: auto; }
 #files tbody tr { cursor: pointer; }
 #files tbody tr:hover td { background: var(--panel2); }
 #files tbody tr.sel td { background: var(--accbg); }

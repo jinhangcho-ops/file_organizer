@@ -30,7 +30,7 @@ const VIEWS = {  // 위쪽 필터 칩이자 설정 화면의 숫자 카드(이 �
   modified: {title: "최근 수정"},
   stale: {title: () => `${state.settings.stale_days}일 넘게 안 본 파일`, warn: true},
 };
-const PAGES = {files: "파일 정리", setup: "설정", organize: "다운로드 정리하기", archive: "오래된 파일 보관"};
+const PAGES = {files: "파일 정리", setup: "설정", organize: "다운로드 정리하기", archive: "오래된 파일 보관", games: "게임"};
 // 같은 파일의 까닭(search.SAME)과 태그 글자. 태그를 누르면 그 파일과 같은 파일들만 경로와 함께 본다.
 const WHY = {bytes: "중복 의심", doc: "내용 같은 문서", text: "글자 같은 문서", media: "보이는 내용 같음"};
 
@@ -268,6 +268,7 @@ function showPage(name) {
   $("more").classList.add("hidden");
   $("back").classList.toggle("hidden", name === "files");
   $("ttl").textContent = PAGES[name];
+  if (name === "games") showGames();
 }
 
 document.querySelectorAll("[data-page]").forEach((b) => b.addEventListener("click", () => showPage(b.dataset.page)));
@@ -1226,6 +1227,51 @@ $("undo").addEventListener("click", async (e) => {
 });
 
 // ---------- 오래된 파일 보관 ----------
+// ---------- 게임 ----------
+// 색인이 판별한 게임 폴더 + 런처가 아는 게임. 이름을 누르면 그 폴더를 탐색기로 연다. 크기를 모르는 것은 [모르는 크기 세기]로.
+async function showGames() {
+  try {
+    const {games} = await api("/api/games");
+    $("games-table").tBodies[0].replaceChildren(...games.map((g) => {
+      const name = el("button", {className: "link", textContent: g.name, title: "탐색기에서 열기"});
+      name.addEventListener("click", () => api("/api/games/open", {path: g.path}).catch((e) => toast(e.message)));
+      return el("tr", {}, el("td", {}, name), el("td", {className: "mute", textContent: g.launcher || "폴더로 찾음"}),
+        el("td", {className: "n mute", textContent: g.size == null ? "모름" : size(g.size)}),
+        el("td", {className: "mute", textContent: g.played ? new Date(g.played * 1000).toLocaleDateString() : ""}),
+        el("td", {className: "mono mute", textContent: g.path, title: g.path}));
+    }));
+    const known = games.filter((g) => g.size != null);
+    say("games-message", games.length ? "" : "찾은 게임이 없어요. 색인을 갱신하면 색인할 폴더 안의 게임 폴더를 찾아요.");
+    $("games-sum").textContent = games.length ? `${games.length}개 · 아는 크기 합계 ${size(known.reduce((sum, g) => sum + g.size, 0))}` : "";
+    $("games-measure").disabled = known.length === games.length;
+  } catch (e) {
+    say("games-message", e.message, "error");
+  }
+}
+
+$("games-measure").addEventListener("click", (e) => busy(e.target, "games-message", async () => {
+  await runJob((await api("/api/games/measure", {})).job);
+  await showGames();
+}));
+
+$("captures-preview").addEventListener("click", (e) => busy(e.target, "captures-message", async () => {
+  $("captures-run").disabled = true;
+  const found = await api("/api/captures/preview", {});
+  $("captures-table").tBodies[0].replaceChildren(...found.groups.map((g) => el("tr", {}, el("td", {textContent: g.game}),
+    el("td", {className: "mute", textContent: g.source}), el("td", {className: "n mute", textContent: g.count.toLocaleString()}),
+    el("td", {className: "mono mute", textContent: g.to, title: g.to}))));
+  $("captures-card").classList.toggle("hidden", !found.count);
+  $("captures-run").disabled = !found.count;
+  say("captures-message", found.count ? `${found.count.toLocaleString()}개를 게임별 폴더로 옮겨요.` : "옮길 게임 캡처가 없어요.");
+}));
+
+$("captures-run").addEventListener("click", (e) => busy(e.target, "captures-message", async () => {
+  const result = await runJob((await api("/api/captures/run", {})).job);
+  $("captures-card").classList.add("hidden");
+  await afterChange(`게임 캡처 ${result.moved.toLocaleString()}개를 옮겼어요. Ctrl+Z로 되돌릴 수 있어요.${failedText(result)}`);
+  say("captures-message", "");
+}));
+
 function showArchive() {
   $("archive-dest").textContent = archiveDest || "고르지 않음";
   if (!$("cold_days").value) $("cold_days").value = state.settings.cold_days;
@@ -1314,6 +1360,8 @@ function showSetup() {
   }));
   $("recent_days").value = state.settings.recent_days;
   $("stale_days").value = state.settings.stale_days;
+  $("cache_days").value = state.settings.cache_days;
+  drawCache();
   $("excludes").replaceChildren(...state.exclude.map((rule) =>
     listRow(`${rule.kind === "folder" ? "폴더" : "파일"}  ${rule.path}`, () => changeExclude(rule.path, true), rule.kind === "folder")));
   $("excludes-empty").classList.toggle("hidden", state.exclude.length > 0);
@@ -1478,6 +1526,55 @@ async function saveView(changes) {
 document.querySelectorAll("input[name=list_group]").forEach((r) => r.addEventListener("change", () => saveView({list_group: r.value})));
 $("pin_installers").addEventListener("change", (e) => saveView({pin_installers: e.target.checked}));
 $("show_same_name").addEventListener("change", (e) => saveView({show_same_name: e.target.checked}));
+
+// ---------- 캐시 정리 ----------
+// [살펴보기]의 답(cacheFound)으로 묶음(임시 폴더·브라우저·앱)마다 체크 목록을 그린다. 끈 캐시는 설정 cache_skip에 기억한다.
+// 묶음의 체크는 그 안의 캐시를 모두 켜거나 끈다. 서버에는 고른 캐시의 이름만 보내고, 지울 것은 서버가 다시 찾는다.
+let cacheFound = null;
+const cacheOn = (p) => !state.settings.cache_skip.includes(p.id);
+const cachePicked = () => (cacheFound ? cacheFound.places.filter((p) => p.found && !p.running && p.count && cacheOn(p)) : []);
+
+function drawCache() {
+  if (!cacheFound) return;
+  const save = (ids, on) => saveSettings({cache_skip: on ? state.settings.cache_skip.filter((i) => !ids.includes(i)) : [...new Set([...state.settings.cache_skip, ...ids])]}, "cache-message");
+  const lines = [];
+  for (const [group, title] of Object.entries(cacheFound.groups)) {
+    const places = cacheFound.places.filter((p) => p.group === group && p.found);
+    if (!places.length) continue;
+    const all = el("input", {type: "checkbox", checked: places.every(cacheOn)});
+    all.indeterminate = !all.checked && places.some(cacheOn);
+    all.addEventListener("change", () => save(places.map((p) => p.id), all.checked));
+    lines.push(el("label", {className: "group"}, all, el("span", {textContent: title})));
+    for (const p of places) {
+      const box = el("input", {type: "checkbox", checked: cacheOn(p)});
+      box.addEventListener("change", () => save([p.id], box.checked));
+      const info = p.running ? "켜져 있어 건너뛰어요" : p.count ? `${size(p.bytes)} · ${p.count.toLocaleString()}개` : "오래된 것 없음";
+      lines.push(el("label", {}, box, el("span", {textContent: p.name}), el("small", {textContent: info})));
+    }
+  }
+  $("cache-list").replaceChildren(...(lines.length ? lines : [el("p", {className: "hint", textContent: "이 PC에서 찾은 캐시 폴더가 없어요."})]));
+  const picked = cachePicked();
+  $("cache-clean").disabled = !picked.length;
+  $("cache-clean").textContent = picked.length ? `휴지통으로 보내기 (${size(picked.reduce((s, p) => s + p.bytes, 0))})` : "휴지통으로 보내기";
+}
+
+$("cache-scan").addEventListener("click", (e) => busy(e.target, "cache-message", async () => {
+  if (Number($("cache_days").value) !== state.settings.cache_days && !(await saveSettings({cache_days: Number($("cache_days").value)}, "cache-message"))) return;
+  cacheFound = await runJob((await api("/api/cache/scan", {})).job);
+  say("cache-message", "");
+  drawCache();
+}));
+
+$("cache-clean").addEventListener("click", (e) => busy(e.target, "cache-message", async () => {
+  const picked = cachePicked();
+  const count = picked.reduce((s, p) => s + p.count, 0);
+  const text = `${picked.map((p) => p.name).join(", ")}\n\n${state.settings.cache_days}일 넘게 안 고친 ${count.toLocaleString()}개(${size(picked.reduce((s, p) => s + p.bytes, 0))})를 휴지통으로 보내요.\n휴지통에서 다시 꺼낼 수 있어요.`;
+  if (!(await ask({title: "캐시를 휴지통으로 보낼까요?", text}))) return;
+  const result = await runJob((await api("/api/cache/clean", {ids: picked.map((p) => p.id), confirm: true})).job);
+  cacheFound = await runJob((await api("/api/cache/scan", {})).job);
+  drawCache();
+  say("cache-message", `${result.trashed.toLocaleString()}개를 휴지통으로 보냈어요.${failedText(result)}`, "ok");
+}));
 
 $("days-save").addEventListener("click", async () => {
   const changes = {recent_days: Number($("recent_days").value), stale_days: Number($("stale_days").value)};

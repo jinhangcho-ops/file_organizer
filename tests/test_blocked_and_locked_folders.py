@@ -18,21 +18,21 @@ def listed(client):
 
 def test_blacklist_needs_admin_and_removes_from_everywhere(home, client, monkeypatch):
     keep = write(home / "문서" / "보고서.txt")
-    game = write(home / "SteamLibrary" / "game.dat")
+    game = write(home / "큰 폴더" / "game.dat")
     build(home)
     assert game in listed(client)
-    assert client.post("/api/blacklist", json={"path": str(home / "SteamLibrary")}).status_code == 400  # 관리자가 아니면 거부
+    assert client.post("/api/blacklist", json={"path": str(home / "큰 폴더")}).status_code == 400  # 관리자가 아니면 거부
     monkeypatch.setattr(blacklist, "is_admin", lambda: True)
-    assert client.post("/api/blacklist", json={"path": str(home / "SteamLibrary")}).status_code == 200
+    assert client.post("/api/blacklist", json={"path": str(home / "큰 폴더")}).status_code == 200
     assert listed(client) == {keep}  # 색인 기록을 바로 지웠다
     build(home)
     assert listed(client) == {keep}  # 다시 색인해도 들어가지 않는다
     assert client.post("/api/open", json={"path": game}).status_code == 400
-    assert client.post("/api/settings", json={"roots": [str(home / "SteamLibrary")]}).status_code == 400  # 그 안을 색인할 폴더로도 못 고른다
-    assert client.post("/api/settings", json={"archive_dest": str(home / "SteamLibrary")}).status_code == 400
-    assert client.post("/api/blacklist", json={"path": str(home / "SteamLibrary" / "x")}).status_code == 400  # 없는 폴더
-    assert client.get("/api/state").json["blacklist"] == [str(home / "SteamLibrary")]
-    assert client.post("/api/blacklist", json={"path": str(home / "SteamLibrary"), "remove": True}).json["blacklist"] == []
+    assert client.post("/api/settings", json={"roots": [str(home / "큰 폴더")]}).status_code == 400  # 그 안을 색인할 폴더로도 못 고른다
+    assert client.post("/api/settings", json={"archive_dest": str(home / "큰 폴더")}).status_code == 400
+    assert client.post("/api/blacklist", json={"path": str(home / "큰 폴더" / "x")}).status_code == 400  # 없는 폴더
+    assert client.get("/api/state").json["blacklist"] == [str(home / "큰 폴더")]
+    assert client.post("/api/blacklist", json={"path": str(home / "큰 폴더"), "remove": True}).json["blacklist"] == []
     build(home)
     assert game in listed(client)  # 빼면 다음 색인부터 다시 나온다
 

@@ -10,9 +10,12 @@ import actions
 import archive
 import blacklist
 import browse
+import cache
+import captures
 import drives
 import exclude
 import fence
+import games
 import index
 import jobs
 import kinds
@@ -305,13 +308,14 @@ def indexed_path():
 
 
 def indexed_paths(movable=True):
-    """요청의 paths(여러 개). movable이면 색인한 맨 위 폴더는 받지 않는다(통째로 옮기거나 지우지 않는다)."""
+    """요청의 paths(여러 개). movable이면 색인한 맨 위 폴더는 받지 않는다(통째로 옮기거나 지우지 않는다).
+    옮기기·휴지통에 쓰므로 Windows·프로그램 폴더와 게임 폴더 안도 거부한다(fence.refuse_system)."""
     paths = body().get("paths")
     if not isinstance(paths, list) or not paths or not all(isinstance(path, str) for path in paths):
         raise ValueError("고른 파일이 없습니다.")
-    found, fences = index.look(paths), fence.keys()  # 연결 하나, 차단·잠금 목록 한 번으로 모두 본다.
+    found, fences, game_keys = index.look(paths), fence.keys(), games.keys()  # 연결 하나, 차단·잠금·게임 목록 한 번으로 모두 본다.
     for path in paths:
-        checked(path, found, fences)
+        fence.refuse_system(checked(path, found, fences), game_keys)
         if movable and found[path][1]:
             raise ValueError(f"색인한 맨 위 폴더는 옮기거나 지울 수 없습니다: {path}")
     return list(dict.fromkeys(paths))
@@ -330,7 +334,7 @@ def move():
 
 @app.post("/api/rename")
 def rename():
-    path = indexed_path()
+    path = fence.refuse_system(indexed_path())
     fence.refuse_holding(path, True)
     lock.refuse_clash(path, os.path.join(os.path.dirname(path), str(body().get("name") or "").strip()))
     return jsonify(path=actions.rename(path, body().get("name")))
@@ -355,7 +359,7 @@ def empty_folder():
     """폴더 비우기: 안의 파일·폴더를 모두 휴지통으로(폴더는 남는다). confirm이 없으면 보낼 개수만 알려 준다(화면이 확인을 받는다).
     드라이브 전체는 비우지 않는다. 숨김·시스템 파일은 건드리지 않는다. 지우면 안 되는 것(차단·잠금이 든 것, 구조 보호)은 그 항목만 뺀다."""
     data = body()
-    path = checked(data.get("path") or "")
+    path = fence.refuse_system(checked(data.get("path") or ""))
     if not os.path.isdir(path):
         raise ValueError(f"폴더가 아닙니다: {path}")
     if os.path.dirname(path) == path:
@@ -366,7 +370,7 @@ def empty_folder():
     refused = []
     for item in list(paths):
         try:
-            fence.refuse(item)
+            fence.refuse_system(fence.refuse(item))
             fence.refuse_holding(item, False)
         except ValueError as e:
             refused.append({"from": item, "error": str(e)})
@@ -423,6 +427,63 @@ def change_protect():
         raise ValueError("폴더를 고르세요.")
     not_busy()
     return jsonify(protected=protect.remove(path) if data.get("remove") else protect.add(path))
+
+
+@app.get("/api/games")
+def game_list():
+    """'게임': 색인이 판별한 게임 폴더와 런처(Steam·Epic·GOG·Ubisoft)가 아는 게임. 이름·런처·폴더·크기·마지막 실행."""
+    return jsonify(games=games.listing())
+
+
+@app.post("/api/games/open")
+def open_game():
+    """게임 폴더를 탐색기로 연다('게임' 목록에 있는 폴더만)."""
+    path = body().get("path")
+    if path not in {g["path"] for g in games.listing()}:
+        raise ValueError(f"게임 목록에 없는 폴더입니다: {path}")
+    os.startfile(path)
+    return jsonify(ok=True)
+
+
+@app.post("/api/captures/preview")
+def captures_preview():
+    """게임 캡처 정리 미리보기: 게임·어디서별 개수와 옮길 곳."""
+    moves = captures.plan()
+    groups = {}
+    for m in moves:
+        group = groups.setdefault((m["game"], m["source"]), {"game": m["game"], "source": m["source"], "count": 0, "to": os.path.dirname(m["to"])})
+        group["count"] += 1
+    return jsonify(count=len(moves), groups=sorted(groups.values(), key=lambda g: (g["game"].lower(), g["source"])))
+
+
+@app.post("/api/captures/run")
+def captures_run():
+    """게임 캡처를 게임별 폴더로 옮긴다(미리보기와 같은 목록을 서버에서 다시 만든다). 뒤의 작업."""
+    return jsonify(job=jobs.start("게임 캡처 정리", captures.run))
+
+
+@app.post("/api/cache/scan")
+def cache_scan():
+    """캐시마다 오래된 것의 개수·크기(설정 cache_days 기준). 뒤의 작업."""
+    days = settings.load()["cache_days"]
+    return jsonify(job=jobs.start("캐시 살펴보기", lambda progress: cache.scan(days, progress)))
+
+
+@app.post("/api/cache/clean")
+def cache_clean():
+    """고른 캐시(ids)의 오래된 것을 휴지통으로. 화면의 확인 창에서 [확인]을 눌러 confirm이 true일 때만 한다."""
+    data = body()
+    ids = cache.check_ids(data.get("ids"))
+    if data.get("confirm") is not True or not ids:
+        raise ValueError("고른 캐시를 확인한 뒤에만 휴지통으로 보냅니다.")
+    days = settings.load()["cache_days"]
+    return jsonify(job=jobs.start("캐시 정리", lambda progress: cache.clean(ids, days, progress)))
+
+
+@app.post("/api/games/measure")
+def measure_games():
+    """크기를 모르는 게임 폴더의 크기를 센다(뒤의 작업)."""
+    return jsonify(job=jobs.start("게임 크기 세기", games.measure))
 
 
 @app.get("/api/blacklist/candidates")

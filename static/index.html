@@ -35,6 +35,9 @@
     <button class="btn ib files-only" data-page="archive" title="오래된 파일 보관">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h18v4H3zM5 8v12h14V8M10 12h4"/></svg>
     </button>
+    <button class="btn ib files-only" data-page="games" title="설치한 게임·게임 캡처 정리">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="11" rx="5"/><path d="M7 11v3M5.5 12.5h3M15 12h.01M18 13.5h.01"/></svg>
+    </button>
     <button class="btn ib files-only" id="trash" title="파일이나 폴더를 끌어다 놓으면 확인한 뒤 휴지통으로 보내요">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v5M14 11v5"/></svg>
     </button>
@@ -129,6 +132,14 @@
             <p id="view-message" class="message"></p>
           </div>
           <div class="box">
+            <h3>캐시 정리</h3>
+            <div class="hint">오래된 임시 파일과 캐시를 휴지통으로 보내요. 휴지통을 비워야 디스크 자리가 늘어요. 켜져 있는 프로그램의 캐시는 건너뛰고, 숨김·시스템 파일은 건드리지 않아요.</div>
+            <div class="row" style="margin-bottom:8px"><input type="number" id="cache_days" min="1" max="365"> 일 넘게 안 고친 것 <button class="btn" id="cache-scan">살펴보기</button></div>
+            <div id="cache-list" class="cache-list"></div>
+            <div class="row" style="margin-top:8px"><button class="btn d" id="cache-clean" disabled>휴지통으로 보내기</button></div>
+            <p id="cache-message" class="message"></p>
+          </div>
+          <div class="box">
             <h3>기간</h3>
             <div class="hint">목록 위쪽 버튼이 이 기준으로 파일을 골라요.</div>
             <div class="row" style="margin-bottom:8px">최근 다운로드·최근 수정은 최근 <input type="number" id="recent_days" min="1" max="3650"> 일</div>
@@ -204,6 +215,29 @@
         </div>
         <div class="box full flush hidden" id="preview-card">
           <table id="preview-table"><thead><tr><th>파일</th><th>종류</th><th>옮길 곳</th></tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+    </div>
+
+    <div class="scroll hidden page" id="page-games">
+      <div class="sgrid">
+        <div class="box full">
+          <h3>설치한 게임</h3>
+          <div class="hint">색인할 때 찾은 게임 폴더와 Steam·Epic·GOG·Ubisoft에 설치한 게임이에요. 게임 폴더 안의 파일은 파일 목록·중복 의심에 나오지 않고, 옮기거나 휴지통으로 보낼 수 없어요. 지우려면 그 게임의 런처나 Windows 설정 → 앱에서 제거하세요.</div>
+          <div class="row"><button class="btn" id="games-measure">모르는 크기 세기</button><span id="games-sum" class="hint"></span></div>
+          <p id="games-message" class="message"></p>
+        </div>
+        <div class="box full flush">
+          <table id="games-table"><thead><tr><th>이름</th><th>런처</th><th class="n">크기</th><th>마지막 실행</th><th>폴더</th></tr></thead><tbody></tbody></table>
+        </div>
+        <div class="box full">
+          <h3>게임 캡처 정리</h3>
+          <div class="hint">Xbox Game Bar(동영상\Captures), NVIDIA·AMD 녹화, Steam 스크린샷, 다운로드의 게임 캡처를 게임마다 모아요. 스크린샷은 사진\스크린샷\게임 이름, 영상은 동영상\게임 녹화\게임 이름으로 옮겨요. 옮기면 Steam·Game Bar의 갤러리에서는 보이지 않아요. Ctrl+Z로 되돌릴 수 있어요.</div>
+          <div class="row"><button class="btn" id="captures-preview">미리보기</button><button class="btn p" id="captures-run" disabled>옮기기</button></div>
+          <p id="captures-message" class="message"></p>
+        </div>
+        <div class="box full flush hidden" id="captures-card">
+          <table id="captures-table"><thead><tr><th>게임</th><th>어디서</th><th class="n">개수</th><th>옮길 곳</th></tr></thead><tbody></tbody></table>
         </div>
       </div>
     </div>
