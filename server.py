@@ -307,6 +307,8 @@ def checked(path, found=None, fences=None):
     여러 개를 볼 때는 index.look의 결과(found)와 fence.keys()를 한 번만 만들어 넘긴다."""
     if not isinstance(path, str) or not (found or index.look([path]))[path][0] or not os.path.exists(path):
         raise ValueError(f"색인에 없는 경로입니다. 색인을 갱신하세요: {path}")
+    if os.path.isreserved(path):  # 'abc.'는 Windows가 옆의 abc로 읽어 다른 파일을 옮기거나 보여 준다
+        raise ValueError(f"Windows가 다룰 수 없는 이름이라 다루지 않습니다: {path}")
     return fence.refuse(path, fences)
 
 

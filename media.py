@@ -4,6 +4,7 @@
   길이가 LENGTH_GAP 안쪽으로 비슷한 영상끼리 같은 시각의 장면(앞뒤 한 장까지 밀어 봄)을 맞춰, 같은 장면의 비율이 video_similar% 이상이면 짝.
 - 거의 한 가지 색인 장면(검은 화면 등)은 서로 다른 영상끼리도 같아 보여 빼고 센다.
 장면은 ffmpeg(imageio-ffmpeg에 든 것)로, 사진은 Pillow(HEIC는 pillow-heif)로 읽는다. 이 단계가 돌 때만 불러온다."""
+import _winapi
 import os
 import re
 import subprocess
@@ -47,7 +48,7 @@ def distance(a, b):
 
 def image_hash(path):
     """사진의 그림 지문(돌려 찍은 정보는 반영한다). 열지 못하면 None."""
-    from PIL import Image, ImageOps, UnidentifiedImageError
+    from PIL import Image, ImageOps
 
     if os.path.splitext(path)[1].lower() in (".heic", ".heif"):
         import pillow_heif
@@ -58,7 +59,11 @@ def image_hash(path):
             img.draft("L", (64, 64))  # JPEG는 줄여서 읽어 빠르다.
             small = ImageOps.exif_transpose(img).convert("L").resize((9, 8), Image.Resampling.LANCZOS)
             return dhash(small.tobytes())
-    except (OSError, UnidentifiedImageError, ValueError, SyntaxError, EOFError, Image.DecompressionBombError):  # 깨진 EXIF·끊긴 HEIC
+    except OSError as e:
+        if e.errno is not None:  # 읽다가 막혔다(다른 프로그램이 일부를 잠금 등): 기록하지 않고 다음 색인에 다시
+            raise
+        return None  # 깨진 그림(UnidentifiedImageError 등, errno 없음)
+    except (ValueError, SyntaxError, EOFError, RuntimeError, Image.DecompressionBombError):  # 깨진 EXIF·끊긴 HEIC, 깨진 HEIC(pillow_heif의 RuntimeError)
         return None
 
 
@@ -130,22 +135,38 @@ def todo(db, interval):
                             and (m.id is null or m.made <> f.stamp or (m.kind = 'video' and m.interval <> ?))""", exts + [interval]).fetchall()
 
 
+AGAIN = {32, 33, 362, 388, 389, 393, 398, 404, 426, 475}  # 다른 프로그램이 쓰는 중, 클라우드 파일을 지금 못 받음(이 PC의 FormatError로 확인한 번호)
+
+
+def openable(path):
+    """열 수 있는지. 잠시 열 수 없는 파일(AGAIN)이면 OSError: 기록하지 않고 다음 색인에 다시 한다.
+    늘 열 수 없는 것(권한 없음 등)은 False: 읽지 않고 빈 결과로 기록한다(색인마다 다시 하지 않게).
+    open()은 C 런타임을 거쳐 winerror가 비므로(잠금도 권한 없음도 EACCES) Windows 함수로 연다."""
+    try:
+        _winapi.CloseHandle(_winapi.CreateFile(path, _winapi.GENERIC_READ, 7, 0, _winapi.OPEN_EXISTING, 0, 0))  # 7: 남과 같이 읽기·쓰기·지우기
+    except OSError as e:
+        if e.winerror in AGAIN:
+            raise
+        return False
+    return True
+
+
 def fingerprint(db, row, interval):
     """파일 하나의 지문을 만들어 media에 넣는다. 읽은 뒤 연 시각은 되돌린다."""
     st = os.stat(row["path"])
-    if st.st_mtime_ns != row["stamp"]:  # 목록을 훑은 뒤에 바뀌었다: 다음 색인 때 한다.
+    if index.stamp(st) != row["stamp"]:  # 목록을 훑은 뒤에 바뀌었다: 다음 색인 때 한다.
         return
-    open(row["path"], "rb").close()  # 지금 열 수 없으면(잠금·클라우드에만 있음) OSError: 기록하지 않고 다음에 다시
+    readable = openable(row["path"])
     for table, column in (("media", "id"), ("media_todo", "id"), ("media_pair", "a"), ("media_pair", "b")):
         db.execute(f"delete from {table} where {column} = ?", (row["id"],))
     if row["ext"] in IMAGE_EXTS:
-        h = image_hash(row["path"])
+        h = image_hash(row["path"]) if readable else None
         db.execute("insert into media(id, kind, duration, frames, made, interval) values(?, 'image', null, ?, ?, null)",
                    (row["id"], encode([h]) if h is not None else "", row["stamp"]))
         if h is not None:
             db.execute("insert or ignore into media_todo(id) values(?)", (row["id"],))
     else:
-        length = video_length(row["path"])
+        length = video_length(row["path"]) if readable else None
         frames = frame_hashes(row["path"], frame_times(length, interval)) if length else []
         db.execute("insert into media(id, kind, duration, frames, made, interval) values(?, 'video', ?, ?, ?, ?)",
                    (row["id"], length, encode(frames), row["stamp"], interval))

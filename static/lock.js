@@ -25,7 +25,7 @@ async function lockCall(url, data, done) {
   try {
     const answer = await api(url, data);
     await load();
-    await api("/api/window", {action: "refresh"}).catch(() => {});
+    if (data.path) await api("/api/window", {action: "refresh"}).catch(() => {});  // 비밀번호·금고 위치는 본 창의 목록을 바꾸지 않는다
     if (done) say("lock-message", typeof done === "function" ? done(answer) : done, "ok");
     return answer;
   } catch (e) {

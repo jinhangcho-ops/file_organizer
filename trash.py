@@ -65,13 +65,18 @@ def width(path):
 
 
 def size_of(path):
-    """휴지통에 들어갈 (크기, 가장 긴 경로의 글자 수). 링크·정션은 따라가지 않고(링크만 간다), 읽을 수 없는 파일(깨진 링크 등)은 건너뛴다."""
+    """휴지통에 들어갈 (크기, 가장 긴 경로의 글자 수). 링크·정션은 따라가지 않고(링크만 간다), 읽을 수 없는 파일(깨진 링크 등)은 건너뛴다.
+    목록을 읽을 수 없는 폴더가 있으면 OSError(그 안의 크기·경로 길이를 모른다)."""
     link = lambda p: os.path.islink(p) or os.path.isjunction(p)  # noqa: E731
     path = os.path.abspath(path)
     if link(path) or not os.path.isdir(path):
         return os.lstat(path).st_size, width(path)
     total, longest = 0, width(path)
-    for folder, dirs, names in os.walk(path):
+
+    def stop(error):
+        raise error
+
+    for folder, dirs, names in os.walk(path, onerror=stop):
         longest = max([longest, *(width(os.path.join(folder, n)) for n in dirs + names)])
         dirs[:] = [d for d in dirs if not link(os.path.join(folder, d))]
         for name in names:
@@ -100,8 +105,13 @@ def problem(path):
         return "이 디스크는 휴지통을 쓰지 않도록 설정되어 있습니다"
     if capacity is None:  # 설정 값이 없는 디스크(새로 단 디스크 등)는 Windows 기본값보다 작게 디스크 크기의 5%로 본다.
         capacity = shutil.disk_usage(drives.volume_root(place)).total // 20  # 크기를 모른 채 보내면 '확인 없이'라 큰 것은 영구 삭제될 수 있다.
-    size, longest = size_of(path)
-    if longest >= MAX_PATH or (os.path.isdir(path) and longest - width(os.path.abspath(path)) + BIN_PREFIX >= MAX_PATH):
+    try:
+        size, longest = size_of(path)
+    except OSError:
+        return "안을 읽을 수 없는 폴더가 들어 있습니다"
+    # 폴더의 휴지통 안 이름($R…)에는 원래 확장자가 붙고, 폴더에 탑재한 디스크는 휴지통이 그 폴더 아래에 있다.
+    head = BIN_PREFIX + width(os.path.splitext(path)[1]) + width(drives.volume_root(place)) - 3
+    if longest >= MAX_PATH or (os.path.isdir(path) and longest - width(os.path.abspath(path)) + head >= MAX_PATH):
         return "경로가 너무 길어(260자 이상) 휴지통에 넣을 수 없습니다"
     if size > capacity:
         return "휴지통 최대 크기보다 큽니다"

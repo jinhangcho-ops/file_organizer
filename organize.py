@@ -51,7 +51,7 @@ def plan(source, dest):
     with_parts = any(os.path.splitext(entry.name)[1].lower() in PROGRAM_PARTS for entry in files)
     for entry in files:
         ext = os.path.splitext(entry.name)[1].lower()
-        if ext in PARTIAL or ext in PROGRAM_PARTS or (with_parts and ext == ".exe") or index.hidden(entry.stat()) or not index.storable(entry.name):
+        if ext in PARTIAL or ext in PROGRAM_PARTS or (with_parts and ext == ".exe") or index.hidden(entry.stat()) or not index.storable(entry.name) or os.path.isreserved(entry.name):
             continue
         kind = kinds.of(ext)
         folder = os.path.join(dest, kind)
@@ -71,16 +71,19 @@ def move(before, after):
     if drives.same_drive(before, after):
         os.rename(before, after)  # 대상이 있으면 실패한다(덮어쓰지 않는다).
         return
-    size = os.stat(before).st_size
+    st = os.stat(before)
     try:
         filetime.copy(before, after)
-        if os.stat(after).st_size != size:
+        if os.stat(after).st_size != st.st_size:
             raise OSError("복사한 파일의 크기가 원본과 다릅니다.")
     except OSError as e:
         if getattr(e, "winerror", None) != FILE_EXISTS and os.path.exists(after):  # 이름을 고른 뒤 남이 만든 파일이면 그대로 둔다.
             remove_copy(after)
         raise
     try:
+        now = os.stat(before)
+        if (now.st_size, now.st_mtime_ns) != (st.st_size, st.st_mtime_ns):  # 복사하는 동안 다른 프로그램이 저장했다: 새 내용을 지우지 않는다
+            raise OSError("옮기는 동안 원본이 바뀌어 옮기지 않았습니다.")
         os.remove(before)
     except OSError:  # 읽기 전용·사용 중: 원본은 그대로 두고 방금 만든 사본을 치운다(같은 파일이 두 곳에 남지 않게).
         remove_copy(after)
@@ -174,7 +177,7 @@ def run(source, dest, progress=lambda *args: None):
     done, failed = apply([(item["from"], item["to"]) for item in plan(source, dest)], progress)
     settings.write(LOG, [{"from": before, "to": after} for before, after in done])
     undo_log.record("organize", done, f"다운로드 정리 {len(done)}개")
-    return {"moved": len(done), "failed": failed}
+    return {"moved": len(done), "failed": failed, "pairs": done}
 
 
 def forget_undone(paths):
@@ -204,4 +207,4 @@ def undo(progress=lambda *args: None):
     left = {after for _, after in back} - {after for _, after in done}  # 실패한 것만 기록에 남겨 다시 되돌릴 수 있게 한다.
     settings.write(LOG, [item for item in moves if item["from"] in left] + blocked)  # 막힌 것도 남겨 차단·잠금을 푼 뒤 되돌릴 수 있게 한다.
     undo_log.drop("organize")  # 버튼으로 되돌렸으면 Ctrl+Z의 정리 기록은 낡았다.
-    return {"moved": len(done), "failed": missing + failed}
+    return {"moved": len(done), "failed": missing + failed, "pairs": done}

@@ -8,7 +8,6 @@
 SAVE_EVERY초마다 저장해서 중간에 끊겨도 거기까지는 남는다. 내용을 읽은 파일은 연 시각을 읽기 전으로 되돌린다.
 바이트 지문은 크기가 같은 파일이 둘 이상일 때만 만든다(크기가 다르면 같은 파일일 수 없다)."""
 import hashlib
-import lzma
 import os
 import sqlite3
 import stat as stat_flags
@@ -16,7 +15,6 @@ import sys
 import threading
 import time
 import zipfile
-import zlib
 from pathlib import Path
 
 import blacklist
@@ -177,6 +175,21 @@ def save_now(db, force=False):
         saved[0] = time.time()
 
 
+def stamp(st):
+    """색인에 넣고 비교하는 수정 시각(나노초). 날짜가 깨진 파일(1601년·2262년 뒤)은 SQLite 정수 범위로 자른다."""
+    return max(-2 ** 63, min(st.st_mtime_ns, 2 ** 63 - 1))
+
+
+def under(key, keys):
+    """key가 keys(set) 중 하나이거나 그 아래인지. 위 폴더로 올라가며 찾는다(keys가 많아도 빠르게)."""
+    while key not in keys:
+        parent = os.path.dirname(key)
+        if parent == key:
+            return False
+        key = parent
+    return True
+
+
 def save_file(db, path, st):
     """파일 하나의 목록 정보를 색인에 넣거나 고친다(다운로드 표시 포함). 바뀐 파일은 지문과 내용을 지워 ②·③에서 다시 하게 한다."""
     name = os.path.basename(path)
@@ -193,7 +206,7 @@ def save_file(db, path, st):
              dochash=null, dochashed=null, texthash=null
            returning id""",
         (path, key, os.path.dirname(key), name, ext, kinds.of(ext), st.st_size, int(st.st_birthtime), int(st.st_mtime),
-         int(st.st_atime), int(marked), max(-2 ** 63, min(st.st_mtime_ns, 2 ** 63 - 1)))).fetchone()
+         int(st.st_atime), int(marked), stamp(st))).fetchone()
     drop_ids(db, [row["id"]])  # 바뀐 파일: 사진·동영상 지문과 짝도 다시 만든다.
 
 
@@ -257,11 +270,11 @@ def build(paths, only=None):
             config = settings.load()
             missing = {exclude.key(p) for p in config["roots"] + [config["dest"]] if p and not os.path.isdir(p) and not fence.inside(p, {exclude.key(r) for r in paths})}
             missing |= {exclude.key(p) for p in unreadable}
-            gone = [(key,) for key in old if key not in seen and not fence.inside(key, missing)]
+            gone = [(key,) for key in old if key not in seen and not under(key, missing)]
             drop_ids(db, [row[0] for key in gone for row in db.execute("select id from files where key = ?", key)])
             db.executemany("delete from files where key = ?", gone)
             db.executemany("delete from folders where key = ?",
-                           [(key,) for (key,) in db.execute("select key from folders") if key not in folders and not fence.inside(key, missing)])
+                           [(key,) for (key,) in db.execute("select key from folders") if key not in folders and not under(key, missing)])
         totals(db)
         save_now(db, force=True)
         for name in settings.steps(settings.load()):
@@ -295,7 +308,7 @@ def scan(db, paths, old, seen, folders, found_games, unreadable=None):
                 key = exclude.key(entry.path)
                 seen.add(key)
                 known = old.get(key)
-                if known and known[:2] == (st.st_size, st.st_mtime_ns):  # 바뀌지 않았다: 연 시각과 종류(종류 표가 바뀌었을 수 있다)만, 달라졌을 때 고친다.
+                if known and known[:2] == (st.st_size, stamp(st)):  # 바뀌지 않았다: 연 시각과 종류(종류 표가 바뀌었을 수 있다)만, 달라졌을 때 고친다.
                     now = (int(st.st_atime), kinds.of(os.path.splitext(entry.name)[1].lower()))
                     if known[2:4] != now:
                         db.execute("update files set accessed = ?, kind = ? where key = ?", (*now, key))
@@ -357,7 +370,7 @@ def read_texts(db):
             st = os.stat(row["path"])
         except OSError:
             continue
-        if st.st_mtime_ns != row["stamp"]:  # 목록을 훑은 뒤에 바뀌었다: 다음 색인 때 읽는다.
+        if stamp(st) != row["stamp"]:  # 목록을 훑은 뒤에 바뀌었다: 다음 색인 때 읽는다.
             continue
         read_text(db, row["id"], row["path"], row["ext"], st)
         status["done"] += 1
@@ -387,7 +400,9 @@ def doc_fingerprint(path):
                     for chunk in iter(lambda: member.read(1024 * 1024), b""):
                         part.update(chunk)
                 digest.update(name.encode("utf-8") + b"\0" + part.digest())
-    except (zipfile.BadZipFile, RuntimeError, ValueError, EOFError, zlib.error, lzma.LZMAError):  # 중간이 깨진 문서
+    except OSError:
+        raise
+    except Exception:  # 중간이 깨진 문서: 압축 방식(deflate·lzma·zstd…)마다 오류가 달라 모두 받는다
         return ""
     return digest.hexdigest()
 
@@ -403,7 +418,7 @@ def documents(db):
         status["current"] = row["path"]
         try:
             st = os.stat(row["path"])
-            if st.st_mtime_ns != row["stamp"]:  # 목록을 훑은 뒤에 바뀌었다: 다음 색인 때 한다.
+            if stamp(st) != row["stamp"]:  # 목록을 훑은 뒤에 바뀌었다: 다음 색인 때 한다.
                 continue
             value = doc_fingerprint(row["path"])
         except OSError:

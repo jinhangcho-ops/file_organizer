@@ -98,21 +98,40 @@ def open_lock(path):
         lock_window[0].evaluate_js("load()")
         return
     url = f"http://127.0.0.1:{http.server_port}/lock?key={server.KEY}"
-    lock = webview.create_window("잠금", url, width=760, height=640, min_size=(560, 480), background_color=BACKGROUND[settings.dark()])
+    # 숨긴 채 만든다(pywebview는 투명하게 한 번 보였다 숨겨 창 핸들을 만든다). pywebview의 창 이벤트는 따로 도는 스레드라
+    # before_show에서 걸면 실제로 보이는 것과 앞뒤가 엇갈려, 보이는 창에 캡처 제외가 빠진 적이 있다(10번에 1번쯤).
+    lock = webview.create_window("잠금", url, width=760, height=640, min_size=(560, 480), background_color=BACKGROUND[settings.dark()], hidden=True)
 
-    def hide_from_capture():
-        """보이기 전과 보인 뒤에 모두 건다(WinForms가 처음 보일 때 창 핸들을 다시 만들면 앞의 설정이 없어진다).
-        걸리지 않으면(Windows 10 2004보다 오래된 Windows 등) 잠금 창을 닫는다: 공유 화면에 나가는 것보다 안 여는 쪽이 낫다."""
+    def excluded():
+        """지금 창 핸들에 캡처 제외를 걸고 걸렸는지."""
         hwnd = wintypes.HWND(lock.native.Handle.ToInt64())
         user32.SetWindowDisplayAffinity(hwnd, EXCLUDE_FROM_CAPTURE)
         now = wintypes.DWORD()
         user32.GetWindowDisplayAffinity(hwnd, ctypes.byref(now))
-        if now.value != EXCLUDE_FROM_CAPTURE:
-            lock.destroy()
-            window.evaluate_js("toast('이 Windows에서는 잠금 창을 화면 공유에서 뺄 수 없어 열지 않았어요(Windows 10 2004 이상 필요).')")
+        return now.value == EXCLUDE_FROM_CAPTURE
 
-    lock.events.before_show += hide_from_capture
-    lock.events.shown += hide_from_capture
+    def refuse():
+        """걸리지 않으면(Windows 10 2004보다 오래된 Windows 등) 잠금 창을 닫는다: 공유 화면에 나가는 것보다 안 여는 쪽이 낫다."""
+        lock.destroy()
+        window.evaluate_js("toast('이 Windows에서는 잠금 창을 화면 공유에서 뺄 수 없어 열지 않았어요(Windows 10 2004 이상 필요).')")
+
+    revealed = []
+
+    def reveal():
+        """화면을 다 읽은 뒤(핸들이 만들어진 뒤) 캡처 제외를 확인하고서야 보인다(shown은 투명하게 보일 때 이미 지나간다)."""
+        if not excluded():
+            return refuse()
+        if not revealed:
+            revealed.append(True)
+            lock.show()
+
+    def check_shown():
+        """보인 뒤에도 한 번 더(보일 때 핸들이 바뀌었으면)."""
+        if not excluded():
+            refuse()
+
+    lock.events.loaded += reveal
+    lock.events.shown += check_shown
     lock.events.closed += lambda: lock_window.__setitem__(0, None)
     lock_window[0] = lock
 

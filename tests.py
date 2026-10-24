@@ -131,13 +131,13 @@ def test_organize():
     check("정리: 미리보기는 옮기지 않음", (src / "영상.mp4").exists())
 
     result = organize.run(str(src), str(dest))
-    check("정리: 6개 옮김", result == {"moved": 6, "failed": []})
+    check("정리: 6개 옮김", (result["moved"], result["failed"]) == (6, []))
     left = sorted(p.name for p in src.iterdir())
     check("정리: 남은 것은 받는 중·숨김·하위 폴더", left == sorted(["받는중.crdownload", "숨김.txt", "sub"]) and (src / "sub" / "안쪽.txt").exists())
     check("정리: 먼저 있던 파일은 그대로", (dest / "PDF" / "보고서.pdf").read_text(encoding="utf-8") == "먼저 있던 파일")
 
     result = organize.undo()
-    check("되돌리기: 6개", result == {"moved": 6, "failed": []} and (src / "영상.mp4").exists() and not (dest / "동영상" / "영상.mp4").exists())
+    check("되돌리기: 6개", (result["moved"], result["failed"]) == (6, []) and (src / "영상.mp4").exists() and not (dest / "동영상" / "영상.mp4").exists())
     check("되돌리기: 먼저 있던 파일은 남음", (dest / "PDF" / "보고서.pdf").exists() and (src / "보고서.pdf").exists())
     raises("되돌리기: 기록이 없으면 거부", organize.undo, "되돌릴 정리가 없습니다.")
 

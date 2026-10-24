@@ -111,10 +111,10 @@ def conditions(query, config):
         parts.append("f.modified < ?")
         values.append(day(query["date_to"], end=True))
     if str(query.get("size_min") or "").strip():
-        parts.append("f.size >= ?")
+        parts.append("+f.size >= ?")  # +: files_size 색인을 쓰지 않는다(범위가 넓으면 훑기보다 훨씬 느렸다)
         values.append(number(query["size_min"], "최소 크기") * MB)
     if str(query.get("size_max") or "").strip():
-        parts.append("f.size <= ?")
+        parts.append("+f.size <= ?")
         values.append(number(query["size_max"], "최대 크기") * MB)
     text = (query.get("text") or "").strip()
     if text:

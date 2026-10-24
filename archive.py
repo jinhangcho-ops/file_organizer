@@ -86,7 +86,7 @@ def run(dest, days, progress=lambda *args: None):
             progress(n, None, row["path"])
             try:
                 st = os.stat(row["path"])
-                if st.st_mtime_ns != row["stamp"] or st.st_size != row["size"]:  # 색인한 뒤에 바뀌었다(오래된 파일이 아니게 됐다).
+                if index.stamp(st) != row["stamp"] or st.st_size != row["size"]:  # 색인한 뒤에 바뀌었다(오래된 파일이 아니게 됐다).
                     raise ValueError("색인한 뒤에 바뀐 파일이라 넣지 않았습니다.")
                 stored = row["kind"] in STORED_KINDS or os.path.splitext(row["path"])[1].lower() in STORED_EXTS
                 archive.write(row["path"], arcname(row["path"]), zipfile.ZIP_STORED if stored else zipfile.ZIP_DEFLATED)

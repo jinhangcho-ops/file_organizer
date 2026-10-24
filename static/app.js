@@ -425,6 +425,7 @@ async function showFileInTree(row) {
     const {folders} = await api("/api/chain?path=" + encodeURIComponent(row.path));
     if (picked !== row) return;
     await expandChain(folders.slice(0, -1));  // 고른 파일이 든 폴더의 위 폴더들을 펼친다
+    if (picked !== row) return;  // 펼치는 동안 다른 것을 골랐다
     pickedFolder = folders.length ? folders[folders.length - 1].path : null;
   }
   await drawTree(false);
@@ -446,8 +447,9 @@ function openScope(next, view = "", remember = true) {
   return loading;
 }
 
-function goBack() {
+async function goBack() {
   if (page !== "files") return showPage("files");
+  while (trail.length && await gone(trail[trail.length - 1])) trail.pop();  // 그사이 색인에서 빠진 폴더로는 돌아가지 않는다
   if (!trail.length) return toast("더 돌아갈 곳이 없어요");
   openScope(trail.pop(), "", false);
   toast("이전 폴더로 돌아왔어요");
@@ -839,12 +841,19 @@ function followScope(before, after) {
   trail = trail.map((view) => follow(view, before, after));
 }
 
-// 바꾼 뒤 지금 연 폴더가 색인에 없으면(잠금·비우기·되돌리기 등) 모든 파일로 간다.
+const followPairs = (result) => (result?.pairs || []).forEach(([before, after]) => followScope(before, after));
+
+// 범위(view)의 폴더나 같은 파일 보기의 기준이 색인에서 빠졌는지(잠금·비우기·차단·되돌리기 등).
+async function gone(view) {
+  if (view.same) return !(await api("/api/same?path=" + encodeURIComponent(view.same)).then(() => true, () => false));
+  return !!view.folder && !(await api("/api/chain?folder=1&path=" + encodeURIComponent(view.folder))).folders.length;
+}
+
+// 바꾼 뒤 지금 연 폴더가 색인에 없으면 모든 파일로 간다.
 async function leaveGoneFolder() {
-  if (scope.same) {
-    if (await api("/api/same?path=" + encodeURIComponent(scope.same)).then(() => true, () => false)) return;
-  } else if (!scope.folder || (await api("/api/chain?folder=1&path=" + encodeURIComponent(scope.folder))).folders.length) return;
+  if (!(await gone(scope))) return;
   scope = {all: true};
+  markTree();
   await loadFiles();
 }
 
@@ -860,7 +869,7 @@ async function afterChange(message) {
 async function moveTo(paths, folder, name) {
   try {
     const result = await runJob((await api("/api/move", {paths, folder})).job);
-    (result?.pairs || []).forEach(([before, after]) => followScope(before, after));
+    followPairs(result);
     if (result) await afterChange(`${result.moved.toLocaleString()}개를 '${name}'${josa(name, "으로", "로")} 옮겼어요.${failedText(result)}`);
   } catch (e) {
     toast(e.message);
@@ -903,6 +912,7 @@ async function showDetail(row) {
   showSelection();
   document.querySelectorAll("#detail .file-only").forEach((s) => s.classList.toggle("hidden", !!row?.folder));
   document.querySelectorAll("#detail .folder-only").forEach((s) => s.classList.toggle("hidden", !row?.folder));
+  if (!state.settings.show_same_name) document.querySelector('[data-fold="same-name"]').classList.add("hidden");  // file-only가 켠 뒤에
   showFileInTree(row?.folder ? null : row);
   if (row?.folder) return showFolderDetail(row);
   if (!row) return;
@@ -918,17 +928,16 @@ async function showDetail(row) {
   try {
     [chain, same, preview] = await Promise.all([api("/api/chain?path=" + q), api("/api/same?path=" + q), api("/api/preview?path=" + q)]);
   } catch (e) {
-    if (picked === row) say("detail-message", e.message, "error");
+    if (ticket === detailTicket) say("detail-message", e.message, "error");
     return;
   }
-  if (picked !== row) return;
+  if (ticket !== detailTicket) return;
   $("detail-preview").textContent = preview.text || (preview.readable ? "아직 내용을 읽지 않았거나 글자가 없어요." : "이 형식은 내용을 읽지 않아요(사진·동영상·hwp 등).");
   showFacts([["종류", row.kind], ["크기", size(row.size)], ["위치", crumbs(chain.folders)], ["마지막 수정", fullDate(row.modified)]]);
   showSame("same-content", "내용이 같은 파일", same.content, "내용이 같은 파일이 없어요.");
   showGuess(row, ticket);
   showProvenance(row, ticket);
   showSame("same-name", "이름이 같은 파일", same.name, "이름이 같은 파일이 없어요.");
-  document.querySelector('[data-fold="same-name"]').classList.toggle("hidden", !state.settings.show_same_name);
 }
 
 // 상세 칸의 위치: 폴더마다 누르면 그 폴더를 여는 버튼(› 로 잇는다).
@@ -1105,7 +1114,7 @@ document.addEventListener("keydown", async (e) => {
   try {
     const {job, label} = await api("/api/undo", {});
     const result = await runJob(job);
-    (result.pairs || []).forEach(([now, back]) => followScope(now, back));
+    followPairs(result);
     await afterChange(`되돌렸어요: ${label}${result.moved ? "" : " (되돌린 것 없음)"}${failedText(result)}`);
   } catch (err) {
     toast(err.message);
@@ -1179,9 +1188,7 @@ async function changeBlacklist(path, remove) {
   if (!remove && !await ask({title: "차단 폴더로 지정할까요?", text: `${path}\n\n이 폴더와 그 아래 전부를 색인하지 않고 어디서도 다루지 않아요. 지금까지의 색인 기록은 지워요(실제 파일은 그대로).`})) return;
   try {
     await api("/api/blacklist", {path, remove});
-    await loadState();
-    if (page === "files") await loadFiles();
-    toast(remove ? "차단을 풀었어요. 다음 [색인 갱신]부터 다시 들어와요." : "차단 폴더로 지정했어요.");
+    await afterChange(remove ? "차단을 풀었어요. 다음 [색인 갱신]부터 다시 들어와요." : "차단 폴더로 지정했어요.");  // 연 폴더가 빠졌으면 모든 파일로
   } catch (e) {
     toast(e.message);
   }
@@ -1267,8 +1274,8 @@ $("preview").addEventListener("click", (e) => busy(e.target, "organize-message",
   moves.forEach((m) => { counts[m.kind] = (counts[m.kind] || 0) + 1; });
   const summary = Object.entries(counts).map(([k, n]) => `${k} ${n}`).join(", ");
   say("organize-message", moves.length ? `${moves.length}개를 옮겨요 (${summary}). 확인한 뒤 [정리]를 누르세요.` : "옮길 파일이 없어요.");
-  await loadState();
   $("run").disabled = !moves.length;
+  await loadState();
 }));
 
 function report(result, verb) {
@@ -1277,6 +1284,7 @@ function report(result, verb) {
 
 $("run").addEventListener("click", (e) => busy(e.target, "organize-message", async () => {
   const result = await runJob(await api("/api/organize/run", {source, dest}));
+  followPairs(result);
   clearPreview();
   report(result, "옮겼어요");
   await afterChange();
@@ -1286,10 +1294,11 @@ $("undo").addEventListener("click", async (e) => {
   if (!(await ask({title: "마지막 정리를 되돌릴까요?", text: `${state.undo}개를 원래 자리로 옮겨요.`}))) return;
   busy(e.target, "organize-message", async () => {
     const result = await runJob(await api("/api/organize/undo", {}));
+    followPairs(result);
     clearPreview();
     report(result, "되돌렸어요");
     await afterChange();
-  });
+  }).then(() => { e.target.disabled = !state.undo; });  // busy가 다시 켠 것을 남은 기록에 맞춘다
 });
 
 // ---------- 오래된 파일 보관 ----------
@@ -1333,10 +1342,11 @@ $("captures-preview").addEventListener("click", (e) => busy(e.target, "captures-
 
 $("captures-run").addEventListener("click", (e) => busy(e.target, "captures-message", async () => {
   const result = await runJob((await api("/api/captures/run", {})).job);
+  followPairs(result);
   $("captures-card").classList.add("hidden");
   await afterChange(`게임 캡처 ${result.moved.toLocaleString()}개를 옮겼어요. Ctrl+Z로 되돌릴 수 있어요.${failedText(result)}`);
   say("captures-message", "");
-}));
+}).then(() => { e.target.disabled = true; }));  // 다시 미리보기를 해야 옮길 수 있다
 
 function showArchive() {
   $("archive-dest").textContent = archiveDest || "고르지 않음";
@@ -1349,6 +1359,7 @@ function clearArchive() {
 }
 
 const archiveQuery = () => ({dest: archiveDest, days: Number($("cold_days").value)});
+$("cold_days").addEventListener("input", clearArchive);  // 기간을 바꾸면 미리보기와 다른 파일을 보관하게 된다
 
 $("archive-preview").addEventListener("click", (e) => busy(e.target, "archive-message", async () => {
   clearArchive();
@@ -1360,8 +1371,8 @@ $("archive-preview").addEventListener("click", (e) => busy(e.target, "archive-me
     ? `${found.files.toLocaleString()}개(${size(found.bytes)})를 zip 하나로 묶고 원본은 휴지통으로 보내요.` +
       (found.blocked ? ` 휴지통으로 보낼 수 없는 곳의 ${found.blocked.toLocaleString()}개는 넣지 않아요.` : "")
     : "보관할 파일이 없어요.");
-  state.settings = (await api("/api/state")).settings;
   $("archive-run").disabled = !found.files;
+  state.settings = (await api("/api/state")).settings;
 }));
 
 $("archive-run").addEventListener("click", async (e) => {
@@ -1372,7 +1383,7 @@ $("archive-run").addEventListener("click", async (e) => {
     say("archive-message", `${result.files.toLocaleString()}개(${size(result.original)})를 ${result.zip}(${size(result.zip_size)})로 보관했어요.\n` +
       `휴지통을 비우면 ${size(result.freed)}가 비워져요.${failedText(result)}`, result.failed.length ? "error" : "ok");
     await afterChange();
-  });
+  }).then(() => { e.target.disabled = true; });  // 다시 미리보기를 해야 보관할 수 있다
 });
 
 const PICK_TITLES = {source: "정리할 곳", dest: "놓을 곳", archive: "보관할 곳", root: "색인할 폴더"};

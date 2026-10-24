@@ -5,10 +5,8 @@
 - 소유자: 파일의 Windows 소유자 계정(보통 처음 만든 사람, 고친 사람은 아니다).
 읽은 뒤 연 시각은 되돌린다('오래 안 본 파일'이 바뀌지 않게)."""
 import ctypes
-import lzma
 import os
 import zipfile
-import zlib
 from ctypes import wintypes
 from urllib.parse import urlsplit, urlunsplit
 from xml.etree import ElementTree
@@ -51,7 +49,7 @@ def office_people(path):
             if info.file_size > CORE_MAX:
                 return "", ""
             root = ElementTree.fromstring(archive.read(info))
-    except (KeyError, OSError, zipfile.BadZipFile, ElementTree.ParseError, RuntimeError, ValueError, EOFError, zlib.error, lzma.LZMAError):  # 깨진 문서
+    except Exception:  # 깨진 문서: 압축 방식(deflate·lzma·zstd…)마다 오류가 달라 모두 받는다
         return "", ""
     return (root.findtext("dc:creator", "", NS) or "").strip(), (root.findtext("cp:lastModifiedBy", "", NS) or "").strip()
 

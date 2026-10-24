@@ -190,9 +190,12 @@ def open_image(path):
         import pillow_heif
 
         pillow_heif.register_heif_opener()
-    image = Image.open(path)
-    image.draft("RGB", (1280, 1280))
-    return ImageOps.exif_transpose(image)
+    try:
+        image = Image.open(path)
+        image.draft("RGB", (1280, 1280))
+        return ImageOps.exif_transpose(image)  # 여기서 읽는다
+    except RuntimeError as e:  # 깨진 HEIC(pillow_heif): 모델 오류(RuntimeError, 위로 올린다)와 나눠 파일 문제로
+        raise ValueError(str(e)) from e
 
 
 def video_frames(path, interval):
@@ -282,14 +285,16 @@ def recognize_one(db, engine, row, config, centers):
 
     np = engine.np
     st = os.stat(row["path"])
-    if st.st_mtime_ns != row["stamp"]:
+    if index.stamp(st) != row["stamp"]:
         return False
-    open(row["path"], "rb").close()  # 지금 열 수 없으면(잠금·클라우드에만 있음) OSError: 기록하지 않고 다음에 다시
+    readable = media.openable(row["path"])
     for table in ("tags", "faces", "recognized"):
         db.execute(f"delete from {table} where id = ?", (row["id"],))
     tags = []
     try:
-        if row["ext"] in media.IMAGE_EXTS:
+        if not readable:
+            pass  # 늘 열 수 없다(권한 없음 등): 빈 결과로
+        elif row["ext"] in media.IMAGE_EXTS:
             with open_image(row["path"]) as image:
                 tags += engine.kinds(engine.image_vector(image))
                 if engine.custom is not None:
@@ -304,7 +309,11 @@ def recognize_one(db, engine, row, config, centers):
                 if engine.custom is not None:
                     scores = [engine.custom_scores(f) for f in frames]
                     tags += [("custom", str(i), max(s[i] for s in scores)) for i in range(len(scores[0]))]
-    except (OSError, ValueError, SyntaxError, EOFError, MemoryError, subprocess.SubprocessError, Image.DecompressionBombError):
+    except OSError as e:
+        if e.errno is not None and row["ext"] in media.IMAGE_EXTS:  # 사진을 읽다가 막혔다(남이 일부를 잠금 등): 기록하지 않고 다음에 다시
+            raise
+        tags = []
+    except (ValueError, SyntaxError, EOFError, MemoryError, subprocess.SubprocessError, Image.DecompressionBombError):
         tags = []  # 깨진 EXIF·끊긴 HEIC·아주 큰 사진 등 파일 문제. 모델 오류는 위로 올려 단계를 멈추고 알린다.
     db.executemany("insert into tags(id, kind, label, score) values(?, ?, ?, ?)", [(row["id"], *t) for t in tags])
     db.execute("insert into recognized(id, made, custom, faces) values(?, ?, ?, ?)",

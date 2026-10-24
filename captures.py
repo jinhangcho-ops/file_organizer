@@ -72,9 +72,15 @@ def files_in(folder):
     """폴더 바로 아래의 파일(링크·숨김·시스템 파일은 뺀다)."""
     try:
         with os.scandir(folder) as entries:
-            return sorted((e.path for e in entries if e.is_file(follow_symlinks=False) and not index.hidden(e.stat()) and index.storable(e.name)), key=str.lower)
+            return sorted((e.path for e in entries if e.is_file(follow_symlinks=False) and not index.hidden(e.stat()) and index.storable(e.name)
+                           and not os.path.isreserved(e.name)), key=str.lower)
     except OSError:
         return []
+
+
+def tree_files(folder):
+    """폴더 아래 모든 파일(files_in과 같은 기준). 링크·정션·숨김 폴더로는 들어가지 않는다(차단 폴더를 비켜 가지 않게)."""
+    return files_in(folder) + [p for sub in blacklist.subfolders(folder) for p in tree_files(sub)]
 
 
 def found(base):
@@ -84,7 +90,7 @@ def found(base):
     out = [item for item in out if item[1]]
     relive = os.path.join(videos, "Radeon ReLive")
     for folder in blacklist.subfolders(relive):
-        out += [(p, os.path.basename(folder), "AMD") for p in glob.glob(os.path.join(glob.escape(folder), "**", "*"), recursive=True) if os.path.isfile(p)]
+        out += [(p, os.path.basename(folder), "AMD") for p in tree_files(folder)]
     skip = {exclude.key(os.path.join(videos, name)) for name in ("Captures", "Radeon ReLive", CLIPS)}
     for folder in blacklist.subfolders(videos):
         if exclude.key(folder) not in skip:
@@ -115,4 +121,4 @@ def run(progress=lambda *args: None):
     moves = plan()
     done, failed = organize.apply([(m["from"], m["to"]) for m in moves], progress)
     undo.record("move", done, f"게임 캡처 정리 {len(done)}개")
-    return {"moved": len(done), "failed": failed}
+    return {"moved": len(done), "failed": failed, "pairs": done}
