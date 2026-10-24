@@ -7,6 +7,7 @@
 - 옮긴 기록(moves.json)으로 마지막 정리를 되돌린다."""
 import os
 import shutil
+import stat
 
 import captures
 import drives
@@ -77,15 +78,32 @@ def move(before, after):
             raise OSError("복사한 파일의 크기가 원본과 다릅니다.")
     except OSError as e:
         if getattr(e, "winerror", None) != FILE_EXISTS and os.path.exists(after):  # 이름을 고른 뒤 남이 만든 파일이면 그대로 둔다.
-            os.remove(after)
+            remove_copy(after)
         raise
-    os.remove(before)
+    try:
+        os.remove(before)
+    except OSError:  # 읽기 전용·사용 중: 원본은 그대로 두고 방금 만든 사본을 치운다(같은 파일이 두 곳에 남지 않게).
+        remove_copy(after)
+        raise
+
+
+def remove_copy(path):
+    """이번에 만든 사본 파일을 지운다. 복사는 읽기 전용 표시까지 가져오므로 그것을 풀고 지운다."""
+    os.chmod(path, stat.S_IWRITE)
+    os.remove(path)
+
+
+def writable_then_retry(function, path, _):
+    """rmtree가 이번에 만든 사본 중 읽기 전용 파일에서 멈추지 않게: 표시를 풀고 다시 지운다."""
+    os.chmod(path, stat.S_IWRITE)
+    function(path)
 
 
 def move_folder(before, after):
     """폴더를 통째로 옮긴다. 다른 디스크면 모든 파일을 복사해 크기를 확인한 뒤에야 복사한 원본 파일만 지운다(복사가 실패하면 만든 사본만 치운다).
     복사하는 동안 새로 생기거나 바뀐 파일은 지우지 않는다: 원래 폴더에 남기고 실패로 알린다(통째로 지우면 그 파일이 영구 삭제된다)."""
     if drives.same_drive(before, after):
+        os.makedirs(os.path.dirname(after), exist_ok=True)  # 되돌릴 때 원래 위 폴더가 지워졌어도
         os.rename(before, after)
         return
     if os.path.islink(before) or os.path.isjunction(before):
@@ -106,13 +124,16 @@ def move_folder(before, after):
         if any(os.stat(copy).st_size != st.st_size for _, copy, st in copied):
             raise OSError("복사한 파일의 크기가 원본과 다릅니다.")
     except OSError:
-        shutil.rmtree(after, ignore_errors=True)  # 이번에 만든 사본만 치운다. 원본은 그대로.
+        shutil.rmtree(after, onexc=writable_then_retry)  # 이번에 만든 사본만 치운다. 원본은 그대로.
         raise
     kept = False
     for source, _, st in copied:
         now = os.stat(source)
         if (now.st_size, now.st_mtime_ns) == (st.st_size, st.st_mtime_ns):
-            os.remove(source)
+            try:
+                os.remove(source)
+            except OSError:  # 읽기 전용·사용 중인 파일은 원래 폴더에 남긴다(Partial로 알린다).
+                kept = True
         else:
             kept = True
     try:

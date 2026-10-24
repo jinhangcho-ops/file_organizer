@@ -43,6 +43,18 @@ def recycle_settings(path):
     return bool(values.get("NukeOnDelete")), capacity * 1024 * 1024 if capacity else None
 
 
+def policy_off():
+    """'휴지통으로 옮기지 않기' 정책(NoRecycleFiles)이 켜져 있는지. 켜져 있으면 send2trash가 영구 삭제한다."""
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        try:
+            with winreg.OpenKey(hive, r"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer") as key:
+                if winreg.QueryValueEx(key, "NoRecycleFiles")[0]:
+                    return True
+        except OSError:
+            continue
+    return False
+
+
 def size_of(path):
     """휴지통에 들어갈 크기. 링크·정션은 따라가지 않고(링크만 간다), 읽을 수 없는 파일(깨진 링크 등)은 건너뛴다."""
     link = lambda p: os.path.islink(p) or os.path.isjunction(p)  # noqa: E731
@@ -68,6 +80,8 @@ def problem(path):
         return "휴지통이 없는 곳(네트워크·이동식 디스크)입니다"
     if drives.is_subst(place) or not volume_id(place):  # subst로 만든 드라이브 등: 휴지통이 없어 그대로 지워질 수 있다.
         return "휴지통을 확인할 수 없는 디스크입니다"
+    if policy_off():
+        return "휴지통을 쓰지 않도록 정책이 설정되어 있습니다"
     off, capacity = recycle_settings(place)
     if off:
         return "이 디스크는 휴지통을 쓰지 않도록 설정되어 있습니다"

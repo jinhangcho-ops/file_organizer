@@ -58,7 +58,7 @@ def image_hash(path):
             img.draft("L", (64, 64))  # JPEG는 줄여서 읽어 빠르다.
             small = ImageOps.exif_transpose(img).convert("L").resize((9, 8), Image.Resampling.LANCZOS)
             return dhash(small.tobytes())
-    except (OSError, UnidentifiedImageError, ValueError, Image.DecompressionBombError):
+    except (OSError, UnidentifiedImageError, ValueError, SyntaxError, Image.DecompressionBombError):  # SyntaxError: 깨진 EXIF
         return None
 
 

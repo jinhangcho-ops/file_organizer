@@ -78,7 +78,10 @@ async function runJob(started) {
     $("job-bar").style.width = percent + "%";
     await new Promise((resolve) => setTimeout(resolve, 400));
     status = await api("/api/job");
-    if (status.number !== started.number) throw new Error("다른 작업이 시작돼 이 작업의 결과를 받지 못했어요. 목록을 다시 확인하세요.");
+    if (status.number !== started.number) {  // 곧바로 다음 작업이 시작됐다: 끝난 작업의 결과가 내 것이면 그것을 쓴다.
+      if (status.last?.number !== started.number) throw new Error("다른 작업이 시작돼 이 작업의 결과를 받지 못했어요. 목록을 다시 확인하세요.");
+      status = status.last;
+    }
   }
   box.classList.add("hidden");
   if (status.error) throw new Error(status.error);
@@ -657,7 +660,7 @@ function scroller(bar) {
 // ---------- 고르기 ----------
 // 클릭: 그 줄만. 체크 칸·Ctrl+클릭: 더하거나 빼기. Shift+클릭: anchor부터 그 줄까지. 고르지 않은 줄이나 표 아래 빈 곳에서 끌기: 사각형 안의 줄.
 function showSelection() {
-  if (selected.size === 1 && picked && !selected.has(lower(picked.path))) return showDetail([...selected.values()][0]);
+  if (selected.size && picked && !selected.has(lower(picked.path))) return showDetail([...selected.values()].at(-1));
   const current = picked && lower(picked.path);
   document.querySelectorAll("#files tbody tr:not(.group)").forEach((tr) => {
     const key = lower(tr.row.path);
@@ -821,11 +824,28 @@ function dropTarget(target, onDrop) {
 document.addEventListener("dragover", (e) => { if (!e.dataTransfer.types.includes(DRAG)) e.preventDefault(); });
 document.addEventListener("drop", (e) => e.preventDefault());
 
-// 목록 범위(scope.folder)가 바뀐 경로 안이면 새 경로로(after가 null이면 지운 것: 모든 파일로).
+// 범위 하나(view)를 바뀐 경로에 맞춘다: 폴더가 그 안이면 새 경로로, 같은 파일 보기의 기준이면 새 경로로. after가 null이면 지운 것(모든 파일로).
+function follow(view, before, after) {
+  const old = lower(before);
+  if (view.same) return lower(view.same) !== old ? view : after ? {...view, same: after} : {all: true};
+  const now = view.folder && lower(view.folder);
+  if (!now || (now !== old && !now.startsWith(old + "\\"))) return view;
+  if (!after) return {all: true};
+  const folder = after + view.folder.slice(before.length);
+  return {...view, folder, name: baseName(folder)};
+}
+
+// 지금 범위와 돌아가기 기록(trail)을 바뀐 경로에 맞춘다.
 function followScope(before, after) {
-  const now = scope.folder && lower(scope.folder), old = lower(before);
-  if (!now || (now !== old && !now.startsWith(old + "\\"))) return;
-  scope = after ? {folder: after + scope.folder.slice(before.length), name: baseName(after + scope.folder.slice(before.length))} : {all: true};
+  scope = follow(scope, before, after);
+  trail = trail.map((view) => follow(view, before, after));
+}
+
+// 바꾼 뒤 지금 연 폴더가 색인에 없으면(잠금·비우기·되돌리기 등) 모든 파일로 간다.
+async function leaveGoneFolder() {
+  if (!scope.folder || (await api("/api/chain?folder=1&path=" + encodeURIComponent(scope.folder))).folders.length) return;
+  scope = {all: true};
+  await loadFiles();
 }
 
 async function afterChange(message) {
@@ -833,6 +853,7 @@ async function afterChange(message) {
   await showDetail(null);
   await loadState();
   await loadFiles();
+  await leaveGoneFolder();
   if (message) toast(message);
 }
 
@@ -856,7 +877,8 @@ async function trashPaths(paths, isFolder = false) {
   if (!(await ask({title: "휴지통으로 보낼까요?", text: text + "\n휴지통에서 다시 꺼낼 수 있어요."}))) return;
   try {
     const result = await runJob((await api("/api/trash", {paths, confirm: true})).job);
-    paths.forEach((p) => followScope(p, null));
+    const kept = new Set(result.failed.map((f) => lower(f.from)));
+    paths.filter((p) => !kept.has(lower(p))).forEach((p) => followScope(p, null));  // 보내지 못한 폴더에서는 나가지 않는다
     await afterChange(`${result.trashed.toLocaleString()}개를 휴지통으로 보냈어요.${failedText(result)}`);
   } catch (e) {
     toast(e.message);
@@ -1062,6 +1084,7 @@ document.addEventListener("keydown", async (e) => {
   try {
     const {job, label} = await api("/api/undo", {});
     const result = await runJob(job);
+    (result.pairs || []).forEach(([now, back]) => followScope(now, back));
     await afterChange(`되돌렸어요: ${label}${result.moved ? "" : " (되돌린 것 없음)"}${failedText(result)}`);
   } catch (err) {
     toast(err.message);
@@ -1124,8 +1147,12 @@ $("lock-open").addEventListener("click", () => openLockWindow());
 
 // 잠금 창이 잠그거나 풀거나 꺼낸 뒤 desktop.py가 부른다(목록·숫자가 바뀐다).
 async function refreshAfterLock() {
+  await showDetail(null);  // 잠근 폴더를 상세에 둔 채 다루지 않게
   await loadState();
-  if (page === "files") await loadFiles();
+  if (page === "files") {
+    await loadFiles();
+    await leaveGoneFolder();
+  }
 }
 
 // ---------- 차단 폴더(관리자 권한일 때만 바꾼다) ----------
@@ -1341,9 +1368,20 @@ document.querySelectorAll("[data-pick]").forEach((button) => button.addEventList
 }));
 
 // ---------- 설정 ----------
+// 설정 칸에서 고친 글자·숫자 칸은 저장할 때까지 표시해 둔다(다시 그릴 때 덮지 않게).
+$("page-setup").addEventListener("input", (e) => {
+  if (e.target.matches("input[type=text], input[type=number]")) e.target.dataset.edited = "1";
+});
+
+function setField(id, value) {
+  if (!$(id).dataset.edited) $(id).value = value;
+}
+
 async function saveSettings(changes, messageId) {
   try {
     state.settings = (await api("/api/settings", changes)).settings;
+    for (const name of Object.keys(changes)) delete $(name)?.dataset.edited;
+    if ("custom_labels" in changes) $("custom-labels").querySelectorAll("[data-edited]").forEach((input) => delete input.dataset.edited);
     showSetup();
     return true;
   } catch (e) {
@@ -1378,9 +1416,7 @@ function showSetup() {
     button.addEventListener("click", () => saveSettings({roots: [...roots, path]}, "index-progress"));
     return button;
   }));
-  $("recent_days").value = state.settings.recent_days;
-  $("stale_days").value = state.settings.stale_days;
-  $("cache_days").value = state.settings.cache_days;
+  for (const name of ["recent_days", "stale_days", "cache_days"]) setField(name, state.settings[name]);
   drawCache();
   $("excludes").replaceChildren(...state.exclude.map((rule) =>
     listRow(`${rule.kind === "folder" ? "폴더" : "파일"}  ${rule.path}`, () => changeExclude(rule.path, true), rule.kind === "folder")));
@@ -1431,7 +1467,8 @@ function showSteps() {
     return el("div", {className: "step"}, on, el("span", {textContent: `${i + 1}. ${state.steps[step.name]}`}), move(i - 1, "▲", "앞으로"), move(i + 1, "▼", "뒤로"), alone);
   }));
   for (const name of ["video_interval", "video_similar"]) {
-    Object.assign($(name), {value: state.settings[name], min: state.numbers[name].min, max: state.numbers[name].max});
+    Object.assign($(name), {min: state.numbers[name].min, max: state.numbers[name].max});
+    setField(name, state.settings[name]);
   }
 }
 
@@ -1442,6 +1479,7 @@ function showRecognize() {
   $("face_on").checked = state.settings.face_on;
   $("custom-path").textContent = state.settings.custom_model_path || "고르지 않음";
   const labels = state.settings.custom_labels;
+  if ($("custom-labels").querySelector("[data-edited]")) return;  // 이름·기준을 고치는 중이면 다시 그리지 않는다
   const field = (i, name, props) => {  // dataset은 읽기 전용이라 el()의 속성으로 넣을 수 없다.
     const input = el("input", props);
     Object.assign(input.dataset, {i, field: name});

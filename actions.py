@@ -89,20 +89,22 @@ def rename(path, name):
 def move_back(pairs, progress=lambda *args: None):
     """되돌리기: (전, 후)로 옮겼던 것을 거꾸로(나중 것부터) 원래 자리로. 옮기기와 같은 검사·반영을 하고, 덮어쓰지 않는다.
     원래 자리에 같은 이름이 생겼거나, 그사이 사라졌거나, 차단·잠금·구조 보호에 걸리면 그 항목은 그대로 두고 알린다.
-    {"moved", "failed", "paths"(되돌린 원래 경로)}"""
+    {"moved", "failed", "paths"(되돌린 원래 경로), "pairs"(되돌린 (지금, 원래))}"""
+    fences, lists, records = fence.keys(), fence.holding_lists(), [f["path"] for f in lock.load()["folders"]]
+
     def plan(after, before):
         if not os.path.lexists(after):
             raise ValueError("옮긴 파일이 없습니다(그사이 옮기거나 지웠습니다).")
         if os.path.lexists(before) and exclude.key(before) != exclude.key(after):
             raise ValueError("원래 자리에 같은 이름이 있습니다.")
-        fence.refuse(os.path.dirname(before))
-        fence.refuse(after)  # 그사이 지금 자리를 차단·잠갔으면 꺼내지 않는다.
-        fence.refuse_holding(after, drives.same_drive(after, before), moving=True)
-        lock.refuse_clash(after, before)
+        fence.refuse(before, fences)  # 원래 자리(지운 차단 폴더 자리 포함)
+        fence.refuse(after, fences)  # 그사이 지금 자리를 차단·잠갔으면 꺼내지 않는다.
+        fence.refuse_holding(after, drives.same_drive(after, before), moving=True, lists=lists)
+        lock.refuse_clash(after, before, records)
         return before
 
     done, failed = move_each([(after, before) for before, after in reversed(pairs)], plan, progress)
-    return {"moved": len(done), "failed": failed, "paths": [before for _, before in done]}
+    return {"moved": len(done), "failed": failed, "paths": [before for _, before in done], "pairs": done}
 
 
 def trash_many(paths, progress=lambda *args: None):

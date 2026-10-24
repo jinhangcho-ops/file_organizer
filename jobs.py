@@ -2,7 +2,7 @@
 import threading
 import time
 
-status = {"running": False, "name": "", "done": 0, "total": 0, "current": "", "error": "", "result": None, "number": 0}
+status = {"running": False, "name": "", "done": 0, "total": 0, "current": "", "error": "", "result": None, "number": 0, "last": None}
 lock = threading.Lock()
 
 
@@ -28,8 +28,8 @@ def start(name, work):
             status["error"] = str(e)
         except Exception as e:  # 화면에 알리고 끝낸다.
             status["error"] = f"작업 중 오류: {e}"
-        finally:
-            status.update(running=False, current="")
+        finally:  # last: 끝난 작업의 결과(곧바로 다음 작업이 시작돼도 화면이 번호로 찾아 받는다)
+            status.update(running=False, current="", last={"number": status["number"], "result": status["result"], "error": status["error"]})
 
     threading.Thread(target=run, daemon=True).start()
     return dict(status)

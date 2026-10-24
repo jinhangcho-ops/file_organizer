@@ -114,14 +114,11 @@ class Engine:
         """PIL 그림 → CLIP 입력(짧은 변 224로 줄여 가운데 224×224, 정규화)."""
         from PIL import Image
 
+        from PIL import ImageOps
+
         np = self.np
-        image = image.convert("RGB")
-        w, h = image.size
-        scale = 224 / min(w, h)
-        image = image.resize((max(224, round(w * scale)), max(224, round(h * scale))), Image.Resampling.BICUBIC)
-        w, h = image.size
-        left, top = (w - 224) // 2, (h - 224) // 2
-        pixels = (np.asarray(image.crop((left, top, left + 224, top + 224)), dtype=np.float32) / 255 - MEAN) / STD
+        image = ImageOps.fit(image.convert("RGB"), (224, 224), Image.Resampling.BICUBIC)  # 가운데를 먼저 잘라 줄인다(아주 가늘고 긴 그림도 메모리가 작다)
+        pixels = (np.asarray(image, dtype=np.float32) / 255 - MEAN) / STD
         return pixels.transpose(2, 0, 1)[None].astype(np.float32)
 
     def custom_preprocess(self, path):
@@ -281,8 +278,6 @@ def todo(db, signature, faces_on):
 
 def recognize_one(db, engine, row, config, centers):
     """파일 하나를 인식해 tags·faces·recognized에 넣는다. 열지 못하면 빈 결과로 표시만 한다(다시 시도하지 않게)."""
-    from PIL import Image
-
     np = engine.np
     st = os.stat(row["path"])
     if st.st_mtime_ns != row["stamp"]:
@@ -306,7 +301,7 @@ def recognize_one(db, engine, row, config, centers):
                 if engine.custom is not None:
                     scores = [engine.custom_scores(f) for f in frames]
                     tags += [("custom", str(i), max(s[i] for s in scores)) for i in range(len(scores[0]))]
-    except (OSError, ValueError, subprocess.SubprocessError, Image.DecompressionBombError):  # 아주 큰 사진도 열지 못한 것으로
+    except Exception:  # 파일 하나(깨진 EXIF, 아주 큰 사진, 그림 라이브러리의 오류 등)로 단계 전체가 멈추지 않게 빈 결과로 표시한다.
         tags = []
     db.executemany("insert into tags(id, kind, label, score) values(?, ?, ?, ?)", [(row["id"], *t) for t in tags])
     db.execute("insert into recognized(id, made, custom, faces) values(?, ?, ?, ?)",

@@ -91,8 +91,10 @@ def open_lock(path):
     나타나기 전에 캡처에서 빼므로, 창 하나 공유든 화면 전체 공유든 이 창은 나가지 않는다(사용자 화면에는 보인다)."""
     server.lock_target = path if isinstance(path, str) else ""
     if lock_window[0] is not None:
-        lock_window[0].restore()
-        user32.SetForegroundWindow(wintypes.HWND(lock_window[0].native.Handle.ToInt64()))  # restore는 최소화만 푼다(뒤에 있으면 앞으로)
+        hwnd = wintypes.HWND(lock_window[0].native.Handle.ToInt64())
+        if user32.IsIconic(hwnd):  # 최소화했을 때만 되돌린다(restore는 최대화도 푼다)
+            lock_window[0].restore()
+        user32.SetForegroundWindow(hwnd)  # 뒤에 있으면 앞으로
         lock_window[0].evaluate_js("load()")
         return
     url = f"http://127.0.0.1:{http.server_port}/lock?key={server.KEY}"

@@ -3,6 +3,7 @@ import os
 import tempfile
 
 import blacklist
+import drives
 import exclude
 import games
 import index
@@ -67,7 +68,8 @@ def refuse_system(path, game_keys=None):
 
 def holding_lists():
     """refuse_holding이 보는 목록들. 여러 개를 볼 때 한 번 만들어 넘긴다(잠금 목록은 읽을 때마다 비밀 파일을 푼다)."""
-    return {"blocked": blacklist.keys(), "system": system_places(), "games": games.keys(), "kept": protect.keys(),
+    profiles = {exclude.key(os.path.join(p, "AppData")) for p in drives.profile_folders()}  # 다른 계정의 사용자 폴더도(관리자로 켰을 때)
+    return {"blocked": blacklist.keys(), "system": system_places() | profiles, "games": games.keys(), "kept": protect.keys(),
             "locks": {exclude.key(p) for p in lock.folders()}}
 
 

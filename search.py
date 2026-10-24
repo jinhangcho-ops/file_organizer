@@ -35,7 +35,7 @@ DUPLICATE_KIND = "case " + " ".join(f"when {condition} then '{name}'" for name, 
 SEEN = "max(f.accessed, f.modified)"
 VIEWS = {  # 이름 → (조건, 기간 설정, 날짜 칸)
     "duplicates": (DUPLICATE, None, "f.modified"),
-    "stale": (f"{SEEN} < ?", "stale_days", SEEN),
+    "stale": (f"+{SEEN} < ?", "stale_days", SEEN),  # +: 날짜 색인을 타면 거의 모든 줄을 띄엄띄엄 읽어 더 느리다
     "downloaded": ("f.downloaded = 1 and f.created >= ?", "recent_days", "f.created"),
     "modified": ("f.modified >= ?", "recent_days", "f.modified"),
 }

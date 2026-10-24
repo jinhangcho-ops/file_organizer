@@ -317,7 +317,7 @@ def take_out(path, password, folder=None):
     if not drives.same_drive(parent, data["vault"]):
         raise ValueError("금고와 같은 디스크의 폴더를 고르세요.")
     fence.refuse(parent)
-    target = organize.free_name(parent, os.path.basename(found["path"]), set())
+    target = fence.refuse(organize.free_name(parent, os.path.basename(found["path"]), set()))  # 지운 차단 폴더 자리에 꺼내지 않게
     with Opened(data):
         os.rename(os.path.join(data["vault"], found["id"]), target)
         put(load(), {"path": found["path"]})  # 금고를 다시 잠그기 전에 지운다(잠그다 실패해도 없는 폴더를 가리키는 기록이 남지 않게).

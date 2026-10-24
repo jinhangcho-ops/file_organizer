@@ -2,6 +2,7 @@
 import ctypes
 import os
 import string
+import time
 import uuid
 import winreg
 from pathlib import Path
@@ -56,12 +57,41 @@ def last_access_on():
     return not value & 1
 
 
+ROOTS = {}  # 폴더 → (볼륨 맨 위, 물은 시각)
+ROOTS_FRESH = 10
+
+
 def volume_root(path):
-    """경로가 있는 볼륨의 맨 위(C:\\, 폴더에 탑재한 디스크면 그 폴더\\). 모르면 드라이브 맨 위."""
+    """경로가 든 폴더가 있는 볼륨의 맨 위(C:\\, 폴더에 탑재한 디스크면 그 폴더\\). 모르면 드라이브 맨 위.
+    파일·폴더 자신이 아니라 든 폴더로 묻는다(옮기거나 지울 수 있는지는 든 곳의 디스크로 정해진다). ROOTS_FRESH초 기억한다."""
+    path = os.path.abspath(path)
+    folder = os.path.dirname(path) or path
+    found = ROOTS.get(folder)
+    if found and time.time() - found[1] < ROOTS_FRESH:
+        return found[0]
     buffer = ctypes.create_unicode_buffer(1024)
-    if ctypes.windll.kernel32.GetVolumePathNameW(os.path.abspath(path), buffer, 1024):
-        return buffer.value
-    return os.path.splitdrive(os.path.abspath(path))[0] + "\\"
+    root = buffer.value if ctypes.windll.kernel32.GetVolumePathNameW(folder, buffer, 1024) else os.path.splitdrive(path)[0] + "\\"
+    if len(ROOTS) > 4096:
+        ROOTS.clear()
+    ROOTS[folder] = (root, time.time())
+    return root
+
+
+def profile_folders():
+    """이 PC의 사용자 폴더들(레지스트리 ProfileList). 읽지 못하면 빈 목록."""
+    base = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList"
+    found = []
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, base) as key:
+            for i in range(winreg.QueryInfoKey(key)[0]):
+                try:
+                    with winreg.OpenKey(key, winreg.EnumKey(key, i)) as sub:
+                        found.append(os.path.expandvars(winreg.QueryValueEx(sub, "ProfileImagePath")[0]))
+                except OSError:
+                    continue
+    except OSError:
+        pass
+    return found
 
 
 def is_subst(path):
@@ -69,8 +99,13 @@ def is_subst(path):
     drive = os.path.splitdrive(os.path.abspath(path))[0]
     if len(drive) != 2:  # \\server\share 등
         return False
+    return dos_device(drive).startswith("\\??\\")
+
+
+def dos_device(drive):
+    """드라이브 글자가 가리키는 장치 이름(QueryDosDevice). 모르면 ''."""
     buffer = ctypes.create_unicode_buffer(1024)
-    return bool(ctypes.windll.kernel32.QueryDosDeviceW(drive, buffer, 1024)) and buffer.value.startswith("\\??\\")
+    return buffer.value if ctypes.windll.kernel32.QueryDosDeviceW(drive, buffer, 1024) else ""
 
 
 def drive_type(path):

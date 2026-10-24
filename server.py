@@ -36,7 +36,7 @@ KEY = secrets.token_urlsafe(32)  # 실행할 때마다 새로 만든다. desktop
 window_control = None  # 창 동작(동작, 값 → 답). desktop.py가 채운다.
 lock_target = ""  # 잠금 창이 다룰 폴더(본 창의 폴더 메뉴 [잠금…]으로 연 경우). 주소에 넣지 않고 여기 둔다.
 # 제목 줄 없는 본 창의 버튼·크기 조절, lock: 잠금 창 열기(path: 다룰 폴더), refresh: 본 창의 목록·숫자 다시 읽기(잠금 창이 바꾼 뒤)
-WINDOW_ACTIONS = {"minimize", "toggle", "close", "bounds", "place", "lock", "refresh"}
+WINDOW_ACTIONS = {"minimize", "toggle", "close", "bounds", "place", "lock", "refresh", "lock_reload"}
 CSP = "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:"
 
 
@@ -521,8 +521,8 @@ def lock_folder():
     if not os.path.isdir(path) or index.is_root(path):
         raise ValueError(f"잠글 수 없는 폴더입니다(색인한 맨 위 폴더나 파일): {path}")
     blocked = blacklist.keys()
-    if data.get("vault"):  # 금고로 모으기는 폴더를 옮긴다.
-        fence.refuse_holding(path, True, moving=True)
+    fence.refuse_system(path)  # 사용자 폴더·게임 폴더를 잠그면 프로그램과 이 앱의 비밀 파일까지 읽을 수 없게 된다.
+    fence.refuse_holding(path, True, moving=True)
     (lock.collect if data.get("vault") else lock.lock)(path, data.get("password"), blocked)
     global lock_target
     lock_target = ""  # 다룬 폴더는 잠금 창에 다시 '고른 폴더'로 나오지 않게

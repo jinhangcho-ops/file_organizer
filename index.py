@@ -137,6 +137,7 @@ def walk(root, fences=frozenset(), game_keys=frozenset(), found_games=None, neve
             with os.scandir(folder) as entries:
                 for entry in entries:
                     try:
+                        entry.name.encode("utf-8")
                         if entry.is_symlink() or entry.is_junction():
                             continue
                         if entry.is_dir():
@@ -144,7 +145,7 @@ def walk(root, fences=frozenset(), game_keys=frozenset(), found_games=None, neve
                                 folders.append(entry.path)
                         elif entry.is_file() and not hidden(entry.stat()):
                             files.append(entry)
-                    except OSError:
+                    except (OSError, UnicodeError):
                         continue
         except OSError:
             continue
@@ -240,10 +241,13 @@ def build(paths, only=None):
             db.executemany("insert or ignore into games(key, path, size) values(?, ?, ?)",
                            [(exclude.key(p), p, sizes.get(exclude.key(p))) for p in found_games])
             games.forget()
-            gone = [(key,) for key in old if key not in seen]
+            config = settings.load()
+            missing = {exclude.key(p) for p in config["roots"] + [config["dest"]] if p and not os.path.isdir(p)}
+            gone = [(key,) for key in old if key not in seen and not fence.inside(key, missing)]
             drop_ids(db, [row[0] for key in gone for row in db.execute("select id from files where key = ?", key)])
             db.executemany("delete from files where key = ?", gone)
-            db.executemany("delete from folders where key = ?", [(key,) for (key,) in db.execute("select key from folders") if key not in folders])
+            db.executemany("delete from folders where key = ?",
+                           [(key,) for (key,) in db.execute("select key from folders") if key not in folders and not fence.inside(key, missing)])
         totals(db)
         save_now(db, force=True)
         for name in settings.steps(settings.load()):
@@ -537,7 +541,8 @@ def moved(pairs):
 
 def add_tree(db, path):
     """폴더 path와 그 아래(색인과 같은 규칙으로 걸러서)를 색인에 넣는다. 글자 읽기 등은 다음 색인 단계가 한다."""
-    for folder, entries in walk(path, fence.keys(), games.keys(), []):
+    never_game = {exclude.key(p) for p in [*roots(settings.load()), *drives.known_folders().values(), str(Path.home())]}
+    for folder, entries in walk(path, fence.keys(), games.keys(), [], never_game):
         add_folder(db, folder, os.path.dirname(folder))
         for entry in entries:
             try:

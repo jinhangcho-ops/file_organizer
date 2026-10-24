@@ -31,10 +31,10 @@ def test_theme_setting(home, client):
 def test_window_buttons(home, client, monkeypatch):
     calls = []
     monkeypatch.setattr(server, "window_control", lambda action, data: calls.append((action, data.get("width"))) or {"ok": action})
-    for action in ("minimize", "toggle", "bounds", "close"):
+    for action in ("minimize", "toggle", "bounds", "close", "lock_reload"):
         assert client.post("/api/window", json={"action": action}).json == {"ok": action}
     assert client.post("/api/window", json={"action": "place", "x": 0, "y": 0, "width": 1300, "height": 800}).status_code == 200
-    assert [a for a, _ in calls] == ["minimize", "toggle", "bounds", "close", "place"] and calls[-1][1] == 1300
+    assert [a for a, _ in calls] == ["minimize", "toggle", "bounds", "close", "lock_reload", "place"] and calls[-1][1] == 1300
     assert client.post("/api/window", json={"action": "explode"}).status_code == 400
     monkeypatch.setattr(server, "window_control", None)
     assert client.post("/api/window", json={"action": "minimize"}).status_code == 400  # 창 없이(브라우저로) 부르면 거부
