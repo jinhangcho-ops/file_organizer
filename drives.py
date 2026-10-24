@@ -64,6 +64,15 @@ def volume_root(path):
     return os.path.splitdrive(os.path.abspath(path))[0] + "\\"
 
 
+def is_subst(path):
+    """subst로 만든 드라이브인지(QueryDosDevice가 '\\??\\실제 경로'를 돌려준다). 그런 드라이브에는 휴지통이 없다."""
+    drive = os.path.splitdrive(os.path.abspath(path))[0]
+    if len(drive) != 2:  # \\server\share 등
+        return False
+    buffer = ctypes.create_unicode_buffer(1024)
+    return bool(ctypes.windll.kernel32.QueryDosDeviceW(drive, buffer, 1024)) and buffer.value.startswith("\\??\\")
+
+
 def drive_type(path):
     """경로가 있는 디스크의 종류 번호(GetDriveTypeW: 2 이동식, 3 고정, 4 네트워크 …)."""
     return ctypes.windll.kernel32.GetDriveTypeW(volume_root(path))
@@ -71,5 +80,5 @@ def drive_type(path):
 
 def same_drive(a, b):
     """두 경로가 같은 디스크에 있는지. 같으면 이름 바꾸기로 옮길 수 있다."""
-    return Path(a).anchor.lower() == Path(b).anchor.lower()
+    return volume_root(a).lower() == volume_root(b).lower()
 

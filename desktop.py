@@ -75,6 +75,9 @@ def control(action, data):
         open_lock(data.get("path"))
     elif action == "refresh":
         window.evaluate_js("refreshAfterLock()")
+    elif action == "lock_reload":  # 본 창에서 화면 색을 바꿨다
+        if lock_window[0] is not None:
+            lock_window[0].evaluate_js("load()")
     elif action == "bounds":
         return {"x": window.x, "y": window.y, "width": window.width, "height": window.height, "maximized": bool(maximized[0]), "min": MIN_SIZE}
     elif action == "place":
@@ -89,6 +92,7 @@ def open_lock(path):
     server.lock_target = path if isinstance(path, str) else ""
     if lock_window[0] is not None:
         lock_window[0].restore()
+        user32.SetForegroundWindow(wintypes.HWND(lock_window[0].native.Handle.ToInt64()))  # restore는 최소화만 푼다(뒤에 있으면 앞으로)
         lock_window[0].evaluate_js("load()")
         return
     url = f"http://127.0.0.1:{http.server_port}/lock?key={server.KEY}"

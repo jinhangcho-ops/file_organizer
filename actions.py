@@ -19,14 +19,17 @@ def move_many(paths, folder, progress=lambda *args: None):
     """파일·폴더들을 folder로 옮긴다. 같은 이름이 있으면 덮어쓰지 않고 '이름 (2)'로. {"moved", "failed", "paths"(옮긴 뒤 경로)}"""
     if not os.path.isdir(folder):
         raise ValueError(f"없는 폴더입니다: {folder}")
-    into = exclude.key(folder)
+    into, fences, records = exclude.key(folder), fence.keys(), [f["path"] for f in lock.load()["folders"]]
 
     def plan(path, _):
         if exclude.key(os.path.dirname(path)) == into:
             raise ValueError("이미 그 폴더에 있습니다.")
         if os.path.isdir(path) and fence.inside(into, {exclude.key(path)}):
             raise ValueError("폴더를 그 안으로 옮길 수 없습니다.")
-        return organize.free_name(folder, os.path.basename(path), set())
+        target = organize.free_name(folder, os.path.basename(path), set())
+        fence.refuse(target, fences)  # 지운 차단 폴더 자리에 들어가지 않게
+        lock.refuse_clash(path, target, records)
+        return target
 
     done, failed = move_each([(path, None) for path in paths], plan, progress)
     if done:
@@ -72,7 +75,7 @@ def check_name(name):
 def rename(path, name):
     """같은 폴더 안에서 이름을 바꾼다. 같은 이름이 있으면 거부한다(대소문자만 바꾸는 것은 된다). 바뀐 경로를 돌려준다."""
     name = check_name(name)
-    target = os.path.join(os.path.dirname(path), name)
+    target = fence.refuse(os.path.join(os.path.dirname(path), name))
     if target == path:
         return path
     if os.path.lexists(target) and exclude.key(target) != exclude.key(path):

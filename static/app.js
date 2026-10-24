@@ -78,6 +78,7 @@ async function runJob(started) {
     $("job-bar").style.width = percent + "%";
     await new Promise((resolve) => setTimeout(resolve, 400));
     status = await api("/api/job");
+    if (status.number !== started.number) throw new Error("다른 작업이 시작돼 이 작업의 결과를 받지 못했어요. 목록을 다시 확인하세요.");
   }
   box.classList.add("hidden");
   if (status.error) throw new Error(status.error);
@@ -88,11 +89,13 @@ async function runJob(started) {
 const applyTheme = followTheme(() => state?.settings.theme);
 
 $("theme").addEventListener("click", async () => {
+  if (!state) return;
   const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
   const windows = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   state.settings.theme = next === windows ? "auto" : next;  // Windows와 같은 쪽이면 auto: 다시 Windows 색을 따른다.
   applyTheme();
   await api("/api/settings", {theme: state.settings.theme}).catch(() => {});
+  windowCall("lock_reload");  // 잠금 창이 열려 있으면 같은 색으로
 });
 
 const windowCall = (action, data = {}) => api("/api/window", {action, ...data}).catch(() => null);  // 창 밖(검사용 브라우저)에서는 아무 일도 없다
@@ -654,6 +657,7 @@ function scroller(bar) {
 // ---------- 고르기 ----------
 // 클릭: 그 줄만. 체크 칸·Ctrl+클릭: 더하거나 빼기. Shift+클릭: anchor부터 그 줄까지. 고르지 않은 줄이나 표 아래 빈 곳에서 끌기: 사각형 안의 줄.
 function showSelection() {
+  if (selected.size === 1 && picked && !selected.has(lower(picked.path))) return showDetail([...selected.values()][0]);
   const current = picked && lower(picked.path);
   document.querySelectorAll("#files tbody tr:not(.group)").forEach((tr) => {
     const key = lower(tr.row.path);
@@ -687,7 +691,7 @@ $("files").addEventListener("click", (e) => {
   if (e.target.type === "checkbox" || e.ctrlKey || e.metaKey) {
     selected.has(key) ? selected.delete(key) : selected.set(key, tr.row);
     anchor = tr.index;
-    if (!selected.has(key)) return showDetail(selected.size === 1 ? [...selected.values()][0] : null);
+    if (!selected.has(key)) return showDetail([...selected.values()].at(-1) ?? null);
   } else if (e.shiftKey && anchor >= 0) {
     selected.clear();
     const [from, to] = [Math.min(anchor, tr.index), Math.max(anchor, tr.index)];
@@ -817,6 +821,13 @@ function dropTarget(target, onDrop) {
 document.addEventListener("dragover", (e) => { if (!e.dataTransfer.types.includes(DRAG)) e.preventDefault(); });
 document.addEventListener("drop", (e) => e.preventDefault());
 
+// 목록 범위(scope.folder)가 바뀐 경로 안이면 새 경로로(after가 null이면 지운 것: 모든 파일로).
+function followScope(before, after) {
+  const now = scope.folder && lower(scope.folder), old = lower(before);
+  if (!now || (now !== old && !now.startsWith(old + "\\"))) return;
+  scope = after ? {folder: after + scope.folder.slice(before.length), name: baseName(after + scope.folder.slice(before.length))} : {all: true};
+}
+
 async function afterChange(message) {
   selected.clear();
   await showDetail(null);
@@ -828,6 +839,7 @@ async function afterChange(message) {
 async function moveTo(paths, folder, name) {
   try {
     const result = await runJob((await api("/api/move", {paths, folder})).job);
+    if (result && paths.length === 1 && result.paths.length === 1) followScope(paths[0], result.paths[0]);
     if (result) await afterChange(`${result.moved.toLocaleString()}개를 '${name}'${josa(name, "으로", "로")} 옮겼어요.${failedText(result)}`);
   } catch (e) {
     toast(e.message);
@@ -844,6 +856,7 @@ async function trashPaths(paths, isFolder = false) {
   if (!(await ask({title: "휴지통으로 보낼까요?", text: text + "\n휴지통에서 다시 꺼낼 수 있어요."}))) return;
   try {
     const result = await runJob((await api("/api/trash", {paths, confirm: true})).job);
+    paths.forEach((p) => followScope(p, null));
     await afterChange(`${result.trashed.toLocaleString()}개를 휴지통으로 보냈어요.${failedText(result)}`);
   } catch (e) {
     toast(e.message);
@@ -1002,6 +1015,7 @@ async function goToFile(file) {
 async function changed(row, path) {
   // 옮기거나 이름을 바꾼 뒤: 상세는 새 경로로, 목록과 숫자는 다시 읽는다.
   const name = baseName(path);
+  followScope(row.path, path);
   picked = {...row, path, name, ext: extOf(name)};
   selected.clear();
   selected.set(lower(path), picked);

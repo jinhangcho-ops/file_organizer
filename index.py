@@ -15,6 +15,7 @@ import sys
 import threading
 import time
 import zipfile
+import zlib
 from pathlib import Path
 
 import blacklist
@@ -179,7 +180,6 @@ def save_file(db, path, st):
            returning id""",
         (path, key, os.path.dirname(key), name, ext, kinds.of(ext), st.st_size, int(st.st_birthtime), int(st.st_mtime),
          int(st.st_atime), int(marked), st.st_mtime_ns)).fetchone()
-    db.execute("delete from body where rowid = ?", (row["id"],))
     drop_ids(db, [row["id"]])  # 바뀐 파일: 사진·동영상 지문과 짝도 다시 만든다.
 
 
@@ -364,8 +364,12 @@ def doc_fingerprint(path):
             for name in sorted(archive.namelist()):
                 if name.lower().startswith("docprops/") or name.endswith("/"):
                     continue
-                digest.update(name.encode("utf-8") + b"\0" + hashlib.sha256(archive.read(name)).digest())
-    except (zipfile.BadZipFile, RuntimeError, ValueError, EOFError):
+                part = hashlib.sha256()
+                with archive.open(name) as member:  # 조금씩 읽는다(동영상이 든 문서·압축 폭탄도 메모리에 다 올리지 않게)
+                    for chunk in iter(lambda: member.read(1024 * 1024), b""):
+                        part.update(chunk)
+                digest.update(name.encode("utf-8") + b"\0" + part.digest())
+    except (zipfile.BadZipFile, RuntimeError, ValueError, EOFError, zlib.error):  # zlib.error: 중간이 깨진 문서
         return ""
     return digest.hexdigest()
 
@@ -509,7 +513,10 @@ def moved(pairs):
             if exclude.key(after) != exclude.key(before):  # 대소문자만 바꾼 이름 바꾸기는 자기 줄이다.
                 forget(db, after)
             if os.path.isdir(after):
-                move_folder_rows(db, before, after)
+                if db.execute("select 1 from folders where key = ?", (exclude.key(before),)).fetchone():
+                    move_folder_rows(db, before, after)
+                else:  # 색인 밖에서 들어온 폴더(색인 밖으로 옮겼다 되돌린 것 등): 그 아래를 바로 넣는다.
+                    add_tree(db, after)
                 continue
             row = db.execute("select id from files where key = ?", (exclude.key(before),)).fetchone()
             if row:  # 내용은 그대로 두고 위치·이름만 바꾼다.
@@ -526,6 +533,17 @@ def moved(pairs):
         db.commit()
     finally:
         db.close()
+
+
+def add_tree(db, path):
+    """폴더 path와 그 아래(색인과 같은 규칙으로 걸러서)를 색인에 넣는다. 글자 읽기 등은 다음 색인 단계가 한다."""
+    for folder, entries in walk(path, fence.keys(), games.keys(), []):
+        add_folder(db, folder, os.path.dirname(folder))
+        for entry in entries:
+            try:
+                save_file(db, entry.path, os.stat(entry.path))
+            except OSError:
+                continue
 
 
 def drop_ids(db, ids):

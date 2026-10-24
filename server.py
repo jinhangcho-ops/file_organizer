@@ -333,9 +333,10 @@ def move():
     """파일·폴더들을 folder(나무에 끌어 놓은 폴더나 앱 안의 고르기 창으로 고른 폴더)로 옮긴다."""
     paths = indexed_paths()
     folder = settings.folder_text(body().get("folder"), "옮길 곳")  # 있는 폴더이고 차단·잠금 폴더가 아니어야 한다.
+    lists, records = fence.holding_lists(), [f["path"] for f in lock.load()["folders"]]
     for path in paths:  # 잠금 폴더를 품은 폴더는 같은 디스크 안에서만 옮긴다(위치는 lock.moved가 고친다).
-        fence.refuse_holding(path, drives.same_drive(path, folder), moving=True)
-        lock.refuse_clash(path, os.path.join(folder, os.path.basename(path)))
+        fence.refuse_holding(path, drives.same_drive(path, folder), moving=True, lists=lists)
+        lock.refuse_clash(path, os.path.join(folder, os.path.basename(path)), records)
     return jsonify(job=jobs.start("옮기기", lambda progress: actions.move_many(paths, folder, progress)))
 
 
@@ -376,11 +377,11 @@ def empty_folder():
     if fence.inside(path, protect.keys()):  # 구조 보호 폴더(와 그 안)는 안의 것을 휴지통으로 보내지 않는다.
         raise ValueError(f"구조 보호 폴더라 비울 수 없습니다: {path}")
     paths, hidden = actions.folder_contents(path)
-    refused, fences, game_keys = [], fence.keys(), games.keys()
+    refused, fences, game_keys, lists = [], fence.keys(), games.keys(), fence.holding_lists()
     for item in list(paths):
         try:
             fence.refuse_system(fence.refuse(item, fences), game_keys)
-            fence.refuse_holding(item, False)
+            fence.refuse_holding(item, False, lists=lists)
         except ValueError as e:
             refused.append({"from": item, "error": str(e)})
             paths.remove(item)
@@ -398,8 +399,9 @@ def trash():
     paths = indexed_paths()
     if body().get("confirm") is not True:
         raise ValueError("확인한 뒤에만 휴지통으로 보냅니다.")
+    lists = fence.holding_lists()
     for path in paths:
-        fence.refuse_holding(path, False)
+        fence.refuse_holding(path, False, lists=lists)
     return jsonify(job=jobs.start("휴지통으로 보내기", lambda progress: actions.trash_many(paths, progress)))
 
 
@@ -522,6 +524,8 @@ def lock_folder():
     if data.get("vault"):  # 금고로 모으기는 폴더를 옮긴다.
         fence.refuse_holding(path, True, moving=True)
     (lock.collect if data.get("vault") else lock.lock)(path, data.get("password"), blocked)
+    global lock_target
+    lock_target = ""  # 다룬 폴더는 잠금 창에 다시 '고른 폴더'로 나오지 않게
     index.removed([path])
     return jsonify(locks=lock.listing())
 

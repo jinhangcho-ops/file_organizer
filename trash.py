@@ -63,15 +63,16 @@ def problem(path):
     """휴지통으로 보낼 수 없는 까닭(없으면 None). 영구 삭제될 수 있는 경우를 모두 막는다."""
     if not os.path.lexists(path):
         return "없는 파일입니다"
-    if drives.drive_type(path) != FIXED:
+    place = os.path.dirname(os.path.abspath(path)) if os.path.islink(path) or os.path.isjunction(path) else path  # 지워지는 것은 링크다
+    if drives.drive_type(place) != FIXED:
         return "휴지통이 없는 곳(네트워크·이동식 디스크)입니다"
-    if not volume_id(path):  # subst로 만든 드라이브 등: 휴지통이 없어 그대로 지워질 수 있다.
+    if drives.is_subst(place) or not volume_id(place):  # subst로 만든 드라이브 등: 휴지통이 없어 그대로 지워질 수 있다.
         return "휴지통을 확인할 수 없는 디스크입니다"
-    off, capacity = recycle_settings(path)
+    off, capacity = recycle_settings(place)
     if off:
         return "이 디스크는 휴지통을 쓰지 않도록 설정되어 있습니다"
     if capacity is None:  # 설정 값이 없는 디스크(새로 단 디스크 등)는 Windows 기본값보다 작게 디스크 크기의 5%로 본다.
-        capacity = shutil.disk_usage(drives.volume_root(path)).total // 20  # 크기를 모른 채 보내면 '확인 없이'라 큰 것은 영구 삭제될 수 있다.
+        capacity = shutil.disk_usage(drives.volume_root(place)).total // 20  # 크기를 모른 채 보내면 '확인 없이'라 큰 것은 영구 삭제될 수 있다.
     if size_of(path) > capacity:
         return "휴지통 최대 크기보다 큽니다"
     return None

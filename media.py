@@ -58,7 +58,7 @@ def image_hash(path):
             img.draft("L", (64, 64))  # JPEG는 줄여서 읽어 빠르다.
             small = ImageOps.exif_transpose(img).convert("L").resize((9, 8), Image.Resampling.LANCZOS)
             return dhash(small.tobytes())
-    except (OSError, UnidentifiedImageError, ValueError):
+    except (OSError, UnidentifiedImageError, ValueError, Image.DecompressionBombError):
         return None
 
 
@@ -135,7 +135,8 @@ def fingerprint(db, row, interval):
     st = os.stat(row["path"])
     if st.st_mtime_ns != row["stamp"]:  # 목록을 훑은 뒤에 바뀌었다: 다음 색인 때 한다.
         return
-    index.drop_ids(db, [row["id"]])
+    for table, column in (("media", "id"), ("media_todo", "id"), ("media_pair", "a"), ("media_pair", "b")):
+        db.execute(f"delete from {table} where {column} = ?", (row["id"],))
     if row["ext"] in IMAGE_EXTS:
         h = image_hash(row["path"])
         db.execute("insert into media(id, kind, duration, frames, made, interval) values(?, 'image', null, ?, ?, null)",
@@ -175,17 +176,16 @@ def match_images(db):
     for me in ids:
         if index.stop.is_set():
             return
+        h = hashes.get(me)
+        if h is not None:
+            same = Counter(other for n in range(BANDS) for other in bands[n, h >> (8 * n) & 255] if other != me)
+            for other in (o for o, c in same.items() if c >= SAME_BANDS):
+                d = distance(h, hashes[other])
+                if d <= IMAGE_BITS:
+                    pair(db, me, other, round(100 * (1 - d / 64)))
         db.execute("delete from media_todo where id = ?", (me,))
         index.status["done"] += 1
         index.save_now(db)
-        h = hashes.get(me)
-        if h is None:
-            continue
-        same = Counter(other for n in range(BANDS) for other in bands[n, h >> (8 * n) & 255] if other != me)
-        for other in (o for o, c in same.items() if c >= SAME_BANDS):
-            d = distance(h, hashes[other])
-            if d <= IMAGE_BITS:
-                pair(db, me, other, round(100 * (1 - d / 64)))
 
 
 def match_videos(db, similar):

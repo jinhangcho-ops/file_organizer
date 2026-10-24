@@ -88,6 +88,8 @@ def move_folder(before, after):
     if drives.same_drive(before, after):
         os.rename(before, after)
         return
+    if os.path.islink(before) or os.path.isjunction(before):
+        raise OSError("링크·정션은 다른 디스크로 옮기지 않습니다(가리키는 곳의 파일까지 옮겨진다).")
     copied = []
     os.makedirs(after)  # 이미 있으면 실패한다: 실패했을 때 치우는 사본(after)은 모두 이번에 만든 것이어야 한다.
     try:

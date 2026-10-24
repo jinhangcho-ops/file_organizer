@@ -207,6 +207,7 @@ button.li:hover span:first-child { color: var(--acc); text-decoration: underline
 .menu button { border: 0; background: none; text-align: left; padding: 6px 14px; border-radius: 4px; }
 .menu button:hover { background: var(--panel2); }
 .dialog { position: fixed; inset: 0; z-index: 40; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, .35); }
+#dialog { z-index: 45; }  /* 확인·입력 창은 고르기 창([새 폴더])보다 위에 */
 .dialog-box { width: 420px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px; box-shadow: var(--shadow); }
 .dialog-title { font-weight: 600; font-size: 15px; margin: 0 0 6px; }
 .dialog-box .hint { white-space: pre-line; margin: 0; }

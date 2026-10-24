@@ -337,11 +337,12 @@ def release(path, password):
     put(data, {"path": found["path"]})
 
 
-def refuse_clash(before, after):
+def refuse_clash(before, after, paths=None):
     """before를 after로 옮기면 그 안의 잠금 기록 위치가 다른 기록(금고에 든 폴더의 원래 위치 등)과 같아지는지. 같아지면 거부한다.
-    기록은 위치로 찾으므로 둘이 같아지면 하나가 덮여, 금고 안 무작위 이름 폴더의 주인을 잃을 수 있다."""
+    기록은 위치로 찾으므로 둘이 같아지면 하나가 덮여, 금고 안 무작위 이름 폴더의 주인을 잃을 수 있다.
+    paths: 미리 읽은 기록의 위치들(여러 개를 볼 때)."""
     old = {exclude.key(before)}
-    paths = [f["path"] for f in load()["folders"]]
+    paths = [f["path"] for f in load()["folders"]] if paths is None else paths
     inside = {exclude.key(after + p[len(before):]) for p in paths if fence.inside(p, old)}
     if inside & {exclude.key(p) for p in paths if not fence.inside(p, old)}:
         raise ValueError(f"옮기면 안의 잠금 폴더가 금고에 든 폴더의 원래 위치와 같아집니다. 금고에서 먼저 꺼내세요: {before}")
