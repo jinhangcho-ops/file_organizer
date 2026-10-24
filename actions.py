@@ -67,7 +67,7 @@ def moved(pairs):
 def check_name(name):
     """새 이름(앞뒤 빈칸은 뗀다). 쓸 수 없는 이름이면 거부한다(이름 바꾸기와 새 폴더가 같이 쓴다)."""
     name = (name or "").strip()
-    if not name or name in (".", "..") or BAD & set(name) or name.endswith("."):
+    if not name or name in (".", "..") or BAD & set(name) or name.endswith(".") or not index.storable(name):
         raise ValueError('쓸 수 없는 이름입니다. \\ / : * ? " < > | 는 쓸 수 없습니다.')
     return name
 

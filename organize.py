@@ -127,8 +127,10 @@ def move_folder(before, after):
                 copied.append((source, os.path.join(target, name), st))
         if any(os.stat(copy).st_size != st.st_size for _, copy, st in copied):
             raise OSError("복사한 파일의 크기가 원본과 다릅니다.")
-    except OSError:
+    except OSError as e:
         shutil.rmtree(after, onexc=writable_then_retry)  # 이번에 만든 사본만 치운다. 원본은 그대로.
+        if os.path.lexists(after):  # 다른 프로그램이 여는 중이라 다 치우지 못했다
+            raise OSError(f"{e.strerror or e} (옮길 곳에 일부 사본이 남았습니다. 원본은 그대로입니다: {after})") from e
         raise
     kept = False
     for source, _, st in copied:

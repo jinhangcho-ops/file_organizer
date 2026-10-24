@@ -8,6 +8,7 @@
 SAVE_EVERY초마다 저장해서 중간에 끊겨도 거기까지는 남는다. 내용을 읽은 파일은 연 시각을 읽기 전으로 되돌린다.
 바이트 지문은 크기가 같은 파일이 둘 이상일 때만 만든다(크기가 다르면 같은 파일일 수 없다)."""
 import hashlib
+import lzma
 import os
 import sqlite3
 import stat as stat_flags
@@ -128,7 +129,7 @@ def storable(text):
         return False
 
 
-def walk(root, fences=frozenset(), game_keys=frozenset(), found_games=None, never_game=frozenset()):
+def walk(root, fences=frozenset(), game_keys=frozenset(), found_games=None, never_game=frozenset(), unreadable=None):
     """root 아래의 (폴더 경로, [파일 DirEntry]) 들. 링크·정션, 숨김·시스템 폴더, SKIP의 폴더, 차단·잠금 폴더(fences, key)는
     들어가지 않는다. 읽을 수 없는 폴더는 건너뛴다.
     게임 폴더(런처가 아는 폴더 game_keys, 게임 폴더 이름 blacklist.GAMES, 안의 이름으로 판별 games.is_game)는 판별만 하고
@@ -158,6 +159,8 @@ def walk(root, fences=frozenset(), game_keys=frozenset(), found_games=None, neve
                     except OSError:
                         continue
         except OSError:
+            if unreadable is not None:
+                unreadable.append(folder)
             continue
         if exclude.key(folder) not in never_game and games.is_game({e.name.lower() for e in files}, {os.path.basename(p).lower() for p in folders}):
             if found_games is not None:
@@ -190,7 +193,7 @@ def save_file(db, path, st):
              dochash=null, dochashed=null, texthash=null
            returning id""",
         (path, key, os.path.dirname(key), name, ext, kinds.of(ext), st.st_size, int(st.st_birthtime), int(st.st_mtime),
-         int(st.st_atime), int(marked), st.st_mtime_ns)).fetchone()
+         int(st.st_atime), int(marked), max(-2 ** 63, min(st.st_mtime_ns, 2 ** 63 - 1)))).fetchone()
     drop_ids(db, [row["id"]])  # 바뀐 파일: 사진·동영상 지문과 짝도 다시 만든다.
 
 
@@ -241,9 +244,9 @@ def build(paths, only=None):
             return
         old = {row["key"]: (row["size"], row["stamp"], row["accessed"], sys.intern(row["kind"] or ""))
                for row in db.execute("select key, size, stamp, accessed, kind from files")}  # 종류 글자는 하나로(파일 수십만 개의 기억을 줄인다)
-        seen, folders, found_games = set(), set(), []
+        seen, folders, found_games, unreadable = set(), set(), [], []
         status.update(step="파일 목록 확인", done=0, total=0)
-        done = scan(db, paths, old, seen, folders, found_games)
+        done = scan(db, paths, old, seen, folders, found_games, unreadable)
         if done:
             sizes = dict(db.execute("select key, size from games").fetchall())  # 세어 둔 크기는 남긴다.
             launcher = {exclude.key(g["path"]) for g in games.launcher_games()}  # 런처가 아는 게임의 센 크기도 남긴다.
@@ -253,6 +256,7 @@ def build(paths, only=None):
             games.forget()
             config = settings.load()
             missing = {exclude.key(p) for p in config["roots"] + [config["dest"]] if p and not os.path.isdir(p) and not fence.inside(p, {exclude.key(r) for r in paths})}
+            missing |= {exclude.key(p) for p in unreadable}
             gone = [(key,) for key in old if key not in seen and not fence.inside(key, missing)]
             drop_ids(db, [row[0] for key in gone for row in db.execute("select id from files where key = ?", key)])
             db.executemany("delete from files where key = ?", gone)
@@ -268,7 +272,7 @@ def build(paths, only=None):
         db.close()
 
 
-def scan(db, paths, old, seen, folders, found_games):
+def scan(db, paths, old, seen, folders, found_games, unreadable=None):
     """① paths 아래의 파일 목록을 색인에 맞춘다. 본 파일·폴더의 key를 seen·folders에, 게임 폴더를 found_games에 모은다.
     끝까지 했으면 True, 멈췄으면 False."""
     fences = fence.keys()
@@ -276,7 +280,7 @@ def scan(db, paths, old, seen, folders, found_games):
     game_keys = {exclude.key(p) for p in launcher}
     never_game = {exclude.key(p) for p in [*paths, *drives.known_folders().values(), str(Path.home())]}
     for root in paths:
-        for folder, entries in walk(root, fences, game_keys, found_games, never_game):
+        for folder, entries in walk(root, fences, game_keys, found_games, never_game, unreadable):
             if stop.is_set():
                 return False
             add_folder(db, folder, None if folder == root else os.path.dirname(folder))
@@ -383,7 +387,7 @@ def doc_fingerprint(path):
                     for chunk in iter(lambda: member.read(1024 * 1024), b""):
                         part.update(chunk)
                 digest.update(name.encode("utf-8") + b"\0" + part.digest())
-    except (zipfile.BadZipFile, RuntimeError, ValueError, EOFError, zlib.error):  # zlib.error: 중간이 깨진 문서
+    except (zipfile.BadZipFile, RuntimeError, ValueError, EOFError, zlib.error, lzma.LZMAError):  # 중간이 깨진 문서
         return ""
     return digest.hexdigest()
 

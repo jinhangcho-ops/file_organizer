@@ -8,6 +8,7 @@ from pathlib import Path
 import cache
 import drives
 import fence
+import index
 import kinds
 
 DAYS = (1, 3650)  # 모아 보기 기간(일)의 범위
@@ -90,6 +91,8 @@ def folder_text(value, name):
     path = os.path.abspath(value.strip())
     if not os.path.isdir(path):
         raise ValueError(f"{name}: 없는 폴더입니다. {path}")
+    if not index.storable(path):
+        raise ValueError(f"{name}: 이름에 쓸 수 없는 글자가 든 폴더입니다. {path}")
     return fence.refuse_system(fence.refuse(path))
 
 

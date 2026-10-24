@@ -55,7 +55,13 @@ def policy_off():
     return False
 
 
-MAX_PATH = 260  # 이 길이 이상인 경로는 휴지통에 넣지 못하고, send2trash(옛 방식)는 묻지 않고 그대로 지운다(260자 넘는 파일로 확인).
+MAX_PATH = 260  # 이 길이(UTF-16 단위) 이상인 경로는 휴지통에 넣지 못하고, send2trash(옛 방식)는 묻지 않고 그대로 지운다(260자 넘는 파일로 확인).
+BIN_PREFIX = 80  # 폴더는 휴지통 안에서 'C:\$Recycle.Bin\<SID>\$R……\' 아래로 간다: 원래 폴더 경로 대신 이만큼(넉넉히)이 붙는다.
+
+
+def width(path):
+    """Windows가 경로 길이를 세는 단위(UTF-16). 이모지처럼 BMP 밖의 글자는 2로 센다."""
+    return len(path.encode("utf-16-le")) // 2
 
 
 def size_of(path):
@@ -63,10 +69,10 @@ def size_of(path):
     link = lambda p: os.path.islink(p) or os.path.isjunction(p)  # noqa: E731
     path = os.path.abspath(path)
     if link(path) or not os.path.isdir(path):
-        return os.lstat(path).st_size, len(path)
-    total, longest = 0, len(path)
+        return os.lstat(path).st_size, width(path)
+    total, longest = 0, width(path)
     for folder, dirs, names in os.walk(path):
-        longest = max([longest, *(len(os.path.join(folder, n)) for n in dirs + names)])
+        longest = max([longest, *(width(os.path.join(folder, n)) for n in dirs + names)])
         dirs[:] = [d for d in dirs if not link(os.path.join(folder, d))]
         for name in names:
             try:
@@ -78,6 +84,8 @@ def size_of(path):
 
 def problem(path):
     """휴지통으로 보낼 수 없는 까닭(없으면 None). 영구 삭제될 수 있는 경우를 모두 막는다."""
+    if os.path.isreserved(path):  # 끝의 점·빈칸, CON·NUL 같은 이름: Windows가 다른 파일(abc. → abc)로 읽는다
+        return "Windows가 다룰 수 없는 이름입니다"
     if not os.path.lexists(path):
         return "없는 파일입니다"
     place = path  # 볼륨은 든 폴더로 묻는다(drives.volume_root): 링크·정션도 링크가 있는 곳의 디스크로 본다
@@ -93,7 +101,7 @@ def problem(path):
     if capacity is None:  # 설정 값이 없는 디스크(새로 단 디스크 등)는 Windows 기본값보다 작게 디스크 크기의 5%로 본다.
         capacity = shutil.disk_usage(drives.volume_root(place)).total // 20  # 크기를 모른 채 보내면 '확인 없이'라 큰 것은 영구 삭제될 수 있다.
     size, longest = size_of(path)
-    if longest >= MAX_PATH:
+    if longest >= MAX_PATH or (os.path.isdir(path) and longest - width(os.path.abspath(path)) + BIN_PREFIX >= MAX_PATH):
         return "경로가 너무 길어(260자 이상) 휴지통에 넣을 수 없습니다"
     if size > capacity:
         return "휴지통 최대 크기보다 큽니다"

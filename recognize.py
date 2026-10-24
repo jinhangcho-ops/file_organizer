@@ -284,6 +284,7 @@ def recognize_one(db, engine, row, config, centers):
     st = os.stat(row["path"])
     if st.st_mtime_ns != row["stamp"]:
         return False
+    open(row["path"], "rb").close()  # 지금 열 수 없으면(잠금·클라우드에만 있음) OSError: 기록하지 않고 다음에 다시
     for table in ("tags", "faces", "recognized"):
         db.execute(f"delete from {table} where id = ?", (row["id"],))
     tags = []

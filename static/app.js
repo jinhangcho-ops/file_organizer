@@ -841,7 +841,9 @@ function followScope(before, after) {
 
 // 바꾼 뒤 지금 연 폴더가 색인에 없으면(잠금·비우기·되돌리기 등) 모든 파일로 간다.
 async function leaveGoneFolder() {
-  if (!scope.folder || (await api("/api/chain?folder=1&path=" + encodeURIComponent(scope.folder))).folders.length) return;
+  if (scope.same) {
+    if (await api("/api/same?path=" + encodeURIComponent(scope.same)).then(() => true, () => false)) return;
+  } else if (!scope.folder || (await api("/api/chain?folder=1&path=" + encodeURIComponent(scope.folder))).folders.length) return;
   scope = {all: true};
   await loadFiles();
 }
@@ -890,7 +892,10 @@ $("trash").addEventListener("click", () => {
 });
 
 // ---------- 상세 ----------
+let detailTicket = 0;  // 상세를 열 때마다 하나씩: 늦게 온 답이 그 상세의 것인지
+
 async function showDetail(row) {
+  const ticket = ++detailTicket;
   picked = row;
   $("detail").classList.toggle("hidden", !row);
   showPanes();  // 상세가 열려 가운데가 좁아지면 저장한 너비보다 줄여 맞춘다(저장값은 그대로).
@@ -898,14 +903,16 @@ async function showDetail(row) {
   showSelection();
   document.querySelectorAll("#detail .file-only").forEach((s) => s.classList.toggle("hidden", !!row?.folder));
   document.querySelectorAll("#detail .folder-only").forEach((s) => s.classList.toggle("hidden", !row?.folder));
+  showFileInTree(row?.folder ? null : row);
   if (row?.folder) return showFolderDetail(row);
-  showFileInTree(row);
   if (!row) return;
   $("detail-name").textContent = row.name;
   $("detail-pills").replaceChildren(...[samePill(row), row.stale ? el("span", {className: "pill", textContent: `${state.settings.stale_days}일 넘게 안 열었어요`}) : null]
     .filter(Boolean));
   $("detail-preview").textContent = "";
   for (const id of ["detail-rows", "same-content", "same-name"]) $(id).replaceChildren();
+  $("same-content-title").textContent = "내용이 같은 파일";
+  $("same-name-title").textContent = "이름이 같은 파일";
   const q = encodeURIComponent(row.path);
   let chain, same, preview;
   try {
@@ -918,8 +925,8 @@ async function showDetail(row) {
   $("detail-preview").textContent = preview.text || (preview.readable ? "아직 내용을 읽지 않았거나 글자가 없어요." : "이 형식은 내용을 읽지 않아요(사진·동영상·hwp 등).");
   showFacts([["종류", row.kind], ["크기", size(row.size)], ["위치", crumbs(chain.folders)], ["마지막 수정", fullDate(row.modified)]]);
   showSame("same-content", "내용이 같은 파일", same.content, "내용이 같은 파일이 없어요.");
-  showGuess(row);
-  showProvenance(row);
+  showGuess(row, ticket);
+  showProvenance(row, ticket);
   showSame("same-name", "이름이 같은 파일", same.name, "이름이 같은 파일이 없어요.");
   document.querySelector('[data-fold="same-name"]').classList.toggle("hidden", !state.settings.show_same_name);
 }
@@ -1002,9 +1009,9 @@ async function emptyFolder(path) {
 document.querySelectorAll(".fold").forEach((box) => box.querySelector(".fold-head").addEventListener("click", () => box.classList.toggle("open")));
 
 // 상세의 받은 곳·편집한 사람(그 파일에서 바로 읽은 것). 있는 것만 줄로 더한다.
-async function showProvenance(row) {
+async function showProvenance(row, ticket) {
   const info = await api("/api/provenance?path=" + encodeURIComponent(row.path)).catch(() => null);
-  if (picked !== row || !info) return;
+  if (picked !== row || ticket !== detailTicket || !info) return;
   const lines = [["받은 곳", info.source], ["링크가 있던 곳", info.referrer], ["만든 사람", info.author], ["마지막 저장", info.last_saved_by], ["소유자", info.owner]];
   for (const [label, value] of lines.filter(([, v]) => v)) {
     $("detail-rows").append(el("span", {textContent: label}), el("div", {className: "mono", textContent: value, title: value}));
@@ -1012,9 +1019,9 @@ async function showProvenance(row) {
 }
 
 // 상세의 추정(사진·동영상 인식 결과): 칩을 누르면 그 추정의 파일들을 모두 본다.
-async function showGuess(row) {
+async function showGuess(row, ticket) {
   const {tags, people} = await api("/api/recognized?path=" + encodeURIComponent(row.path)).catch(() => ({tags: [], people: []}));
-  if (picked !== row || (!tags.length && !people.length)) return;
+  if (picked !== row || ticket !== detailTicket || (!tags.length && !people.length)) return;
   const chipFor = (value, text) => {
     const b = el("button", {className: "pill link", textContent: text});
     b.addEventListener("click", () => openScope({all: true, tag: value, name: tagName(value)}));
@@ -1272,7 +1279,7 @@ $("run").addEventListener("click", (e) => busy(e.target, "organize-message", asy
   const result = await runJob(await api("/api/organize/run", {source, dest}));
   clearPreview();
   report(result, "옮겼어요");
-  await loadState();
+  await afterChange();
 }).then(() => { e.target.disabled = true; }));  // 옮긴 뒤에는 다시 미리보기를 해야 정리할 수 있다.
 
 $("undo").addEventListener("click", async (e) => {
@@ -1281,7 +1288,7 @@ $("undo").addEventListener("click", async (e) => {
     const result = await runJob(await api("/api/organize/undo", {}));
     clearPreview();
     report(result, "되돌렸어요");
-    await loadState();
+    await afterChange();
   });
 });
 
@@ -1364,8 +1371,7 @@ $("archive-run").addEventListener("click", async (e) => {
     clearArchive();
     say("archive-message", `${result.files.toLocaleString()}개(${size(result.original)})를 ${result.zip}(${size(result.zip_size)})로 보관했어요.\n` +
       `휴지통을 비우면 ${size(result.freed)}가 비워져요.${failedText(result)}`, result.failed.length ? "error" : "ok");
-    await loadState();
-    await loadFiles();
+    await afterChange();
   });
 });
 

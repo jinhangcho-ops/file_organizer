@@ -135,6 +135,7 @@ def fingerprint(db, row, interval):
     st = os.stat(row["path"])
     if st.st_mtime_ns != row["stamp"]:  # 목록을 훑은 뒤에 바뀌었다: 다음 색인 때 한다.
         return
+    open(row["path"], "rb").close()  # 지금 열 수 없으면(잠금·클라우드에만 있음) OSError: 기록하지 않고 다음에 다시
     for table, column in (("media", "id"), ("media_todo", "id"), ("media_pair", "a"), ("media_pair", "b")):
         db.execute(f"delete from {table} where {column} = ?", (row["id"],))
     if row["ext"] in IMAGE_EXTS:
@@ -192,16 +193,19 @@ def match_videos(db, similar):
     """동영상 짝을 모두 다시 정한다(유사도 기준을 바꿔도 맞게). 길이 순으로 놓고 LENGTH_GAP 안쪽의 영상끼리만 비교한다."""
     videos = [(r["id"], r["duration"], decode(r["frames"])) for r in db.execute(
         "select id, duration, frames from media where kind = 'video' and duration > 0 order by duration")]
-    db.execute("delete from media_pair where a in (select id from media where kind = 'video')")
+    found = []
     for i, (a, length, frames) in enumerate(videos):
-        if index.stop.is_set():  # 멈추면 표시(meta)를 남기지 않아 다음에 처음부터 다시 맞춘다
+        if index.stop.is_set():  # 멈추면 있던 짝은 그대로 두고, 표시(meta)를 남기지 않아 다음에 처음부터 다시 맞춘다
             return
         for b, other_length, other_frames in videos[i + 1:]:
             if other_length > length * (1 + LENGTH_GAP):
                 break
             score = similarity(frames, other_frames)
             if score is not None and score >= similar:
-                pair(db, a, b, score)
+                found.append((a, b, score))
+    db.execute("delete from media_pair where a in (select id from media where kind = 'video')")
+    for a, b, score in found:
+        pair(db, a, b, score)
 
 
 def run(db):

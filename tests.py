@@ -13,6 +13,7 @@ from pathlib import Path
 
 TEMP = Path(tempfile.mkdtemp(prefix="file_organizer_test_"))
 os.environ["APPDATA"] = str(TEMP / "appdata")
+os.environ["PROGRAMDATA"] = str(TEMP / "programdata")  # 실제 차단·구조 보호 목록을 읽지 않게
 
 import actions  # noqa: E402  APPDATA를 바꾼 뒤에 불러온다.
 import exclude  # noqa: E402
@@ -25,6 +26,8 @@ import search  # noqa: E402
 import server  # noqa: E402
 import settings  # noqa: E402
 import trash  # noqa: E402
+
+trash.send = lambda path: os.replace(path, TEMP / ("휴지통_밖_" + os.path.basename(path)))  # 이 검사 전체에서 실제 휴지통을 쓰지 않는다
 import tree  # noqa: E402
 
 failures = []
