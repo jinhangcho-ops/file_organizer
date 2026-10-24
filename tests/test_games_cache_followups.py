@@ -5,6 +5,7 @@ from pathlib import Path
 
 import actions
 import cache
+import drives
 import exclude
 import games
 import organize
@@ -85,3 +86,31 @@ def test_undo_records_a_partial_folder_move(home, monkeypatch, tmp_path):
     monkeypatch.setattr(organize, "move_folder", partial)
     result = actions.move_back([(str(before), str(after))])
     assert result["moved"] == 1 and result["paths"] == [str(before)] and len(result["failed"]) == 1
+
+
+def test_index_root_and_known_folders_are_never_games(home, client, monkeypatch):
+    downloads = home / "다운로드"
+    monkeypatch.setattr(drives, "known_folders", lambda: {"다운로드": str(downloads)})
+    write(home / "steam_api64.dll")  # 색인할 맨 위 폴더에 표시 파일이 있어도
+    write(downloads / "Engine" / "readme.txt")  # 다운로드에 Engine 폴더와 exe가 함께 있어도
+    write(downloads / "setup.exe")
+    write(downloads / "보고서.pdf")
+    build(home)
+    names = {row["name"] for row in client.post("/api/files", json={}).json["rows"]}
+    assert {"steam_api64.dll", "setup.exe", "보고서.pdf", "readme.txt"} <= names
+    assert games.found_games() == []
+    assert client.post("/api/organize/preview", json={"source": str(downloads), "dest": str(home)}).status_code == 200
+
+
+def test_steam_library_shows_in_the_folder_list(home, monkeypatch):
+    common = home / "SteamLibrary" / "steamapps" / "common"
+    write(common / "Big Game" / "game.exe")
+    hidden_place = home / "Program Files" / "Steam" / "steamapps" / "common" / "Other"
+    write(hidden_place / "x.exe")
+    monkeypatch.setattr(games, "launcher_games", lambda: [
+        {"name": "Big Game", "launcher": "Steam", "path": str(common / "Big Game"), "size": 7_000, "played": None},
+        {"name": "Other", "launcher": "Steam", "path": str(hidden_place), "size": 9_000, "played": None}])
+    build(home)
+    top = {row["name"]: row["size"] for row in tree.children(str(home))}
+    assert top == {"SteamLibrary": 7_000}  # Program Files 아래의 것은 폴더 목록에 넣지 않는다
+    assert [row["name"] for row in tree.children(str(common))] == ["Big Game"]

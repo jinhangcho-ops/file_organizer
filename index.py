@@ -14,8 +14,10 @@ import stat as stat_flags
 import threading
 import time
 import zipfile
+from pathlib import Path
 
 import blacklist
+import drives
 import exclude
 import extract
 import fence
@@ -115,11 +117,12 @@ def roots(config):
     return [path for k, path in keys.items() if not any(k != other and k.startswith(os.path.join(other, "")) for other in keys)]
 
 
-def walk(root, fences=frozenset(), game_keys=frozenset(), found_games=None):
+def walk(root, fences=frozenset(), game_keys=frozenset(), found_games=None, never_game=frozenset()):
     """root 아래의 (폴더 경로, [파일 DirEntry]) 들. 링크·정션, 숨김·시스템 폴더, SKIP의 폴더, 차단·잠금 폴더(fences, key)는
     들어가지 않는다. 읽을 수 없는 폴더는 건너뛴다.
     게임 폴더(런처가 아는 폴더 game_keys, 게임 폴더 이름 blacklist.GAMES, 안의 이름으로 판별 games.is_game)는 판별만 하고
-    안을 읽지 않는다. 찾은 게임 폴더는 found_games에 더한다."""
+    안을 읽지 않는다. 찾은 게임 폴더는 found_games에 더한다. never_game(key: 색인할 맨 위 폴더, 다운로드 등 알려진 폴더,
+    사용자 폴더)은 안의 이름으로 게임이라 판별하지 않는다(다운로드에 steam_api64.dll 하나가 있다고 다운로드 전체가 게임이 되지 않게)."""
     stack = [root]
     while stack:
         folder = stack.pop()
@@ -143,7 +146,7 @@ def walk(root, fences=frozenset(), game_keys=frozenset(), found_games=None):
                         continue
         except OSError:
             continue
-        if games.is_game({e.name.lower() for e in files}, {os.path.basename(p).lower() for p in folders}):
+        if exclude.key(folder) not in never_game and games.is_game({e.name.lower() for e in files}, {os.path.basename(p).lower() for p in folders}):
             if found_games is not None:
                 found_games.append(folder)
             continue
@@ -252,9 +255,11 @@ def scan(db, paths, old, seen, folders, found_games):
     """① paths 아래의 파일 목록을 색인에 맞춘다. 본 파일·폴더의 key를 seen·folders에, 게임 폴더를 found_games에 모은다.
     끝까지 했으면 True, 멈췄으면 False."""
     fences = fence.keys()
-    game_keys = {exclude.key(g["path"]) for g in games.launcher_games()}
+    launcher = [g["path"] for g in games.launcher_games()]
+    game_keys = {exclude.key(p) for p in launcher}
+    never_game = {exclude.key(p) for p in [*paths, *drives.known_folders().values(), str(Path.home())]}
     for root in paths:
-        for folder, entries in walk(root, fences, game_keys, found_games):
+        for folder, entries in walk(root, fences, game_keys, found_games, never_game):
             if stop.is_set():
                 return False
             add_folder(db, folder, None if folder == root else os.path.dirname(folder))
@@ -276,12 +281,23 @@ def scan(db, paths, old, seen, folders, found_games):
                     save_file(db, entry.path, st)
                 status["done"] += 1
                 save_now(db)
-    for path in found_games:  # 게임 폴더(와 Riot Games 같은 게임 묶음 폴더)도 폴더 목록에 둔다. 용량은 totals가 더한다.
-        for folder in (os.path.dirname(path), path):
-            if exclude.key(folder) not in folders and exclude.key(os.path.dirname(folder)) in folders:
-                add_folder(db, folder, os.path.dirname(folder))
-                folders.add(exclude.key(folder))
+    for path in found_games + launcher:  # 게임 폴더와 그 위 묶음 폴더(SteamLibrary\steamapps\common 등)도 폴더 목록에 둔다.
+        add_game_chain(db, path, folders, fences)  # 용량은 totals가 더한다.
     return True
+
+
+def add_game_chain(db, path, folders, fences):
+    """path에서 색인한 위 폴더까지 이어지는 폴더들을 폴더 목록에 넣는다. 색인한 곳 밖이거나, 중간에 들어가지 않는 폴더
+    (SKIP: Windows·Program Files 등, 차단·잠금 폴더)가 끼면 넣지 않는다(그 폴더가 목록에 나타나지 않게)."""
+    chain, folder = [], os.path.abspath(path)
+    while exclude.key(folder) not in folders:
+        if os.path.basename(folder).lower() in SKIP or exclude.key(folder) in fences or os.path.dirname(folder) == folder:
+            return
+        chain.append(folder)
+        folder = os.path.dirname(folder)
+    for item in reversed(chain):
+        add_folder(db, item, os.path.dirname(item))
+        folders.add(exclude.key(item))
 
 
 def read_text(db, row_id, path, ext, st):
