@@ -34,7 +34,7 @@ def move_many(paths, folder, progress=lambda *args: None):
     done, failed = move_each([(path, None) for path in paths], plan, progress)
     if done:
         undo.record("move", done, f"{len(done)}개 옮기기")
-    return {"moved": len(done), "failed": failed, "paths": [after for _, after in done]}
+    return {"moved": len(done), "failed": failed, "paths": [after for _, after in done], "pairs": done}
 
 
 def move_each(pairs, plan, progress):
@@ -99,7 +99,8 @@ def move_back(pairs, progress=lambda *args: None):
             raise ValueError("원래 자리에 같은 이름이 있습니다.")
         fence.refuse(before, fences)  # 원래 자리(지운 차단 폴더 자리 포함)
         fence.refuse(after, fences)  # 그사이 지금 자리를 차단·잠갔으면 꺼내지 않는다.
-        fence.refuse_holding(after, drives.same_drive(after, before), moving=True, lists=lists)
+        moving = os.path.dirname(exclude.key(after)) != os.path.dirname(exclude.key(before))
+        fence.refuse_holding(after, drives.same_drive(after, before), moving=moving, lists=lists)
         lock.refuse_clash(after, before, records)
         return before
 

@@ -58,7 +58,7 @@ def image_hash(path):
             img.draft("L", (64, 64))  # JPEG는 줄여서 읽어 빠르다.
             small = ImageOps.exif_transpose(img).convert("L").resize((9, 8), Image.Resampling.LANCZOS)
             return dhash(small.tobytes())
-    except (OSError, UnidentifiedImageError, ValueError, SyntaxError, Image.DecompressionBombError):  # SyntaxError: 깨진 EXIF
+    except (OSError, UnidentifiedImageError, ValueError, SyntaxError, EOFError, Image.DecompressionBombError):  # 깨진 EXIF·끊긴 HEIC
         return None
 
 
@@ -194,6 +194,8 @@ def match_videos(db, similar):
         "select id, duration, frames from media where kind = 'video' and duration > 0 order by duration")]
     db.execute("delete from media_pair where a in (select id from media where kind = 'video')")
     for i, (a, length, frames) in enumerate(videos):
+        if index.stop.is_set():  # 멈추면 표시(meta)를 남기지 않아 다음에 처음부터 다시 맞춘다
+            return
         for b, other_length, other_frames in videos[i + 1:]:
             if other_length > length * (1 + LENGTH_GAP):
                 break
@@ -221,5 +223,6 @@ def run(db):
     last = db.execute("select value from meta where name = 'video_similar'").fetchone()
     if not index.stop.is_set() and (last is None or last[0] != config["video_similar"]):  # 새 동영상 지문은 이 표시를 지운다. 지운 동영상의 짝은 drop_ids가 함께 지운다.
         match_videos(db, config["video_similar"])
-        db.execute("insert or replace into meta(name, value) values('video_similar', ?)", (config["video_similar"],))
+        if not index.stop.is_set():
+            db.execute("insert or replace into meta(name, value) values('video_similar', ?)", (config["video_similar"],))
     index.save_now(db, force=True)

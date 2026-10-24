@@ -73,10 +73,12 @@ def test_junction_itself_is_not_copied_or_judged_by_its_target(tmp_path, monkeyp
     with pytest.raises(OSError, match="정션"):
         organize.move_folder(str(link), str(tmp_path / "다른 곳"))
     assert (target / "남의 파일.txt").exists()
-    seen = []
-    monkeypatch.setattr(trash.drives, "drive_type", lambda path: seen.append(path) or 3)
+    asked = []
+    real = trash.drives.ctypes.windll.kernel32.GetVolumePathNameW
+    monkeypatch.setattr(trash.drives, "ROOTS", {})
+    monkeypatch.setattr(trash.drives.ctypes.windll.kernel32, "GetVolumePathNameW", lambda p, b, n: asked.append(p) or real(p, b, n))
     trash.problem(str(link))
-    assert seen == [str(tmp_path)]  # 지워지는 것은 링크: 링크가 있는 곳의 디스크로 본다
+    assert asked and set(asked) == {str(tmp_path)}  # 지워지는 것은 링크: 링크가 있는 곳(든 폴더)의 디스크로 본다
     os.rmdir(link)
 
 

@@ -7,6 +7,7 @@
 import ctypes
 import os
 import zipfile
+import zlib
 from ctypes import wintypes
 from urllib.parse import urlsplit, urlunsplit
 from xml.etree import ElementTree
@@ -49,7 +50,7 @@ def office_people(path):
             if info.file_size > CORE_MAX:
                 return "", ""
             root = ElementTree.fromstring(archive.read(info))
-    except (KeyError, OSError, zipfile.BadZipFile, ElementTree.ParseError, RuntimeError):
+    except (KeyError, OSError, zipfile.BadZipFile, ElementTree.ParseError, RuntimeError, ValueError, EOFError, zlib.error):  # 깨진 문서
         return "", ""
     return (root.findtext("dc:creator", "", NS) or "").strip(), (root.findtext("cp:lastModifiedBy", "", NS) or "").strip()
 

@@ -316,7 +316,7 @@ def take_out(path, password, folder=None):
         raise NoPlace(f"원래 위 폴더가 없습니다. 꺼낼 폴더를 고르세요: {parent}")
     if not drives.same_drive(parent, data["vault"]):
         raise ValueError("금고와 같은 디스크의 폴더를 고르세요.")
-    fence.refuse(parent)
+    fence.refuse_system(fence.refuse(parent))  # Windows·게임 폴더 안으로도 꺼내지 않는다
     target = fence.refuse(organize.free_name(parent, os.path.basename(found["path"]), set()))  # 지운 차단 폴더 자리에 꺼내지 않게
     with Opened(data):
         os.rename(os.path.join(data["vault"], found["id"]), target)

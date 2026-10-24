@@ -97,7 +97,7 @@ def state():
                    places=tree.places(), exclude=exclude.load(), blacklist=blacklist.load(), protected=protect.load(), admin=blacklist.is_admin(),
                    panes=settings.PANES,
                    steps=settings.STEPS, step_list=settings.step_list(config), models=models.status(), labels=recognize.LABELS,
-                   custom_count=recognize.custom_count(config["custom_model_path"]), numbers={name: {"min": low, "max": high} for name, (low, high, _) in settings.NUMBERS.items()})
+                   numbers={name: {"min": low, "max": high} for name, (low, high, _) in settings.NUMBERS.items()})
 
 
 @app.post("/api/settings")
@@ -335,7 +335,7 @@ def move():
     folder = settings.folder_text(body().get("folder"), "옮길 곳")  # 있는 폴더이고 차단·잠금 폴더가 아니어야 한다.
     lists, records = fence.holding_lists(), [f["path"] for f in lock.load()["folders"]]
     for path in paths:  # 잠금 폴더를 품은 폴더는 같은 디스크 안에서만 옮긴다(위치는 lock.moved가 고친다).
-        fence.refuse_holding(path, drives.same_drive(path, folder), moving=True, lists=lists)
+        fence.refuse_holding(path, drives.same_drive(path, os.path.join(folder, os.path.basename(path))), moving=True, lists=lists)  # 옮겨 갈 경로로 묻는다(폴더에 탑재한 디스크)
         lock.refuse_clash(path, os.path.join(folder, os.path.basename(path)), records)
     return jsonify(job=jobs.start("옮기기", lambda progress: actions.move_many(paths, folder, progress)))
 
@@ -522,7 +522,12 @@ def lock_folder():
         raise ValueError(f"잠글 수 없는 폴더입니다(색인한 맨 위 폴더나 파일): {path}")
     blocked = blacklist.keys()
     fence.refuse_system(path)  # 사용자 폴더·게임 폴더를 잠그면 프로그램과 이 앱의 비밀 파일까지 읽을 수 없게 된다.
-    fence.refuse_holding(path, True, moving=True)
+    if data.get("vault"):  # 금고로 모으기는 폴더를 옮긴다.
+        fence.refuse_holding(path, True, moving=True)
+    else:
+        lists = fence.holding_lists()
+        if fence.holds(path, lists["system"] | lists["games"]):
+            raise ValueError(f"Windows·프로그램·게임 폴더가 들어 있어 잠글 수 없습니다: {path}")
     (lock.collect if data.get("vault") else lock.lock)(path, data.get("password"), blocked)
     global lock_target
     lock_target = ""  # 다룬 폴더는 잠금 창에 다시 '고른 폴더'로 나오지 않게

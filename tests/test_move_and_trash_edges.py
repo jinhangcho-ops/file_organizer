@@ -73,11 +73,11 @@ def test_trash_size_skips_broken_junction_and_refuses_unknown_volume(tmp_path, m
     gone = tmp_path / "사라질 곳"
     write(gone / "큰 파일.txt", "x" * 1000)
     junction(folder / "링크", gone)
-    assert trash.size_of(str(folder)) == 5  # 정션이 가리키는 곳은 세지 않는다
+    assert trash.size_of(str(folder))[0] == 5  # 정션이 가리키는 곳은 세지 않는다
     for name in os.listdir(gone):
         os.remove(gone / name)
     os.rmdir(gone)
-    assert trash.size_of(str(folder)) == 5 and trash.problem(str(folder)) is None  # 깨진 정션에서 멈추지 않는다
+    assert trash.size_of(str(folder))[0] == 5 and trash.problem(str(folder)) is None  # 깨진 정션에서 멈추지 않는다
     os.rmdir(folder / "링크")
     monkeypatch.setattr(trash, "volume_id", lambda path: None)  # subst 드라이브처럼 볼륨을 모를 때
     assert "확인할 수 없는" in trash.problem(str(folder))

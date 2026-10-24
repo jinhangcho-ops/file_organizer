@@ -119,6 +119,15 @@ def roots(config):
     return [path for k, path in keys.items() if not fence.inside(k, keys.keys() - {k})]
 
 
+def storable(text):
+    """색인(SQLite)에 넣을 수 있는 이름·경로인지: 짝 없는 서로게이트 글자가 든 이름은 넣지 못해 건너뛴다."""
+    try:
+        text.encode("utf-8")
+        return True
+    except UnicodeError:
+        return False
+
+
 def walk(root, fences=frozenset(), game_keys=frozenset(), found_games=None, never_game=frozenset()):
     """root 아래의 (폴더 경로, [파일 DirEntry]) 들. 링크·정션, 숨김·시스템 폴더, SKIP의 폴더, 차단·잠금 폴더(fences, key)는
     들어가지 않는다. 읽을 수 없는 폴더는 건너뛴다.
@@ -131,13 +140,14 @@ def walk(root, fences=frozenset(), game_keys=frozenset(), found_games=None, neve
         files, folders = [], []
         if exclude.key(folder) in game_keys or os.path.basename(folder).lower() in blacklist.GAMES:
             if found_games is not None:
-                found_games += [folder] if exclude.key(folder) in game_keys else games.container_games(folder)
+                found_games += [folder] if exclude.key(folder) in game_keys else [g for g in games.container_games(folder) if storable(g)]
             continue
         try:
             with os.scandir(folder) as entries:
                 for entry in entries:
                     try:
-                        entry.name.encode("utf-8")
+                        if not storable(entry.name):
+                            continue
                         if entry.is_symlink() or entry.is_junction():
                             continue
                         if entry.is_dir():
@@ -145,7 +155,7 @@ def walk(root, fences=frozenset(), game_keys=frozenset(), found_games=None, neve
                                 folders.append(entry.path)
                         elif entry.is_file() and not hidden(entry.stat()):
                             files.append(entry)
-                    except (OSError, UnicodeError):
+                    except OSError:
                         continue
         except OSError:
             continue
@@ -242,7 +252,7 @@ def build(paths, only=None):
                            [(exclude.key(p), p, sizes.get(exclude.key(p))) for p in found_games])
             games.forget()
             config = settings.load()
-            missing = {exclude.key(p) for p in config["roots"] + [config["dest"]] if p and not os.path.isdir(p)}
+            missing = {exclude.key(p) for p in config["roots"] + [config["dest"]] if p and not os.path.isdir(p) and not fence.inside(p, {exclude.key(r) for r in paths})}
             gone = [(key,) for key in old if key not in seen and not fence.inside(key, missing)]
             drop_ids(db, [row[0] for key in gone for row in db.execute("select id from files where key = ?", key)])
             db.executemany("delete from files where key = ?", gone)
@@ -508,6 +518,9 @@ def moved(pairs):
     db = connect()
     try:
         for before, after in pairs:
+            if not storable(after):  # 색인에 넣지 못하는 이름: 옛 기록만 뺀다
+                forget(db, before)
+                continue
             folder = os.path.dirname(after)
             known = under_index(db, folder)
             if known is None:

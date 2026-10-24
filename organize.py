@@ -51,7 +51,7 @@ def plan(source, dest):
     with_parts = any(os.path.splitext(entry.name)[1].lower() in PROGRAM_PARTS for entry in files)
     for entry in files:
         ext = os.path.splitext(entry.name)[1].lower()
-        if ext in PARTIAL or ext in PROGRAM_PARTS or (with_parts and ext == ".exe") or index.hidden(entry.stat()):
+        if ext in PARTIAL or ext in PROGRAM_PARTS or (with_parts and ext == ".exe") or index.hidden(entry.stat()) or not index.storable(entry.name):
             continue
         kind = kinds.of(ext)
         folder = os.path.join(dest, kind)
@@ -94,9 +94,13 @@ def remove_copy(path):
 
 
 def writable_then_retry(function, path, _):
-    """rmtree가 이번에 만든 사본 중 읽기 전용 파일에서 멈추지 않게: 표시를 풀고 다시 지운다."""
-    os.chmod(path, stat.S_IWRITE)
-    function(path)
+    """rmtree가 이번에 만든 사본 중 읽기 전용 파일에서 멈추지 않게: 표시를 풀고 다시 지운다.
+    그래도 안 되면(다른 프로그램이 여는 중) 그 사본은 남긴다: 실패 까닭은 원래 오류로 알린다."""
+    try:
+        os.chmod(path, stat.S_IWRITE)
+        function(path)
+    except OSError:
+        pass
 
 
 def move_folder(before, after):

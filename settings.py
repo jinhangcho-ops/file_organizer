@@ -114,7 +114,9 @@ def check(changes):
         elif name == "roots":
             if not isinstance(value, list):
                 raise ValueError("색인할 폴더 목록이 잘못됐습니다.")
-            clean[name] = list(dict.fromkeys(folder_text(item, "색인할 폴더") for item in value))
+            saved = {k.lower(): k for k in load()["roots"]}
+            clean[name] = list(dict.fromkeys(saved[item.lower()] if isinstance(item, str) and item.lower() in saved and not os.path.isdir(item)
+                                             else folder_text(item, "색인할 폴더") for item in value))
         elif name in ("recent_days", "stale_days", "cold_days"):
             if not whole(value) or not DAYS[0] <= value <= DAYS[1]:
                 raise ValueError(f"기간은 {DAYS[0]}~{DAYS[1]}일 사이의 정수로 쓰세요.")

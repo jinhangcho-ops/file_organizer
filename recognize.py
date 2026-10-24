@@ -278,6 +278,8 @@ def todo(db, signature, faces_on):
 
 def recognize_one(db, engine, row, config, centers):
     """파일 하나를 인식해 tags·faces·recognized에 넣는다. 열지 못하면 빈 결과로 표시만 한다(다시 시도하지 않게)."""
+    from PIL import Image
+
     np = engine.np
     st = os.stat(row["path"])
     if st.st_mtime_ns != row["stamp"]:
@@ -301,8 +303,8 @@ def recognize_one(db, engine, row, config, centers):
                 if engine.custom is not None:
                     scores = [engine.custom_scores(f) for f in frames]
                     tags += [("custom", str(i), max(s[i] for s in scores)) for i in range(len(scores[0]))]
-    except Exception:  # 파일 하나(깨진 EXIF, 아주 큰 사진, 그림 라이브러리의 오류 등)로 단계 전체가 멈추지 않게 빈 결과로 표시한다.
-        tags = []
+    except (OSError, ValueError, SyntaxError, EOFError, MemoryError, subprocess.SubprocessError, Image.DecompressionBombError):
+        tags = []  # 깨진 EXIF·끊긴 HEIC·아주 큰 사진 등 파일 문제. 모델 오류는 위로 올려 단계를 멈추고 알린다.
     db.executemany("insert into tags(id, kind, label, score) values(?, ?, ?, ?)", [(row["id"], *t) for t in tags])
     db.execute("insert into recognized(id, made, custom, faces) values(?, ?, ?, ?)",
                (row["id"], row["stamp"], custom_signature(config), int(bool(engine.faces))))

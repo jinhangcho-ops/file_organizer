@@ -826,13 +826,11 @@ document.addEventListener("drop", (e) => e.preventDefault());
 
 // 범위 하나(view)를 바뀐 경로에 맞춘다: 폴더가 그 안이면 새 경로로, 같은 파일 보기의 기준이면 새 경로로. after가 null이면 지운 것(모든 파일로).
 function follow(view, before, after) {
-  const old = lower(before);
-  if (view.same) return lower(view.same) !== old ? view : after ? {...view, same: after} : {all: true};
-  const now = view.folder && lower(view.folder);
+  const field = view.same ? "same" : "folder", now = view[field] && lower(view[field]), old = lower(before);
   if (!now || (now !== old && !now.startsWith(old + "\\"))) return view;
   if (!after) return {all: true};
-  const folder = after + view.folder.slice(before.length);
-  return {...view, folder, name: baseName(folder)};
+  const moved = after + view[field].slice(before.length);
+  return field === "same" ? {...view, same: moved} : {...view, folder: moved, name: baseName(moved)};
 }
 
 // 지금 범위와 돌아가기 기록(trail)을 바뀐 경로에 맞춘다.
@@ -860,7 +858,7 @@ async function afterChange(message) {
 async function moveTo(paths, folder, name) {
   try {
     const result = await runJob((await api("/api/move", {paths, folder})).job);
-    if (result && paths.length === 1 && result.paths.length === 1) followScope(paths[0], result.paths[0]);
+    (result?.pairs || []).forEach(([before, after]) => followScope(before, after));
     if (result) await afterChange(`${result.moved.toLocaleString()}개를 '${name}'${josa(name, "으로", "로")} 옮겼어요.${failedText(result)}`);
   } catch (e) {
     toast(e.message);
@@ -907,8 +905,15 @@ async function showDetail(row) {
   $("detail-pills").replaceChildren(...[samePill(row), row.stale ? el("span", {className: "pill", textContent: `${state.settings.stale_days}일 넘게 안 열었어요`}) : null]
     .filter(Boolean));
   $("detail-preview").textContent = "";
+  for (const id of ["detail-rows", "same-content", "same-name"]) $(id).replaceChildren();
   const q = encodeURIComponent(row.path);
-  const [chain, same, preview] = await Promise.all([api("/api/chain?path=" + q), api("/api/same?path=" + q), api("/api/preview?path=" + q)]);
+  let chain, same, preview;
+  try {
+    [chain, same, preview] = await Promise.all([api("/api/chain?path=" + q), api("/api/same?path=" + q), api("/api/preview?path=" + q)]);
+  } catch (e) {
+    if (picked === row) say("detail-message", e.message, "error");
+    return;
+  }
   if (picked !== row) return;
   $("detail-preview").textContent = preview.text || (preview.readable ? "아직 내용을 읽지 않았거나 글자가 없어요." : "이 형식은 내용을 읽지 않아요(사진·동영상·hwp 등).");
   showFacts([["종류", row.kind], ["크기", size(row.size)], ["위치", crumbs(chain.folders)], ["마지막 수정", fullDate(row.modified)]]);
@@ -942,8 +947,16 @@ async function showFolderDetail(row) {
   $("detail-rows").replaceChildren();
   $("folder-note").value = "";
   say("folder-note-message", "");
+  $("folder-kinds").replaceChildren();
+  $("folder-big").replaceChildren();
   const q = encodeURIComponent(row.path);
-  const [{summary: s, note}, chain] = await Promise.all([api("/api/folder_summary?path=" + q), api("/api/chain?folder=1&path=" + q)]);
+  let s, note, chain;
+  try {
+    [{summary: s, note}, chain] = await Promise.all([api("/api/folder_summary?path=" + q), api("/api/chain?folder=1&path=" + q)]);
+  } catch (e) {
+    if (picked === row) say("detail-message", e.message, "error");
+    return;
+  }
   if (picked !== row || !s) return;
   const same = el("button", {className: "crumb", textContent: s.same ? `${s.same.toLocaleString()}개` : "없음", disabled: !s.same});
   same.addEventListener("click", () => openScope({folder: row.path, name: row.name}, "duplicates"));
@@ -1052,6 +1065,7 @@ $("act-move").addEventListener("click", (e) => busy(e.currentTarget, "detail-mes
   if (!folder) return;
   const result = await runJob((await api("/api/move", {paths, folder})).job);
   if (!result) return;
+  if (paths.length !== 1) result.pairs.forEach(([before, after]) => followScope(before, after));  // 하나면 changed가 따라간다
   if (paths.length === 1 && result.paths.length === 1) {
     await changed(picked, result.paths[0]);
     say("detail-message", "옮겼어요." + failedText(result), result.failed.length ? "error" : "ok");
@@ -1149,10 +1163,8 @@ $("lock-open").addEventListener("click", () => openLockWindow());
 async function refreshAfterLock() {
   await showDetail(null);  // 잠근 폴더를 상세에 둔 채 다루지 않게
   await loadState();
-  if (page === "files") {
-    await loadFiles();
-    await leaveGoneFolder();
-  }
+  await loadFiles();
+  await leaveGoneFolder();
 }
 
 // ---------- 차단 폴더(관리자 권한일 때만 바꾼다) ----------
@@ -1370,7 +1382,7 @@ document.querySelectorAll("[data-pick]").forEach((button) => button.addEventList
 // ---------- 설정 ----------
 // 설정 칸에서 고친 글자·숫자 칸은 저장할 때까지 표시해 둔다(다시 그릴 때 덮지 않게).
 $("page-setup").addEventListener("input", (e) => {
-  if (e.target.matches("input[type=text], input[type=number]")) e.target.dataset.edited = "1";
+  if (e.target.matches("input[type=text], input[type=number], #custom-labels input")) e.target.dataset.edited = "1";
 });
 
 function setField(id, value) {
@@ -1525,6 +1537,7 @@ async function forgetFaces() {
 async function setCustomModel(data) {
   try {
     await api("/api/custom_model", data);
+    $("custom-labels").querySelectorAll("[data-edited]").forEach((input) => delete input.dataset.edited);  // 새 모델의 분류로 다시 그린다
     await loadState();
   } catch (err) {
     say("recognize-message", err.message, "error");
