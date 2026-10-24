@@ -3,6 +3,7 @@ import ctypes
 import os
 
 import blacklist
+import index
 import notes
 import server
 from conftest import build, write
@@ -54,3 +55,28 @@ def test_empty_folder(home, client, fake_trash, monkeypatch):
     client.post("/api/protect", json={"path": str(box)})
     answer = client.post("/api/folder/empty", json={"path": str(box)})
     assert answer.status_code == 400 and "구조 보호" in answer.json["error"]
+
+
+def test_reindex_writes_only_what_changed(home):
+    """다시 색인할 때: 바뀌지 않은 파일은 연 시각이 달라졌을 때만, 폴더 셈은 달라진 폴더만 고쳐 쓴다(결과는 다 고친 것과 같다)."""
+    write(home / "가" / "a.txt")
+    write(home / "나" / "b.txt")
+    build(home)
+    st = os.stat(home / "가" / "a.txt")
+    os.utime(home / "가" / "a.txt", ns=(st.st_atime_ns - 10 * 86400 * 10**9, st.st_mtime_ns))  # 연 시각만 바꾼다
+    (home / "나" / "b.txt").unlink()
+    db = index.connect()
+    try:
+        changed = []
+        db.set_trace_callback(lambda sql: changed.append(sql) if sql.lstrip().startswith("update") else None)
+        index.totals(db)
+        assert not changed  # 셈이 그대로면 쓰지 않는다
+    finally:
+        db.close()
+    build(home)
+    db = index.connect()
+    try:
+        assert db.execute("select accessed from files where name = 'a.txt'").fetchone()[0] == int(st.st_atime) - 10 * 86400
+        assert dict(db.execute("select name, files from folders").fetchall()) == {"root": 1, "가": 1, "나": 0}
+    finally:
+        db.close()

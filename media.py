@@ -154,18 +154,20 @@ def pair(db, a, b, score):
 
 
 def match_images(db, ids):
-    """새로 지문을 만든 사진(ids)마다, 같은 조각이 있는 사진과만 비교해 IMAGE_BITS 안쪽이면 짝으로 남긴다."""
+    """새로 지문을 만든 사진(ids)마다, 같은 조각이 있는 사진과만 비교해 IMAGE_BITS 안쪽이면 짝으로 남긴다.
+    사진 지문은 한 번에 읽어 둔다(후보마다 따로 읽으면 사진 10만 장에서 수억 번 묻게 된다)."""
+    if not ids:
+        return
+    hashes = {r["id"]: decode(r["frames"]) for r in db.execute("select id, frames from media where kind = 'image'")}
     for me in ids:
-        row = db.execute("select frames from media where id = ? and kind = 'image'", (me,)).fetchone()
-        mine = decode(row["frames"]) if row else []
+        mine = hashes.get(me) or []
         if not mine or mine[0] is None:
             continue
         h = mine[0]
         others = {other for n in range(BANDS) for (other,) in db.execute(
             "select id from media_band where band = ? and value = ? and id <> ?", (n, h >> (8 * n) & 255, me))}
         for other in others:
-            theirs = decode(db.execute("select frames from media where id = ?", (other,)).fetchone()["frames"])
-            d = distance(h, theirs[0])
+            d = distance(h, hashes[other][0])
             if d <= IMAGE_BITS:
                 pair(db, me, other, round(100 * (1 - d / 64)))
 

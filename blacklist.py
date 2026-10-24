@@ -9,6 +9,7 @@ from pathlib import Path
 
 import exclude
 import fence
+import index
 
 FILE = "blacklist.json"
 ADMINS, SYSTEM, USERS = "*S-1-5-32-544", "*S-1-5-18", "*S-1-5-32-545"
@@ -29,6 +30,11 @@ def load(name=FILE):
     except (FileNotFoundError, ValueError):
         return []
     return [path for path in paths if isinstance(path, str)]
+
+
+def keys():
+    """차단 폴더의 비교용 key들(exclude.key)."""
+    return {exclude.key(path) for path in load()}
 
 
 def is_admin():
@@ -79,7 +85,7 @@ def remove(path):
 
 def candidates(roots):
     """색인하는 드라이브에서 찾은 게임 폴더 중 아직 차단하지 않은 것들(경로 순)."""
-    blocked = {exclude.key(p) for p in load()}
+    blocked = keys()
     found = []
     for drive in drive_roots(roots):
         for depth_one in subfolders(drive):
@@ -100,6 +106,6 @@ def subfolders(path):
     try:
         with os.scandir(path) as entries:
             return [e.path for e in entries if e.is_dir(follow_symlinks=False) and not e.is_junction()
-                    and not e.stat(follow_symlinks=False).st_file_attributes & 0x6]
+                    and not index.hidden(e.stat(follow_symlinks=False))]
     except OSError:
         return []

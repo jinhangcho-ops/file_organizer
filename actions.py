@@ -20,45 +20,65 @@ def move_many(paths, folder, progress=lambda *args: None):
     if not os.path.isdir(folder):
         raise ValueError(f"없는 폴더입니다: {folder}")
     into = exclude.key(folder)
-    done, failed = [], []
-    for n, path in enumerate(paths):
-        progress(n, len(paths), path)
-        try:
-            if exclude.key(os.path.dirname(path)) == into:
-                raise ValueError("이미 그 폴더에 있습니다.")
-            if os.path.isdir(path) and (into == exclude.key(path) or into.startswith(os.path.join(exclude.key(path), ""))):
-                raise ValueError("폴더를 그 안으로 옮길 수 없습니다.")
-            target = organize.free_name(folder, os.path.basename(path), set())
-            (organize.move_folder if os.path.isdir(path) else organize.move)(path, target)
-            done.append((path, target))
-        except organize.Partial as e:  # 옮긴 곳의 것을 색인에 넣는다(원래 폴더에 남은 것은 다음 색인 때 들어간다).
-            done.append((path, target))
-            failed.append({"from": path, "error": str(e)})
-        except (OSError, ValueError) as e:
-            failed.append({"from": path, "error": getattr(e, "strerror", None) or str(e)})
-    progress(len(paths), len(paths))
+
+    def plan(path, _):
+        if exclude.key(os.path.dirname(path)) == into:
+            raise ValueError("이미 그 폴더에 있습니다.")
+        if os.path.isdir(path) and fence.inside(into, {exclude.key(path)}):
+            raise ValueError("폴더를 그 안으로 옮길 수 없습니다.")
+        return organize.free_name(folder, os.path.basename(path), set())
+
+    done, failed = move_each([(path, None) for path in paths], plan, progress)
     if done:
-        index.moved(done)
-        lock.moved(done)  # 옮긴 폴더 안의 잠금 폴더·금고 위치를 비밀 파일에서 고친다.
-        notes.moved(done)
         undo.record("move", done, f"{len(done)}개 옮기기")
     return {"moved": len(done), "failed": failed, "paths": [after for _, after in done]}
 
 
-def rename(path, name):
-    """같은 폴더 안에서 이름을 바꾼다. 같은 이름이 있으면 거부한다(대소문자만 바꾸는 것은 된다). 바뀐 경로를 돌려준다."""
+def move_each(pairs, plan, progress):
+    """(옮길 것, 정해 둔 곳)마다 plan(옮길 것, 정해 둔 곳)이 검사하고 돌려준 곳으로 옮기고, 옮긴 것을 반영한다(moved). (옮긴 (전, 후)들, 실패들)"""
+    done, failed = [], []
+    for n, (src, dst) in enumerate(pairs):
+        progress(n, len(pairs), src)
+        try:
+            target = plan(src, dst)
+            (organize.move_folder if os.path.isdir(src) else organize.move)(src, target)
+            done.append((src, target))
+        except organize.Partial as e:  # 옮긴 곳의 것을 색인에 넣는다(원래 폴더에 남은 것은 다음 색인 때 들어간다).
+            done.append((src, target))
+            failed.append({"from": src, "error": str(e)})
+        except (OSError, ValueError) as e:
+            failed.append({"from": src, "error": getattr(e, "strerror", None) or str(e)})
+    progress(len(pairs), len(pairs))
+    if done:
+        moved(done)
+    return done, failed
+
+
+def moved(pairs):
+    """옮긴 (전, 후)들을 색인·잠금 기록(옮긴 폴더 안의 잠금 폴더·금고 위치)·메모에 반영한다."""
+    index.moved(pairs)
+    lock.moved(pairs)
+    notes.moved(pairs)
+
+
+def check_name(name):
+    """새 이름(앞뒤 빈칸은 뗀다). 쓸 수 없는 이름이면 거부한다(이름 바꾸기와 새 폴더가 같이 쓴다)."""
     name = (name or "").strip()
     if not name or name in (".", "..") or BAD & set(name) or name.endswith("."):
         raise ValueError('쓸 수 없는 이름입니다. \\ / : * ? " < > | 는 쓸 수 없습니다.')
+    return name
+
+
+def rename(path, name):
+    """같은 폴더 안에서 이름을 바꾼다. 같은 이름이 있으면 거부한다(대소문자만 바꾸는 것은 된다). 바뀐 경로를 돌려준다."""
+    name = check_name(name)
     target = os.path.join(os.path.dirname(path), name)
     if target == path:
         return path
     if os.path.lexists(target) and exclude.key(target) != exclude.key(path):
         raise ValueError(f"같은 이름의 파일이 있습니다: {name}")
     os.rename(path, target)
-    index.moved([(path, target)])
-    lock.moved([(path, target)])
-    notes.moved([(path, target)])
+    moved([(path, target)])
     undo.record("rename", [(path, target)], f"이름 바꾸기 '{name}'")
     return target
 
@@ -67,29 +87,17 @@ def move_back(pairs, progress=lambda *args: None):
     """되돌리기: (전, 후)로 옮겼던 것을 거꾸로(나중 것부터) 원래 자리로. 옮기기와 같은 검사·반영을 하고, 덮어쓰지 않는다.
     원래 자리에 같은 이름이 생겼거나, 그사이 사라졌거나, 차단·잠금·구조 보호에 걸리면 그 항목은 그대로 두고 알린다.
     {"moved", "failed", "paths"(되돌린 원래 경로)}"""
-    done, failed = [], []
-    for n, (before, after) in enumerate(reversed(pairs)):
-        progress(n, len(pairs), after)
-        try:
-            if not os.path.lexists(after):
-                raise ValueError("옮긴 파일이 없습니다(그사이 옮기거나 지웠습니다).")
-            if os.path.lexists(before) and exclude.key(before) != exclude.key(after):
-                raise ValueError("원래 자리에 같은 이름이 있습니다.")
-            fence.refuse(os.path.dirname(before))
-            fence.refuse_holding(after, drives.same_drive(after, before), moving=True)
-            lock.refuse_clash(after, before)
-            (organize.move_folder if os.path.isdir(after) else organize.move)(after, before)
-            done.append((after, before))
-        except organize.Partial as e:  # move_many와 같다: 옮긴 것은 반영하고, 원래 폴더에 남은 것은 알린다.
-            done.append((after, before))
-            failed.append({"from": after, "error": str(e)})
-        except (OSError, ValueError) as e:
-            failed.append({"from": after, "error": getattr(e, "strerror", None) or str(e)})
-    progress(len(pairs), len(pairs))
-    if done:
-        index.moved(done)
-        lock.moved(done)
-        notes.moved(done)
+    def plan(after, before):
+        if not os.path.lexists(after):
+            raise ValueError("옮긴 파일이 없습니다(그사이 옮기거나 지웠습니다).")
+        if os.path.lexists(before) and exclude.key(before) != exclude.key(after):
+            raise ValueError("원래 자리에 같은 이름이 있습니다.")
+        fence.refuse(os.path.dirname(before))
+        fence.refuse_holding(after, drives.same_drive(after, before), moving=True)
+        lock.refuse_clash(after, before)
+        return before
+
+    done, failed = move_each([(after, before) for before, after in reversed(pairs)], plan, progress)
     return {"moved": len(done), "failed": failed, "paths": [before for _, before in done]}
 
 
@@ -108,16 +116,13 @@ def trash_many(paths, progress=lambda *args: None):
     return {"trashed": len(sent), "failed": failed}
 
 
-HIDDEN = 0x2 | 0x4
-
-
 def folder_contents(folder):
     """폴더 비우기에 보낼 것: 바로 아래의 파일·폴더(숨김·시스템 파일은 빼고, 링크·정션은 링크만). ([경로], 뺀 숨김 수)"""
     paths, hidden = [], 0
     with os.scandir(folder) as entries:
         for entry in entries:
             try:
-                if entry.stat(follow_symlinks=False).st_file_attributes & HIDDEN:
+                if index.hidden(entry.stat(follow_symlinks=False)):
                     hidden += 1
                     continue
             except OSError:

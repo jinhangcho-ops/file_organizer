@@ -16,6 +16,7 @@ import drives
 import exclude
 import fence
 import games
+import index
 import kinds
 import organize
 import undo
@@ -71,7 +72,7 @@ def files_in(folder):
     """폴더 바로 아래의 파일(링크·숨김·시스템 파일은 뺀다)."""
     try:
         with os.scandir(folder) as entries:
-            return sorted((e.path for e in entries if e.is_file(follow_symlinks=False) and not e.stat().st_file_attributes & 0x6), key=str.lower)
+            return sorted((e.path for e in entries if e.is_file(follow_symlinks=False) and not index.hidden(e.stat())), key=str.lower)
     except OSError:
         return []
 

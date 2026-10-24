@@ -114,7 +114,7 @@ def roots(config):
         if path and os.path.isdir(path) and not fence.inside(path, fences):
             found.append(os.path.abspath(path))
     keys = {exclude.key(path): path for path in found}
-    return [path for k, path in keys.items() if not any(k != other and k.startswith(os.path.join(other, "")) for other in keys)]
+    return [path for k, path in keys.items() if not fence.inside(k, keys.keys() - {k})]
 
 
 def walk(root, fences=frozenset(), game_keys=frozenset(), found_games=None, never_game=frozenset()):
@@ -192,7 +192,8 @@ def add_folder(db, path, parent):
 def totals(db):
     """폴더마다 그 아래 전체(하위 폴더 포함)의 파일 수·용량을 다시 센다. 안을 읽지 않은 게임 폴더는 런처가 아는 크기나
     센 크기(games 표)를 더한다(왼쪽 폴더 목록에서 큰 게임 폴더가 빠지지 않게)."""
-    parent = dict(db.execute("select key, parent from folders").fetchall())
+    saved = {key: (parent, files, size) for key, parent, files, size in db.execute("select key, parent, files, size from folders")}
+    parent = {key: row[0] for key, row in saved.items()}
     count = dict.fromkeys(parent, 0)
     size = dict.fromkeys(parent, 0)
     game_sizes = {exclude.key(g["path"]): g["size"] for g in games.launcher_games() if g.get("size")}
@@ -203,7 +204,7 @@ def totals(db):
             count[folder] += n
             size[folder] += s
             folder = parent[folder]
-    db.executemany("update folders set files = ?, size = ? where key = ?", [(count[k], size[k], k) for k in parent])
+    db.executemany("update folders set files = ?, size = ? where key = ?", [(count[k], size[k], k) for k in parent if saved[k][1:] != (count[k], size[k])])
 
 
 def step_work(name):
@@ -226,7 +227,7 @@ def build(paths, only=None):
         if only:
             step_work(only)(db)
             return
-        old = {row["key"]: (row["size"], row["stamp"]) for row in db.execute("select key, size, stamp from files")}
+        old = {row["key"]: tuple(row)[1:] for row in db.execute("select key, size, stamp, accessed, kind, id from files")}
         seen, folders, found_games = set(), set(), []
         status.update(step="파일 목록 확인", done=0, total=0)
         done = scan(db, paths, old, seen, folders, found_games)
@@ -238,7 +239,7 @@ def build(paths, only=None):
                            [(exclude.key(p), p, sizes.get(exclude.key(p))) for p in found_games])
             games.forget()
             gone = [(key,) for key in old if key not in seen]
-            drop_ids(db, [row[0] for key in gone for row in db.execute("select id from files where key = ?", key)])
+            drop_ids(db, [old[key][4] for (key,) in gone])
             db.executemany("delete from files where key = ?", gone)
             db.executemany("delete from folders where key = ?", [(key,) for (key,) in db.execute("select key from folders") if key not in folders])
         totals(db)
@@ -273,9 +274,11 @@ def scan(db, paths, old, seen, folders, found_games):
                     continue
                 key = exclude.key(entry.path)
                 seen.add(key)
-                if old.get(key) == (st.st_size, st.st_mtime_ns):  # 바뀌지 않았다: 연 시각과 종류(종류 표가 바뀌었을 수 있다)만 고친다.
-                    ext = os.path.splitext(entry.name)[1].lower()
-                    db.execute("update files set accessed = ?, kind = ? where key = ?", (int(st.st_atime), kinds.of(ext), key))
+                known = old.get(key)
+                if known and known[:2] == (st.st_size, st.st_mtime_ns):  # 바뀌지 않았다: 연 시각과 종류(종류 표가 바뀌었을 수 있다)만, 달라졌을 때 고친다.
+                    now = (int(st.st_atime), kinds.of(os.path.splitext(entry.name)[1].lower()))
+                    if known[2:4] != now:
+                        db.execute("update files set accessed = ?, kind = ? where key = ?", (*now, key))
                 else:
                     status["current"] = entry.path
                     save_file(db, entry.path, st)
@@ -482,14 +485,12 @@ def move_folder_rows(db, before, after):
     """폴더 before(와 그 아래 전부)를 after로 옮긴 것을 반영한다. 내용·지문은 그대로 두고 경로만 바꾼다."""
     old = prefix(before)
     folders = db.execute("select key, path from folders where key = ? or substr(key, 1, ?) = ?", (exclude.key(before), len(old), old)).fetchall()
-    for row in folders:
-        path = after + row["path"][len(before):]
-        db.execute("update folders set key = ?, path = ?, parent = ?, name = ? where key = ?",
-                   (exclude.key(path), path, exclude.key(os.path.dirname(path)), os.path.basename(path), row["key"]))
-    for row in db.execute("select id, path from files where substr(key, 1, ?) = ?", (len(old), old)).fetchall():
-        path = after + row["path"][len(before):]
-        key = exclude.key(path)
-        db.execute("update files set path = ?, key = ?, folder = ? where id = ?", (path, key, os.path.dirname(key), row["id"]))
+    paths = [(after + row["path"][len(before):], row["key"]) for row in folders]
+    db.executemany("update folders set key = ?, path = ?, parent = ?, name = ? where key = ?",
+                   [(exclude.key(path), path, exclude.key(os.path.dirname(path)), os.path.basename(path), key) for path, key in paths])
+    files = [(after + row["path"][len(before):], row["id"]) for row in db.execute("select id, path from files where substr(key, 1, ?) = ?", (len(old), old))]
+    db.executemany("update files set path = ?, key = ?, folder = ? where id = ?",
+                   [(path, exclude.key(path), os.path.dirname(exclude.key(path)), id_) for path, id_ in files])
 
 
 def moved(pairs):
@@ -577,7 +578,3 @@ def count():
     finally:
         db.close()
 
-
-def known(path):
-    """path가 색인에 있는 파일·폴더인지. 화면이 열어 달라는 경로는 이것으로 확인한다."""
-    return look([path])[path][0]

@@ -91,12 +91,13 @@ def body():
 
 @app.get("/api/state")
 def state():
-    return jsonify(settings=settings.load(), drives=drives.list_drives(), known=drives.known_folders(), kinds=kinds.NAMES,
+    config = settings.load()
+    return jsonify(settings=config, drives=drives.list_drives(), known=drives.known_folders(), kinds=kinds.NAMES,
                    last_access=drives.last_access_on(), undo=len(organize.last()), index=index.status, counts=search.counts(),
                    places=tree.places(), exclude=exclude.load(), blacklist=blacklist.load(), protected=protect.load(), admin=blacklist.is_admin(),
                    panes=settings.PANES,
-                   steps=settings.STEPS, step_list=settings.step_list(settings.load()), models=models.status(), labels=recognize.LABELS,
-                   custom_count=recognize.custom_count(settings.load()["custom_model_path"]), numbers={name: {"min": low, "max": high} for name, (low, high, _) in settings.NUMBERS.items()})
+                   steps=settings.STEPS, step_list=settings.step_list(config), models=models.status(), labels=recognize.LABELS,
+                   custom_count=recognize.custom_count(config["custom_model_path"]), numbers={name: {"min": low, "max": high} for name, (low, high, _) in settings.NUMBERS.items()})
 
 
 @app.post("/api/settings")
@@ -373,10 +374,10 @@ def empty_folder():
     if fence.inside(path, protect.keys()):  # 구조 보호 폴더(와 그 안)는 안의 것을 휴지통으로 보내지 않는다.
         raise ValueError(f"구조 보호 폴더라 비울 수 없습니다: {path}")
     paths, hidden = actions.folder_contents(path)
-    refused = []
+    refused, fences, game_keys = [], fence.keys(), games.keys()
     for item in list(paths):
         try:
-            fence.refuse_system(fence.refuse(item))
+            fence.refuse_system(fence.refuse(item, fences), game_keys)
             fence.refuse_holding(item, False)
         except ValueError as e:
             refused.append({"from": item, "error": str(e)})
@@ -515,7 +516,7 @@ def lock_folder():
     path = indexed_path()
     if not os.path.isdir(path) or index.is_root(path):
         raise ValueError(f"잠글 수 없는 폴더입니다(색인한 맨 위 폴더나 파일): {path}")
-    blocked = {exclude.key(p) for p in blacklist.load()}
+    blocked = blacklist.keys()
     if data.get("vault"):  # 금고로 모으기는 폴더를 옮긴다.
         fence.refuse_holding(path, True, moving=True)
     (lock.collect if data.get("vault") else lock.lock)(path, data.get("password"), blocked)

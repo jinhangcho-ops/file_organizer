@@ -24,7 +24,7 @@ def add(path):
     path = os.path.abspath(path)
     if not os.path.isdir(path):
         raise ValueError(f"없는 폴더입니다: {path}")
-    if fence.inside(path, {exclude.key(p) for p in blacklist.load()}):
+    if fence.inside(path, blacklist.keys()):
         raise ValueError(f"차단 폴더 안이라 이미 다루지 않습니다: {path}")
     if fence.inside(path, keys()):
         raise ValueError(f"이미 구조 보호 폴더(또는 그 아래)입니다: {path}")

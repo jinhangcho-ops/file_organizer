@@ -66,7 +66,7 @@ def refuse_holding(path, locks_ok, moving=False):
     구조 보호 폴더는 그 자신과 그것을 품은 폴더를 거부하고, 이름 바꾸기·휴지통이면 그 안의 것도 거부한다(안의 것을 밖으로 옮기기는 된다).
     잠금 폴더·금고를 품은 폴더는 locks_ok(같은 디스크 안 옮기기·이름 바꾸기: lock.moved가 위치를 고친다)일 때만 받는다.
     다른 디스크로 옮기기는 복사가 잠긴 내용을 읽지 못하고, 휴지통은 비우면 잠긴 내용까지 사라지기 때문이다."""
-    if holds(path, {exclude.key(p) for p in blacklist.load()}):
+    if holds(path, blacklist.keys()):
         raise ValueError(f"차단 폴더가 들어 있어 옮기거나 지울 수 없습니다: {path}")
     if holds(path, games.keys()):
         raise ValueError(f"게임 폴더가 들어 있어 옮기거나 지울 수 없습니다: {path}")

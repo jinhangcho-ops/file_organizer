@@ -5,6 +5,17 @@
 const $ = (id) => document.getElementById(id);
 const FOLDER_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M3 6.5A2.5 2.5 0 0 1 5.5 4h4l2 2.5h7A2.5 2.5 0 0 1 21 9v8.5a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/></svg>';
 
+// 화면 색: theme()이 주는 설정(auto면 Windows 설정을 따른다)대로 맞추는 함수를 돌려주고, Windows 색이 바뀌면 다시 맞춘다.
+function followTheme(theme) {
+  const query = matchMedia("(prefers-color-scheme: dark)");
+  const apply = () => {
+    const chosen = theme() || "auto";
+    document.documentElement.dataset.theme = chosen === "auto" ? (query.matches ? "dark" : "light") : chosen;
+  };
+  query.addEventListener("change", apply);
+  return apply;
+}
+
 async function api(path, data) {
   const options = data === undefined ? {} : {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(data)};
   const response = await fetch(path, options);

@@ -38,9 +38,9 @@ def candidates(days, dest=""):
                           [since, *SKIP_KINDS, *values]).fetchall()
     finally:
         db.close()
-    inside = os.path.join(exclude.key(dest), "") if dest else None
+    into = {exclude.key(dest)} if dest else set()
     kept = protect.keys() | games.keys()  # 구조 보호 폴더와 게임 폴더 안의 원본은 휴지통으로 보내지 않는다.
-    return [dict(row) for row in rows if not (inside and exclude.key(row["path"]).startswith(inside)) and not fence.inside(row["path"], kept)
+    return [dict(row) for row in rows if not fence.inside(row["path"], into) and not fence.inside(row["path"], kept)
             and not fence.system_folder(row["path"])]
 
 

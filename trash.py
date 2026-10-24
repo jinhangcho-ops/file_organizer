@@ -43,13 +43,6 @@ def recycle_settings(path):
     return bool(values.get("NukeOnDelete")), capacity * 1024 * 1024 if capacity else None
 
 
-def capacity_of(path):
-    """그 디스크 휴지통의 최대 크기(바이트). 설정 값이 없는 디스크(새로 단 디스크 등)는 디스크 크기의 5%로 본다.
-    Windows 기본값보다 작게 잡은 값이다. 크기를 모른 채 보내면 '확인 없이'라서 큰 것은 영구 삭제될 수 있다."""
-    capacity = recycle_settings(path)[1]
-    return capacity if capacity is not None else shutil.disk_usage(os.path.splitdrive(os.path.abspath(path))[0] + "\\").total // 20
-
-
 def size_of(path):
     if not os.path.isdir(path):
         return os.path.getsize(path)
@@ -62,9 +55,12 @@ def problem(path):
         return "없는 파일입니다"
     if drives.drive_type(path) != FIXED:
         return "휴지통이 없는 곳(네트워크·이동식 디스크)입니다"
-    if recycle_settings(path)[0]:
+    off, capacity = recycle_settings(path)
+    if off:
         return "이 디스크는 휴지통을 쓰지 않도록 설정되어 있습니다"
-    if size_of(path) > capacity_of(path):
+    if capacity is None:  # 설정 값이 없는 디스크(새로 단 디스크 등)는 Windows 기본값보다 작게 디스크 크기의 5%로 본다.
+        capacity = shutil.disk_usage(os.path.splitdrive(os.path.abspath(path))[0] + "\\").total // 20  # 크기를 모른 채 보내면 '확인 없이'라 큰 것은 영구 삭제될 수 있다.
+    if size_of(path) > capacity:
         return "휴지통 최대 크기보다 큽니다"
     return None
 

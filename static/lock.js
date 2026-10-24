@@ -5,14 +5,11 @@
 let lockState = null;  // /api/lock/state의 답
 const password = (title, text = "") => ask({title, text, value: "", secret: true});
 
-function applyTheme(theme) {
-  const dark = theme === "dark" || (theme === "auto" && matchMedia("(prefers-color-scheme: dark)").matches);
-  document.documentElement.dataset.theme = dark ? "dark" : "light";
-}
+const applyTheme = followTheme(() => lockState?.theme);
 
 async function load() {
   lockState = await api("/api/lock/state");
-  applyTheme(lockState.theme);
+  applyTheme();
   $("target-box").classList.toggle("hidden", !lockState.target);
   $("target").textContent = lockState.target;
   $("locks").replaceChildren(...lockState.locks.map(lockRow));
@@ -110,5 +107,4 @@ function lockRow(item) {
   return row;
 }
 
-matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => applyTheme(lockState?.theme || "auto"));
 load();

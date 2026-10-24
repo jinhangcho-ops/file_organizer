@@ -2,11 +2,10 @@
 숨김·시스템 폴더, 링크·정션, 차단·잠금 폴더(와 그 아래)는 보여 주지도 들어가지도 않는다."""
 import os
 
+import actions
 import drives
 import fence
-
-BAD = set('\\/:*?"<>|')  # 폴더 이름에 쓸 수 없는 글자(actions.BAD와 같다)
-HIDDEN = 0x2 | 0x4
+import index
 
 
 def places():
@@ -33,7 +32,7 @@ def listing(path, ext=None):
                     if entry.is_symlink() or entry.is_junction():
                         continue
                     st = entry.stat(follow_symlinks=False)
-                    if st.st_file_attributes & HIDDEN:
+                    if index.hidden(st):
                         continue
                     if entry.is_dir(follow_symlinks=False):
                         if not fence.inside(entry.path, fences):
@@ -51,9 +50,7 @@ def listing(path, ext=None):
 
 def make_folder(path, name):
     """path 안에 새 폴더 name을 만든다. 같은 이름이 있으면 거부한다. 만든 폴더의 경로."""
-    name = (name or "").strip()
-    if not name or name in (".", "..") or BAD & set(name) or name.endswith("."):
-        raise ValueError('쓸 수 없는 이름입니다. \\ / : * ? " < > | 는 쓸 수 없습니다.')
+    name = actions.check_name(name)
     if not path or not os.path.isdir(path):
         raise ValueError("새 폴더를 만들 곳을 먼저 여세요.")
     fence.refuse(os.path.abspath(path))

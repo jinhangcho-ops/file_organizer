@@ -38,6 +38,7 @@ const WHY = {bytes: "중복 의심", doc: "내용 같은 문서", text: "글자 
 const lower = (path) => path.toLowerCase();
 const two = (n) => String(n).padStart(2, "0");
 const baseName = (path) => path.slice(path.lastIndexOf("\\") + 1);
+const dirName = (path) => path.slice(0, path.lastIndexOf("\\"));
 const extOf = (name) => (name.includes(".") ? name.slice(name.lastIndexOf(".")) : "");
 const viewTitle = (view) => (typeof VIEWS[view].title === "function" ? VIEWS[view].title() : VIEWS[view].title);
 
@@ -84,13 +85,7 @@ async function runJob(started) {
 }
 
 // ---------- 화면 색·창 ----------
-const darkQuery = matchMedia("(prefers-color-scheme: dark)");
-
-function applyTheme() {
-  const theme = state?.settings.theme || "auto";
-  document.documentElement.dataset.theme = theme === "auto" ? (darkQuery.matches ? "dark" : "light") : theme;
-}
-darkQuery.addEventListener("change", applyTheme);
+const applyTheme = followTheme(() => state?.settings.theme);
 
 $("theme").addEventListener("click", async () => {
   const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
@@ -312,9 +307,20 @@ function folderRow(folder, depth, biggest, top) {
   return row;
 }
 
+// 폴더 바로 아래 폴더들을 읽어 children에 둔다(이미 있으면 그대로). 그 폴더의 key.
+async function loadChildren(path) {
+  const key = lower(path);
+  if (!children.has(key)) children.set(key, (await api("/api/tree?path=" + encodeURIComponent(path))).folders);
+  return key;
+}
+
+// 폴더들(위에서 아래 순서)을 펼친다.
+async function expandChain(folders) {
+  for (const f of folders) opened.add(await loadChildren(f.path));
+}
+
 async function toggleFolder(folder, open) {
-  const key = lower(folder.path);
-  if (open && !children.has(key)) children.set(key, (await api("/api/tree?path=" + encodeURIComponent(folder.path))).folders);
+  const key = open ? await loadChildren(folder.path) : lower(folder.path);
   open ? opened.add(key) : opened.delete(key);
   await drawTree(false);
 }
@@ -342,7 +348,7 @@ async function drawTree(reload = true) {
       const key = lower(folder.path);
       if (pickedFolder && key === lower(pickedFolder)) list.push(pickedRow());
       if (opened.has(key)) {
-        if (!children.has(key)) children.set(key, (await api("/api/tree?path=" + encodeURIComponent(folder.path))).folders);
+        await loadChildren(folder.path);
         await add(children.get(key), depth + 1, false);
       }
     }
@@ -411,11 +417,7 @@ async function showFileInTree(row) {
   if (row) {
     const {folders} = await api("/api/chain?path=" + encodeURIComponent(row.path));
     if (picked !== row) return;
-    for (const f of folders.slice(0, -1)) {  // 고른 파일이 든 폴더의 위 폴더들을 펼친다
-      const key = lower(f.path);
-      if (!children.has(key)) children.set(key, (await api("/api/tree?path=" + encodeURIComponent(f.path))).folders);
-      opened.add(key);
-    }
+    await expandChain(folders.slice(0, -1));  // 고른 파일이 든 폴더의 위 폴더들을 펼친다
     pickedFolder = folders.length ? folders[folders.length - 1].path : null;
   }
   await drawTree(false);
@@ -515,20 +517,21 @@ function showFiles(found, chain, dirs = []) {
     th.textContent = th.textContent.replace(/ [↑↓]$/, "") + (th.dataset.sort === sort ? (order === "asc" ? " ↑" : " ↓") : "");
   });
   rows = [...dirs, ...found.rows];  // 폴더 줄도 줄로 다룬다(고르기·Shift 범위·옮기기·휴지통이 그대로 된다).
-  for (const key of [...selected.keys()]) if (!rows.some((r) => lower(r.path) === key)) selected.delete(key);  // 목록에서 빠진 줄은 고르지 않은 것으로
+  const shown = new Set(rows.map((r) => lower(r.path)));
+  for (const key of [...selected.keys()]) if (!shown.has(key)) selected.delete(key);  // 목록에서 빠진 줄은 고르지 않은 것으로
   const stale = `${state.settings.stale_days}일 넘게 안 열었어요`;
   const grouped = state.settings.list_group === "folder" && !scope.same && !browsing();
   let lastFolder = null;
   $("files").tBodies[0].replaceChildren(...rows.flatMap((row, i) => {
     if (row.folder) return [folderLine(row, i)];
-    const folder = row.path.slice(0, row.path.lastIndexOf("\\"));
+    const folder = dirName(row.path);
     const head = grouped && folder !== lastFolder ? el("tr", {className: "group"}, el("td", {colSpan: 4, textContent: folder, title: folder})) : null;
     lastFolder = folder;
     const name = el("td", {className: "name"}, el("span", {className: "ext", textContent: (extOf(row.name).slice(1) || "?").slice(0, 5).toUpperCase()}), row.name,
       scope.same ? whyPill(row) : samePill(row),
       row.stale ? el("span", {className: "pill", textContent: stale}) : null,
       row.snippet ? el("div", {className: "snippet", textContent: "… " + row.snippet.replace(/\s+/g, " ") + " …"}) : null,
-      scope.same ? el("div", {className: "path", textContent: row.path.slice(0, row.path.lastIndexOf("\\")), title: row.path}) : null);
+      scope.same ? el("div", {className: "path", textContent: dirName(row.path), title: row.path}) : null);
     const tr = el("tr", {}, el("td", {className: "ck"}, el("input", {type: "checkbox"})), name,
       el("td", {className: "n mute", textContent: size(row.size)}), el("td", {className: "mute", textContent: shortDate(row.date)}));
     tr.row = row;
@@ -557,11 +560,7 @@ function folderLine(row, i) {
 async function enterFolder(row) {
   openScope({folder: row.path, name: row.name});
   const {folders} = await api("/api/chain?folder=1&path=" + encodeURIComponent(row.path));
-  for (const f of folders.slice(0, -1)) {
-    const key = lower(f.path);
-    if (!children.has(key)) children.set(key, (await api("/api/tree?path=" + encodeURIComponent(f.path))).folders);
-    opened.add(key);
-  }
+  await expandChain(folders.slice(0, -1));
   await drawTree(false);
 }
 
@@ -653,10 +652,12 @@ function scroller(bar) {
 // ---------- 고르기 ----------
 // 클릭: 그 줄만. 체크 칸·Ctrl+클릭: 더하거나 빼기. Shift+클릭: anchor부터 그 줄까지. 고르지 않은 줄이나 표 아래 빈 곳에서 끌기: 사각형 안의 줄.
 function showSelection() {
+  const current = picked && lower(picked.path);
   document.querySelectorAll("#files tbody tr:not(.group)").forEach((tr) => {
-    const on = selected.has(lower(tr.row.path));
+    const key = lower(tr.row.path);
+    const on = selected.has(key);
     tr.classList.toggle("sel", on);
-    tr.classList.toggle("cur", !!picked && lower(picked.path) === lower(tr.row.path));
+    tr.classList.toggle("cur", key === current);
     tr.querySelector("input").checked = on;
   });
   const n = selected.size;
@@ -872,19 +873,28 @@ async function showDetail(row) {
   const [chain, same, preview] = await Promise.all([api("/api/chain?path=" + q), api("/api/same?path=" + q), api("/api/preview?path=" + q)]);
   if (picked !== row) return;
   $("detail-preview").textContent = preview.text || (preview.readable ? "아직 내용을 읽지 않았거나 글자가 없어요." : "이 형식은 내용을 읽지 않아요(사진·동영상·hwp 등).");
-  const where = el("div");
-  chain.folders.forEach((f, i) => {
-    const button = el("button", {className: "crumb", textContent: f.name, title: f.path});
-    button.addEventListener("click", () => openScope({folder: f.path, name: f.name}));
-    where.append(...(i ? [" › ", button] : [button]));
-  });
-  const facts = [["종류", row.kind], ["크기", size(row.size)], ["위치", where], ["마지막 수정", fullDate(row.modified)]];
-  $("detail-rows").replaceChildren(...facts.flatMap(([k, v]) => [el("span", {textContent: k}), typeof v === "string" ? el("div", {textContent: v}) : v]));
+  showFacts([["종류", row.kind], ["크기", size(row.size)], ["위치", crumbs(chain.folders)], ["마지막 수정", fullDate(row.modified)]]);
   showSame("same-content", "내용이 같은 파일", same.content, "내용이 같은 파일이 없어요.");
   showGuess(row);
   showProvenance(row);
   showSame("same-name", "이름이 같은 파일", same.name, "이름이 같은 파일이 없어요.");
   document.querySelector('[data-fold="same-name"]').classList.toggle("hidden", !state.settings.show_same_name);
+}
+
+// 상세 칸의 위치: 폴더마다 누르면 그 폴더를 여는 버튼(› 로 잇는다).
+function crumbs(folders) {
+  const where = el("div");
+  folders.forEach((f, i) => {
+    const button = el("button", {className: "crumb", textContent: f.name, title: f.path});
+    button.addEventListener("click", () => openScope({folder: f.path, name: f.name}));
+    where.append(...(i ? [" › ", button] : [button]));
+  });
+  return where;
+}
+
+// 상세 칸의 [이름, 값] 줄들(값은 글자이거나 요소).
+function showFacts(facts) {
+  $("detail-rows").replaceChildren(...facts.flatMap(([k, v]) => [el("span", {textContent: k}), typeof v === "string" ? el("div", {textContent: v}) : v]));
 }
 
 // 폴더 설명: 자동 요약(색인에서 센 것)과 내 메모.
@@ -897,18 +907,12 @@ async function showFolderDetail(row) {
   const q = encodeURIComponent(row.path);
   const [{summary: s, note}, chain] = await Promise.all([api("/api/folder_summary?path=" + q), api("/api/chain?folder=1&path=" + q)]);
   if (picked !== row || !s) return;
-  const where = el("div");
-  chain.folders.slice(0, -1).forEach((f, i) => {
-    const button = el("button", {className: "crumb", textContent: f.name, title: f.path});
-    button.addEventListener("click", () => openScope({folder: f.path, name: f.name}));
-    where.append(...(i ? [" › ", button] : [button]));
-  });
   const same = el("button", {className: "crumb", textContent: s.same ? `${s.same.toLocaleString()}개` : "없음", disabled: !s.same});
   same.addEventListener("click", () => openScope({folder: row.path, name: row.name}, "duplicates"));
   const facts = [["종류", "폴더"], ["크기", size(s.size)], ["파일", `${s.files.toLocaleString()}개`],
-    ["하위 폴더", `바로 아래 ${s.children.toLocaleString()}개 · 전체 ${s.below.toLocaleString()}개`], ["위치", where],
+    ["하위 폴더", `바로 아래 ${s.children.toLocaleString()}개 · 전체 ${s.below.toLocaleString()}개`], ["위치", crumbs(chain.folders.slice(0, -1))],
     ["마지막 수정", s.latest ? fullDate(s.latest) : "-"], ["같은 파일 의심", same]];
-  $("detail-rows").replaceChildren(...facts.flatMap(([k, v]) => [el("span", {textContent: k}), typeof v === "string" ? el("div", {textContent: v}) : v]));
+  showFacts(facts);
   $("folder-kinds").replaceChildren(...(s.kinds.length ? s.kinds.map(([k, n]) => el("span", {className: "pill", textContent: `${k} ${n.toLocaleString()}`}))
     : [el("span", {className: "hint", textContent: "파일이 없어요."})]));
   $("folder-big").replaceChildren(...s.biggest.map((f) => {
@@ -972,7 +976,7 @@ async function showGuess(row) {
 function showSame(id, title, list, none) {
   $(id + "-title").textContent = list.length ? `${title} ${list.length.toLocaleString()}개${list.length >= 50 ? " 이상" : ""}` : `${title} 없음`;
   $(id).replaceChildren(...(list.length ? list.map((f) => {
-    const folder = f.path.slice(0, f.path.lastIndexOf("\\"));
+    const folder = dirName(f.path);
     const where = baseName(folder) === f.place ? f.place : `${f.place} › … › ${baseName(folder)}`;
     const why = f.why ? ` · ${WHY[f.why]}${f.score ? " " + f.score + "%" : ""}` : "";
     const button = el("button", {className: "li", title: f.path}, el("span", {textContent: where + why}), el("span", {textContent: size(f.size)}));
@@ -983,7 +987,7 @@ function showSame(id, title, list, none) {
 
 async function goToFile(file) {
   // 같은 파일 목록에서 누른 파일로: 그 폴더를 열고 그 파일을 고른다.
-  const folder = file.path.slice(0, file.path.lastIndexOf("\\"));
+  const folder = dirName(file.path);
   openScope({folder, name: baseName(folder)});
   await loadFiles();
   const row = rows.find((r) => lower(r.path) === lower(file.path));
@@ -1153,7 +1157,7 @@ $("block-find").addEventListener("click", async () => {
 
 async function changeExclude(path, remove) {
   try {
-    state.exclude = (await api("/api/exclude", {path, remove})).exclude;
+    await api("/api/exclude", {path, remove});
     await loadState();
     if (page === "files") await loadFiles();
     toast(remove ? "예외에서 뺐어요" : "예외로 지정했어요. 중복 의심 등 네 목록에서 빠져요.");
@@ -1482,31 +1486,26 @@ $("custom-save").addEventListener("click", async () => {
     const {i, field} = input.dataset;
     labels[i][field] = field === "show" ? input.checked : field === "threshold" ? Number(input.value) : input.value;
   });
-  if (await saveSettings({custom_labels: labels}, "recognize-message")) {
-    await loadState();
-    say("recognize-message", "저장했어요.", "ok");
-  } else {
-    $("recognize-message").className = "message error";
-  }
+  await saveAndSay({custom_labels: labels}, "recognize-message", "저장했어요.");
 });
 
-async function saveSteps(list) {
-  if (await saveSettings({index_steps: list}, "steps-message")) {
+// 설정을 저장하고 다시 읽은 뒤 id 칸에 알린다(실패하면 saveSettings가 쓴 문구를 오류 색으로).
+async function saveAndSay(changes, id, done) {
+  if (await saveSettings(changes, id)) {
     await loadState();
-    say("steps-message", "색인 단계를 저장했어요.", "ok");
+    say(id, done, "ok");
   } else {
-    $("steps-message").className = "message error";
+    $(id).className = "message error";
   }
+}
+
+async function saveSteps(list) {
+  await saveAndSay({index_steps: list}, "steps-message", "색인 단계를 저장했어요.");
 }
 
 $("numbers-save").addEventListener("click", async () => {
   const changes = {video_interval: Number($("video_interval").value), video_similar: Number($("video_similar").value)};
-  if (await saveSettings(changes, "steps-message")) {
-    await loadState();
-    say("steps-message", "저장했어요. 장면 간격을 바꾸면 다음 [사진·동영상 비교]에서 장면을 다시 뽑아요.", "ok");
-  } else {
-    $("steps-message").className = "message error";
-  }
+  await saveAndSay(changes, "steps-message", "저장했어요. 장면 간격을 바꾸면 다음 [사진·동영상 비교]에서 장면을 다시 뽑아요.");
 });
 
 function showView() {

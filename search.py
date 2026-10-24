@@ -4,8 +4,6 @@
 - 최근 받은 파일: 다운로드 표시가 있고 만든 시각(받은 시각)이 기간 안.
 모아 보기에는 예외(exclude)를 적용한다. 위치·검색에는 적용하지 않는다."""
 import datetime
-import os
-import re
 import time
 
 import exclude
@@ -67,7 +65,7 @@ def number(value, name):
 def under(path):
     """폴더 path 아래(하위 폴더 포함) 파일의 조건과 값. key가 '폴더\' 이상 '폴더]' 미만인 범위로 비교해 key 색인을 탄다
     (바이트 순서로 '\' 바로 다음 글자가 ']'라서, 이 범위는 정확히 '폴더\'로 시작하는 것들이다)."""
-    prefix = os.path.join(exclude.key(path), "")
+    prefix = index.prefix(path)
     return "f.key >= ? and f.key < ?", [prefix, prefix[:-1] + "]"]
 
 
@@ -95,9 +93,7 @@ def conditions(query, config):
         parts.append(part)
         values += more
     if query.get("drive"):  # 왼쪽에서 고른 드라이브('모든 파일'을 볼 때만 화면이 보낸다)
-        if not re.fullmatch(r"[A-Za-z]:\\", str(query["drive"])):
-            raise ValueError(f"드라이브는 'D:\\' 모양으로 쓰세요: {query['drive']}")
-        part, more = under(query["drive"])
+        part, more = under(settings.check_drive(query["drive"]))
         parts.append(part)
         values += more
     if query.get("tag"):
@@ -153,8 +149,8 @@ def tag_counts(db, parts, values, config):
         found.append([f"person:{person}", n])
     for i, label in enumerate(config.get("custom_labels") or []):
         if label["show"]:
-            n = db.execute(f"select count(*) from files f{where(parts + [tag_condition(f'custom:{i}', config)[0]])}",
-                           values + tag_condition(f"custom:{i}", config)[1]).fetchone()[0]
+            part, more = tag_condition(f"custom:{i}", config)
+            n = db.execute(f"select count(*) from files f{where(parts + [part])}", values + more).fetchone()[0]
             found.append([f"custom:{i}", n])
     return sorted((item for item in found if item[1]), key=lambda item: -item[1])
 
@@ -196,8 +192,8 @@ def listing(query):
     stale_since = int(time.time()) - config["stale_days"] * DAY
     by_kind = parts + (["f.kind = ?"] if kind else [])
     by_kind_values = values + ([kind] if kind else [])
-    picked = by_kind + (["f.ext = ?"] if ext else [])
-    picked_values = by_kind_values + ([ext] if ext else [])
+    extra, extra_values = by_kind[len(parts):] + (["f.ext = ?"] if ext else []), by_kind_values[len(values):] + ([ext] if ext else [])
+    picked, picked_values = parts + extra, values + extra_values
     text = (query.get("text") or "").strip()
     snippet = ", (select substr(text, max(1, instr(lower(text), lower(?)) - 40), 120) from body where rowid = f.id) snippet" if text else ""
     db = index.connect()
@@ -216,9 +212,7 @@ def listing(query):
         views = []
         for view in VIEWS:
             view_parts, view_values, _ = conditions(query | {"view": view}, config)
-            view_parts += (["f.kind = ?"] if kind else []) + (["f.ext = ?"] if ext else [])
-            view_values += ([kind] if kind else []) + ([ext] if ext else [])
-            views.append([view, db.execute(f"select count(*) from files f{where(view_parts)}", view_values).fetchone()[0]])
+            views.append([view, db.execute(f"select count(*) from files f{where(view_parts + extra)}", view_values + extra_values).fetchone()[0]])
         exts = db.execute(f"select f.ext, count(*) n from files f{where(by_kind)} group by f.ext order by n desc, f.ext",
                           by_kind_values).fetchall() if kind else []
         tags = tag_counts(db, picked, picked_values, config) if kind in MEDIA_KINDS else []
@@ -260,7 +254,7 @@ def chip_order(config):
 
 def place_names(db):
     """색인한 맨 위 폴더들: [(비교용 key + 구분자, 이름)]"""
-    return [(os.path.join(row["key"], ""), row["name"]) for row in db.execute("select key, name from folders where parent is null")]
+    return [(index.prefix(row["key"]), row["name"]) for row in db.execute("select key, name from folders where parent is null")]
 
 
 def place(path, places):

@@ -93,6 +93,18 @@ def folder_text(value, name):
     return fence.refuse_system(fence.refuse(path))
 
 
+def check_drive(value):
+    """'D:\\' 모양의 드라이브만 받는다(설정과 목록 조회가 같이 쓴다)."""
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z]:\\", value):
+        raise ValueError(f"드라이브는 'D:\\' 모양으로 쓰세요: {value}")
+    return value
+
+
+def whole(value):
+    """정수인지(True·False는 int이지만 뺀다)."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
 def check(changes):
     """화면에서 온 바꿀 설정을 검사해 깨끗한 값으로 돌려준다. 모르는 이름이나 잘못된 값은 거부한다."""
     clean = {}
@@ -104,12 +116,12 @@ def check(changes):
                 raise ValueError("색인할 폴더 목록이 잘못됐습니다.")
             clean[name] = list(dict.fromkeys(folder_text(item, "색인할 폴더") for item in value))
         elif name in ("recent_days", "stale_days", "cold_days"):
-            if not isinstance(value, int) or isinstance(value, bool) or not DAYS[0] <= value <= DAYS[1]:
+            if not whole(value) or not DAYS[0] <= value <= DAYS[1]:
                 raise ValueError(f"기간은 {DAYS[0]}~{DAYS[1]}일 사이의 정수로 쓰세요.")
             clean[name] = value
         elif name in PANES:
             low, high = PANES[name]["min"], PANES[name]["max"]
-            if not isinstance(value, int) or isinstance(value, bool) or not (value == 0 or low <= value <= high):
+            if not whole(value) or not (value == 0 or low <= value <= high):
                 raise ValueError(f"칸 너비는 {low}~{high}px 사이의 정수로 쓰세요(0은 기본).")
             clean[name] = value
         elif name == "index_steps":
@@ -119,7 +131,7 @@ def check(changes):
             clean[name] = [{"name": s["name"], "on": s["on"]} for s in value]
         elif name in NUMBERS:
             low, high, label = NUMBERS[name]
-            if not isinstance(value, int) or isinstance(value, bool) or not low <= value <= high:
+            if not whole(value) or not low <= value <= high:
                 raise ValueError(f"{label}은 {low}~{high} 사이의 정수로 쓰세요.")
             clean[name] = value
         elif name == "face_on":
@@ -140,9 +152,7 @@ def check(changes):
         elif name == "cache_skip":
             clean[name] = cache.check_ids(value)
         elif name == "drive":
-            if not isinstance(value, str) or not (value == "" or re.fullmatch(r"[A-Za-z]:\\", value)):
-                raise ValueError(f"드라이브는 'D:\\' 모양으로 쓰세요: {value}")
-            clean[name] = value.upper()
+            clean[name] = "" if value == "" else check_drive(value).upper()
         elif name == "list_group":
             if value not in ("none", "folder"):
                 raise ValueError(f"모르는 묶기 방식입니다: {value}")
