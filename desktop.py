@@ -17,13 +17,15 @@ from werkzeug.serving import make_server  # noqa: E402
 import index  # noqa: E402
 import lock  # noqa: E402
 import server  # noqa: E402
+import settings  # noqa: E402
 
 http = make_server("127.0.0.1", 0, server.app, threaded=True)  # 0: 비어 있는 포트를 자동으로 고른다.
 threading.Thread(target=http.serve_forever, daemon=True).start()
 # 열쇠를 아는 이 창만 화면을 열 수 있다(브라우저로 주소만 열면 거부된다).
 # 제목 줄은 화면(index.html)이 그린다. 끌기는 pywebview의 drag region, 버튼과 가장자리 크기 조절은 /api/window → control.
+BACKGROUND = {True: "#0F151B", False: "#E9ECE7"}  # 화면이 뜨기 전 창의 바탕(app.css의 --bg, 다크·라이트)
 window = webview.create_window("파일 정리", f"http://127.0.0.1:{http.server_port}/?key={server.KEY}", width=1400, height=900,
-                               frameless=True, easy_drag=False, min_size=(1160, 660))
+                               frameless=True, easy_drag=False, min_size=(1160, 660), background_color=BACKGROUND[settings.dark()])
 maximized = [None]  # 최대화했을 때 되돌아갈 창의 실제 픽셀 사각형(RECT). 최대화가 아니면 None.
 user32 = ctypes.windll.user32
 user32.MonitorFromWindow.restype = wintypes.HANDLE
@@ -89,7 +91,7 @@ def open_lock(path):
         lock_window[0].evaluate_js("load()")
         return
     url = f"http://127.0.0.1:{http.server_port}/lock?key={server.KEY}"
-    lock = webview.create_window("잠금", url, width=760, height=640, min_size=(560, 480))
+    lock = webview.create_window("잠금", url, width=760, height=640, min_size=(560, 480), background_color=BACKGROUND[settings.dark()])
 
     def hide_from_capture():
         """보이기 전과 보인 뒤에 모두 건다(WinForms가 처음 보일 때 창 핸들을 다시 만들면 앞의 설정이 없어진다).

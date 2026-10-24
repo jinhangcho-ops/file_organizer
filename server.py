@@ -3,7 +3,7 @@ import os
 import secrets
 import subprocess
 
-from flask import Flask, abort, jsonify, request, send_from_directory
+from flask import Flask, abort, jsonify, request
 from werkzeug.exceptions import HTTPException
 
 import actions
@@ -65,19 +65,25 @@ def on_error(e):
     raise e
 
 
-@app.get("/")
-def page():
-    response = send_from_directory(app.static_folder, "index.html")
+def themed_page(name):
+    """화면 파일에 저장한 화면 색(data-theme)을 넣어 보낸다. 상태(/api/state)를 받기 전 첫 화면부터 그 색으로 그린다
+    (큰 색인에서는 상태를 받기까지 몇 초가 걸려, 그동안 라이트로 보이다 바뀌어서 색을 기억하지 않는 것처럼 보였다)."""
+    html = open(os.path.join(app.static_folder, name), encoding="utf-8").read()
+    html = html.replace('<html lang="ko">', f'<html lang="ko" data-theme="{"dark" if settings.dark() else "light"}">', 1)
+    response = app.response_class(html, mimetype="text/html")
     response.set_cookie("key", KEY, httponly=True, samesite="Strict")
     return response
+
+
+@app.get("/")
+def page():
+    return themed_page("index.html")
 
 
 @app.get("/lock")
 def lock_page():
     """잠금 창(화면 캡처·공유에서 빠지는 따로 뜨는 창)의 화면. 잠금 관련 화면은 모두 여기에만 있다."""
-    response = send_from_directory(app.static_folder, "lock.html")
-    response.set_cookie("key", KEY, httponly=True, samesite="Strict")
-    return response
+    return themed_page("lock.html")
 
 def body():
     return request.get_json(silent=True) or {}

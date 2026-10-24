@@ -38,3 +38,15 @@ def test_window_buttons(home, client, monkeypatch):
     assert client.post("/api/window", json={"action": "explode"}).status_code == 400
     monkeypatch.setattr(server, "window_control", None)
     assert client.post("/api/window", json={"action": "minimize"}).status_code == 400  # 창 없이(브라우저로) 부르면 거부
+
+
+def test_saved_theme_is_in_the_first_page(home, client, monkeypatch):
+    """저장한 화면 색은 상태를 받기 전 첫 화면(창·잠금 창)에 들어간다. auto는 Windows 앱 모드를 따른다."""
+    client.post("/api/settings", json={"theme": "dark"})
+    assert b'<html lang="ko" data-theme="dark">' in client.get("/").data
+    assert b'<html lang="ko" data-theme="dark">' in client.get("/lock").data
+    client.post("/api/settings", json={"theme": "light"})
+    assert b'<html lang="ko" data-theme="light">' in client.get("/").data
+    client.post("/api/settings", json={"theme": "auto"})
+    monkeypatch.setattr(settings.winreg, "QueryValueEx", lambda key, name: (0, 4))  # Windows가 다크
+    assert settings.dark() and b'data-theme="dark"' in client.get("/").data

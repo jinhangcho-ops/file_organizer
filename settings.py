@@ -2,6 +2,7 @@
 import json
 import os
 import re
+import winreg
 from pathlib import Path
 
 import cache
@@ -53,6 +54,18 @@ def defaults():
             "face_on": True, "custom_model_path": "", "custom_labels": [],
             # 캐시 정리: 이 일수보다 오래된 것만, 체크를 끈 캐시(cache.IDS)
             "cache_days": 7, "cache_skip": []}
+
+
+def dark(config=None):
+    """화면을 다크로 그릴지: 설정이 dark이거나, auto(Windows 설정을 따름)이고 Windows 앱 모드가 다크. 창과 첫 화면의 색에 쓴다."""
+    theme = (config or load())["theme"]
+    if theme != "auto":
+        return theme == "dark"
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize") as key:
+            return winreg.QueryValueEx(key, "AppsUseLightTheme")[0] == 0
+    except OSError:
+        return False
 
 
 def load():
