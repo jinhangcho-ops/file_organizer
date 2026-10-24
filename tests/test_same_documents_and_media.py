@@ -143,3 +143,20 @@ def test_heavy_libraries_are_not_loaded_at_start():
 def need_ffmpeg():
     if not shutil.which(media.ffmpeg()):
         pytest.skip("ffmpeg가 없다")
+
+
+def test_scenes_grabbed_together_match_one_at_a_time(tmp_path, monkeypatch):
+    """ffmpeg를 동시에 띄워 뽑은 장면이 하나씩 뽑을 때와 바이트까지 같고, 순서도 시각 순서 그대로다(뽑지 못한 시각은 None)."""
+    path = make_video(tmp_path / "a.mp4", "testsrc2", "320x240")
+    seconds = [1.5, 37.0, 4.25, 20.0, 999.0]  # 순서를 섞고, 영상 밖의 시각도 넣는다
+
+    def alone(second):
+        result = subprocess.run([media.ffmpeg(), "-v", "error", "-ss", f"{second:.2f}", "-i", path, "-frames:v", "1",
+                                 "-vf", "scale=9:8,format=gray", "-f", "rawvideo", "-"], capture_output=True, creationflags=media.NO_WINDOW)
+        return media.dhash(result.stdout) if result.returncode == 0 else None
+
+    expected = [alone(s) for s in seconds]
+    assert expected[4] is None and all(h is not None for h in expected[:4])
+    assert media.frame_hashes(path, seconds) == expected
+    monkeypatch.setattr(media, "WORKERS", 1)
+    assert media.frame_hashes(path, seconds) == expected

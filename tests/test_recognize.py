@@ -105,7 +105,7 @@ def test_faces_are_grouped_by_person(home, client):
     rng = np.random.default_rng(1)
     a, b = rng.normal(size=128), rng.normal(size=128)
     unit = lambda v: (v / np.linalg.norm(v)).astype(np.float32)  # noqa: E731
-    centers = {}
+    centers = recognize.People()
     recognize.assign(db, 1, [unit(a), unit(b)], centers)
     recognize.assign(db, 2, [unit(a + rng.normal(scale=0.3, size=128))], centers)  # 같은 사람(조금 다른 사진)
     recognize.assign(db, 3, [unit(rng.normal(size=128))], centers)  # 다른 사람
@@ -177,3 +177,53 @@ def test_recognition_runs_in_its_own_process_and_can_stop(home, client):
     assert not index.status["error"] and index.status["stopped"] and 0 < done < 40
     assert "onnxruntime" not in sys.modules  # 모델·라이브러리는 인식 프로세스에만 올라갔다
     assert not (settings.folder() / recognize.STOP).exists()
+
+
+def one_by_one(vectors_per_file, centers):
+    """예전 방식(사람을 한 명씩 견줌). 새 assign이 같은 사람을 고르는지 견줄 기준."""
+    out = []
+    for vectors in vectors_per_file:
+        for vector in vectors:
+            best, score = None, recognize.SAME_PERSON
+            for person, center in centers.items():
+                s = float(center @ vector)
+                if s >= score:
+                    best, score = person, s
+            if best is None:
+                best = max(centers, default=0) + 1
+                centers[best] = vector
+            else:
+                mixed = centers[best] + vector * 0.2
+                centers[best] = mixed / np.linalg.norm(mixed)
+            out.append(best)
+    return out
+
+
+def test_matrix_assign_matches_one_by_one(home):
+    rng = np.random.default_rng(7)
+    unit = lambda v: (v / np.linalg.norm(v)).astype(np.float32)  # noqa: E731
+    people = [rng.normal(size=128) for _ in range(40)]
+    files = [[unit(people[rng.integers(40)] + rng.normal(scale=rng.uniform(0.2, 1.2), size=128)) for _ in range(rng.integers(1, 4))]
+             for _ in range(300)]
+    files.append([files[0][0], files[0][0]])  # 한 파일에 같은 얼굴 둘: 앞 얼굴로 바뀐 평균에 다음 얼굴을 견준다
+    expected = one_by_one(files, {})
+    db = index.connect()
+    centers = recognize.People()
+    for n, vectors in enumerate(files):
+        recognize.assign(db, n, vectors, centers)
+    got = [p for (p,) in db.execute("select person from faces order by id, n")]
+    db.close()
+    assert got == expected and len(set(expected)) > 20
+
+
+def test_second_face_in_a_file_sees_the_updated_person(home):
+    """한 파일의 첫 얼굴로 사람 평균이 바뀌면, 다음 얼굴은 바뀐 평균에 견준다(예전 방식과 같다).
+    옛 평균과는 0.40(같은 사람 아님), 바뀐 평균과는 0.54(같은 사람)."""
+    e0, e1 = np.eye(128, dtype=np.float32)[:2]
+    face1 = (0.5 * e0 + np.sqrt(0.75) * e1).astype(np.float32)
+    face2 = (0.4 * e0 + np.sqrt(0.84) * e1).astype(np.float32)
+    db = index.connect()
+    recognize.assign(db, 1, [face1, face2], recognize.People({1: e0}))
+    got = [p for (p,) in db.execute("select person from faces order by n")]
+    db.close()
+    assert got == [1, 1] == one_by_one([[face1, face2]], {1: e0})

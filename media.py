@@ -7,6 +7,7 @@
 import os
 import re
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 
 import filetime
 import index
@@ -22,6 +23,9 @@ MIN_COMPARED = 3  # 이보다 적은 장면만 비교할 수 있으면 판단하
 LENGTH_GAP = 0.1  # 동영상 길이가 서로 10% 넘게 다르면 비교하지 않는다.
 BLANK = 8  # 줄인 장면에서 가장 밝은 칸과 가장 어두운 칸의 차이가 이보다 작으면 한 가지 색으로 본다.
 NO_WINDOW = 0x08000000  # ffmpeg 창을 띄우지 않는다.
+# 장면을 뽑는 ffmpeg를 동시에 이만큼 띄운다. 10분 영상 20장면: 하나씩 2.85초, 4개씩 1.22초, 8개씩 0.97초(뽑은 장면은 같다).
+# 하드 디스크에서는 너무 많이 띄우면 오히려 느려질 수 있어 4로 둔다(ffmpeg 하나에 장면을 모두 넣는 방법은 결과가 달라 쓰지 않는다).
+WORKERS = 4
 
 
 def dhash(gray):
@@ -69,11 +73,21 @@ def video_length(path):
     return int(found[1]) * 3600 + int(found[2]) * 60 + float(found[3]) if found else None
 
 
-def frame_hash(path, second):
-    """second초의 장면 지문(한 가지 색이거나 뽑지 못하면 None)."""
-    result = subprocess.run([ffmpeg(), "-v", "error", "-ss", f"{second:.2f}", "-i", path, "-frames:v", "1",
-                             "-vf", "scale=9:8,format=gray", "-f", "rawvideo", "-"], capture_output=True, creationflags=NO_WINDOW, timeout=120)
-    return dhash(result.stdout) if result.returncode == 0 else None
+def grab(path, seconds, options):
+    """seconds의 시각마다 장면 하나를 options(-vf 등)대로 바꾼 rawvideo 바이트, 순서대로(뽑지 못하면 None).
+    ffmpeg를 WORKERS개까지 동시에 띄운다. 사진·동영상 비교와 인식이 함께 쓴다."""
+    def one(second):
+        result = subprocess.run([ffmpeg(), "-v", "error", "-ss", f"{second:.2f}", "-i", path, "-frames:v", "1", *options, "-f", "rawvideo", "-"],
+                                capture_output=True, creationflags=NO_WINDOW, timeout=120)
+        return result.stdout if result.returncode == 0 else None
+
+    with ThreadPoolExecutor(WORKERS) as pool:
+        return list(pool.map(one, seconds))
+
+
+def frame_hashes(path, seconds):
+    """seconds마다 장면 지문(한 가지 색이거나 뽑지 못하면 None)."""
+    return [dhash(raw) if raw is not None else None for raw in grab(path, seconds, ["-vf", "scale=9:8,format=gray"])]
 
 
 def frame_times(length, interval):
@@ -128,7 +142,7 @@ def fingerprint(db, row, interval):
             db.executemany("insert into media_band(band, value, id) values(?, ?, ?)", [(n, h >> (8 * n) & 255, row["id"]) for n in range(BANDS)])
     else:
         length = video_length(row["path"])
-        frames = [frame_hash(row["path"], t) for t in frame_times(length, interval)] if length else []
+        frames = frame_hashes(row["path"], frame_times(length, interval)) if length else []
         db.execute("insert into media(id, kind, duration, frames, made, interval) values(?, 'video', ?, ?, ?, ?)",
                    (row["id"], length, encode(frames), row["stamp"], interval))
     filetime.restore_access(row["path"], st)

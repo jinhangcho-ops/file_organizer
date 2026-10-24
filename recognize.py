@@ -207,14 +207,8 @@ def video_frames(path, interval):
         return []
     times = media.frame_times(length, interval)
     step = max(1, len(times) // MAX_FRAMES)
-    frames = []
-    for second in times[::step][:MAX_FRAMES]:
-        result = subprocess.run([media.ffmpeg(), "-v", "error", "-ss", f"{second:.2f}", "-i", path, "-frames:v", "1",
-                                 "-vf", "scale=224:224:force_original_aspect_ratio=increase,crop=224:224", "-pix_fmt", "rgb24", "-f", "rawvideo", "-"],
-                                capture_output=True, creationflags=media.NO_WINDOW, timeout=120)
-        if result.returncode == 0 and len(result.stdout) == 224 * 224 * 3:
-            frames.append(Image.frombytes("RGB", (224, 224), result.stdout))
-    return frames
+    raws = media.grab(path, times[::step][:MAX_FRAMES], ["-vf", "scale=224:224:force_original_aspect_ratio=increase,crop=224:224", "-pix_fmt", "rgb24"])
+    return [Image.frombytes("RGB", (224, 224), raw) for raw in raws if raw is not None and len(raw) == 224 * 224 * 3]
 
 
 def people(db):
@@ -225,26 +219,57 @@ def people(db):
     for person, vec in db.execute("select person, vec from faces"):
         v = np.frombuffer(vec, dtype=np.float32)
         sums[person] = sums.get(person, 0) + v
-    return {p: v / np.linalg.norm(v) for p, v in sums.items()}
+    return People({p: v / np.linalg.norm(v) for p, v in sums.items()})
 
 
-def assign(db, file_id, vectors, centers):
-    """얼굴마다 가장 가까운 사람(SAME_PERSON 이상)에, 없으면 새 사람으로 넣는다. centers는 그 자리에서 고친다."""
-    import numpy as np
+class People:
+    """사람 번호 → 얼굴 지문의 평균(정규화)을 행렬 하나(rows의 앞 size줄)로 든다. 얼굴마다 모든 사람과 한 번에 곱해 견준다.
+    한 명씩 견주면 사람 2,000명에 얼굴 500개가 1.6초였다. 줄이 모자라면 두 배로 늘린다(사람이 늘 때마다 행렬을 베끼지 않게)."""
 
+    def __init__(self, centers=None):
+        import numpy as np
+
+        self.np = np
+        self.ids = list(centers or {})
+        self.rows = np.stack([centers[p] for p in self.ids]).astype(np.float32) if self.ids else None
+        self.size = len(self.ids)
+        self.next = max(self.ids, default=0) + 1  # 새 사람의 번호(지금까지의 가장 큰 번호 + 1)
+
+    def closest(self, vector):
+        """(줄 번호, 사람 번호) 중 SAME_PERSON 이상으로 가장 가까운 것, 없으면 (None, None). 점수가 같으면 나중에 생긴 사람."""
+        if not self.size:
+            return None, None
+        scores = self.rows[:self.size] @ vector
+        i = self.size - 1 - int(self.np.argmax(scores[::-1]))
+        return (i, self.ids[i]) if scores[i] >= SAME_PERSON else (None, None)
+
+    def add(self, vector):
+        """새 사람을 더하고 그 번호를 돌려준다."""
+        if self.rows is None:
+            self.rows = self.np.empty((16, len(vector)), dtype=self.np.float32)
+        elif self.size == len(self.rows):
+            self.rows = self.np.concatenate([self.rows, self.np.empty_like(self.rows)])
+        self.rows[self.size] = vector
+        self.ids.append(self.next)
+        self.next += 1
+        self.size += 1
+        return self.ids[-1]
+
+    def mix(self, i, vector):
+        """i줄의 사람 평균에 새 얼굴을 조금 섞는다(평균을 따라가게)."""
+        mixed = self.rows[i] + vector * 0.2
+        self.rows[i] = mixed / self.np.linalg.norm(mixed)
+
+
+def assign(db, file_id, vectors, people):
+    """얼굴마다 가장 가까운 사람(SAME_PERSON 이상)에, 없으면 새 사람으로 넣는다. people(People)은 그 자리에서 고친다."""
     for n, vector in enumerate(vectors):
-        best, score = None, SAME_PERSON
-        for person, center in centers.items():
-            s = float(center @ vector)
-            if s >= score:
-                best, score = person, s
+        i, best = people.closest(vector)
         if best is None:
-            best = max(centers, default=0) + 1
-            centers[best] = vector
+            best = people.add(vector)
         else:
-            mixed = centers[best] + vector * 0.2  # 새 얼굴을 조금 섞어 평균을 따라가게
-            centers[best] = mixed / np.linalg.norm(mixed)
-        db.execute("insert into faces(id, n, person, vec) values(?, ?, ?, ?)", (file_id, n, best, vector.astype(np.float32).tobytes()))
+            people.mix(i, vector)
+        db.execute("insert into faces(id, n, person, vec) values(?, ?, ?, ?)", (file_id, n, best, vector.astype(people.np.float32).tobytes()))
 
 
 def todo(db, signature, faces_on):
@@ -365,7 +390,7 @@ def work(db, report):
         return
     engine = Engine(config)
     try:
-        centers = people(db) if engine.faces else {}
+        centers = people(db) if engine.faces else None  # People
         for n, row in enumerate(rows):
             if index.stop.is_set():
                 break
