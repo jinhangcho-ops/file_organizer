@@ -1,6 +1,7 @@
 """파일·폴더 다루기: 옮기기(여러 개, 끌어 놓기·폴더 고르기), 이름 바꾸기, 휴지통으로 보내기, 되돌리기(Ctrl+Z).
 덮어쓰지 않고, 끝나면 색인·잠금 기록·메모에 반영한다."""
 import os
+import sqlite3
 
 import drives
 import exclude
@@ -52,16 +53,19 @@ def move_each(pairs, plan, progress):
         except (OSError, ValueError) as e:
             failed.append({"from": src, "error": getattr(e, "strerror", None) or str(e)})
     progress(len(pairs), len(pairs))
-    if done:
-        moved(done)
+    error = done and moved(done)
+    if error:
+        failed.append({"from": "색인", "error": error})
     return done, failed
 
 
 def moved(pairs):
-    """옮긴 (전, 후)들을 색인·잠금 기록(옮긴 폴더 안의 잠금 폴더·금고 위치)·메모에 반영한다."""
-    index.moved(pairs)
+    """옮긴 (전, 후)들을 색인·잠금 기록(옮긴 폴더 안의 잠금 폴더·금고 위치)·메모에 반영한다.
+    색인 반영이 실패해도 잠금 기록·메모는 고치고 그 까닭 글을 돌려준다(organize.reflect)."""
+    error = organize.reflect(pairs)
     lock.moved(pairs)
     notes.moved(pairs)
+    return error
 
 
 def check_name(name):
@@ -81,7 +85,7 @@ def rename(path, name):
     if os.path.lexists(target) and exclude.key(target) != exclude.key(path):
         raise ValueError(f"같은 이름의 파일이 있습니다: {name}")
     os.rename(path, target)
-    moved([(path, target)])
+    moved([(path, target)])  # 색인 반영이 실패해도 이름은 바뀌었다: 바뀐 경로를 돌려준다(색인은 다음 색인 때 바로잡힌다).
     undo.record("rename", [(path, target)], f"이름 바꾸기 '{name}'")
     return target
 
@@ -110,16 +114,19 @@ def move_back(pairs, progress=lambda *args: None):
 
 def trash_many(paths, progress=lambda *args: None):
     """파일·폴더들을 휴지통으로 보낸다(trash.to_trash). 보낼 수 없는 것은 그대로 두고 까닭을 알린다."""
-    sent, failed = [], []
+    sent, failed, disks = [], [], {}  # 디스크 검사(레지스트리·정책·볼륨)는 디스크마다 한 번만(캐시 정리는 수만 개를 보낸다)
     for n, path in enumerate(paths):
         progress(n, len(paths), path)
-        ok, refused = trash.to_trash([path])
+        ok, refused = trash.to_trash([path], disks)
         sent += ok
         failed += [{"from": p, "error": reason} for p, reason in refused]
     progress(len(paths), len(paths))
     if sent:
-        index.removed(sent)
         notes.removed(sent)
+        try:
+            index.removed(sent)
+        except (OSError, sqlite3.Error) as e:  # 보낸 것은 그대로다: 남은 줄은 다음 색인 때 빠진다
+            failed.append({"from": "색인", "error": f"휴지통으로 보냈지만 색인에 반영하지 못했습니다(다음 색인 때 바로잡힙니다): {getattr(e, 'strerror', None) or e}"})
     return {"trashed": len(sent), "failed": failed}
 
 

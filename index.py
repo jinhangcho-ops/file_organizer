@@ -30,6 +30,9 @@ import settings
 SKIP = {"windows", "program files", "program files (x86)", "programdata", "appdata", "$recycle.bin", "system volume information",
         "recovery", "config.msi", "$windows.~bt", "$windows.~ws", "$winreagent"}  # 들어가지 않는 폴더 이름(소문자)
 HIDDEN = stat_flags.FILE_ATTRIBUTE_HIDDEN | stat_flags.FILE_ATTRIBUTE_SYSTEM
+# 클라우드 전용(OneDrive '온라인 전용' 등): 내용을 읽으면 받아 온다.
+CLOUD = 0x400000 | stat_flags.FILE_ATTRIBUTE_OFFLINE  # 0x400000: FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS(stat 모듈에 없다)
+RELEASE_AT = 1024 * 1024  # 이보다 큰 파일을 읽기 전에는 쓴 것을 저장해 둔다(release)
 SAVE_EVERY = 2  # 이 초마다 저장해서, 색인하는 중에도 목록에 나오고 끊겨도 거기까지는 남게 한다.
 WHOLE = 8 * 1024 * 1024  # 이보다 큰 파일은 앞·가운데·뒤 SAMPLE씩만 읽어 지문을 만든다(그래서 '중복 의심').
 SAMPLE = 1024 * 1024
@@ -92,6 +95,9 @@ def connect():
     path = settings.folder() / "index.db"
     db = sqlite3.connect(path, timeout=30)
     db.row_factory = sqlite3.Row
+    # WAL에서 저장마다 디스크 동기화를 하지 않는다(정전이면 마지막 저장 몇 개를 잃을 뿐 깨지지 않고, 색인은 다시 만들 수 있다).
+    # 큰 파일·사진·동영상을 읽기 전마다 저장하므로(release) 저장이 잦다: 동기화하면 저장 한 번에 약 0.5ms, 안 하면 0.06ms였다.
+    db.execute("pragma synchronous=normal")
     if path in ready:
         return db
     db.execute("pragma journal_mode=wal")  # 색인하는 동안에도 읽을 수 있게(파일에 남는 설정이라 한 번이면 된다)
@@ -106,6 +112,19 @@ def connect():
 
 def hidden(entry_stat):
     return entry_stat.st_file_attributes & HIDDEN
+
+
+def cloud_only(st):
+    """클라우드 전용 파일인지. 내용을 읽는 단계는 모두 건너뛰고 기록도 남기지 않는다(받은 뒤의 색인에서 한다)."""
+    return st.st_file_attributes & CLOUD
+
+
+def release(db, size=None):
+    """파일을 읽기 전에: 쓴 것이 있으면 저장해 쓰기 잠금을 푼다. 느린 파일(큰 xlsx·긴 동영상)을 읽는 동안
+    옮기기·휴지통의 색인 고치기(moved·removed)가 30초를 기다리다 'database is locked'로 실패하지 않게.
+    size(바이트)가 RELEASE_AT보다 작은 파일은 금방 읽으므로 저장하지 않는다(파일마다 저장하면 작은 글 파일 3,000개가 2.4초 → 5초)."""
+    if db.in_transaction and (size is None or size >= RELEASE_AT):
+        db.commit()
 
 
 def roots(config):
@@ -137,7 +156,7 @@ def walk(root, fences=frozenset(), game_keys=frozenset(), found_games=None, neve
     while stack:
         folder = stack.pop()
         files, folders = [], []
-        if exclude.key(folder) in game_keys or os.path.basename(folder).lower() in blacklist.GAMES:
+        if exclude.key(folder) in game_keys or blacklist.library(folder):
             if found_games is not None:
                 found_games += [folder] if exclude.key(folder) in game_keys else [g for g in games.container_games(folder) if storable(g)]
             continue
@@ -145,7 +164,7 @@ def walk(root, fences=frozenset(), game_keys=frozenset(), found_games=None, neve
             with os.scandir(folder) as entries:
                 for entry in entries:
                     try:
-                        if not storable(entry.name):
+                        if not storable(entry.name) or os.path.isreserved(entry.name):  # 'abc.'는 옆의 abc와 key가 같다
                             continue
                         if entry.is_symlink() or entry.is_junction():
                             continue
@@ -338,6 +357,8 @@ def add_game_chain(db, path, folders, fences):
 
 def read_text(db, row_id, path, ext, st):
     """파일 하나의 글자를 읽어 넣고 읽은 것으로 표시한다. 읽은 뒤 연 시각은 되돌린다."""
+    if cloud_only(st):
+        return
     text = extract.text(path, ext) if extract.readable(ext, st.st_size) else ""
     filetime.restore_access(path, st)
     if text is None:  # 읽다 실패했다(클라우드 전용·잠시 잠긴 파일 등): 읽은 것으로 표시하지 않아 다음 색인 때 다시 읽는다.
@@ -372,6 +393,7 @@ def read_texts(db):
             continue
         if stamp(st) != row["stamp"]:  # 목록을 훑은 뒤에 바뀌었다: 다음 색인 때 읽는다.
             continue
+        release(db, st.st_size)
         read_text(db, row["id"], row["path"], row["ext"], st)
         status["done"] += 1
         save_now(db)
@@ -418,8 +440,9 @@ def documents(db):
         status["current"] = row["path"]
         try:
             st = os.stat(row["path"])
-            if stamp(st) != row["stamp"]:  # 목록을 훑은 뒤에 바뀌었다: 다음 색인 때 한다.
+            if stamp(st) != row["stamp"] or cloud_only(st):  # 목록을 훑은 뒤에 바뀌었다: 다음 색인 때 한다.
                 continue
+            release(db, st.st_size)
             value = doc_fingerprint(row["path"])
         except OSError:
             continue
@@ -431,8 +454,11 @@ def documents(db):
 
 
 def fingerprint(path, size):
-    """파일 내용의 지문. 크기를 앞에 붙여 크기가 다른 파일과는 겹치지 않게 한다. 읽은 뒤 연 시각은 되돌린다."""
+    """파일 내용의 지문. 크기를 앞에 붙여 크기가 다른 파일과는 겹치지 않게 한다. 읽은 뒤 연 시각은 되돌린다.
+    클라우드 전용 파일은 None(읽지 않는다)."""
     st = os.stat(path)
+    if cloud_only(st):
+        return None
     digest = hashlib.sha256()
     with open(path, "rb") as file:
         if size <= WHOLE:
@@ -454,9 +480,12 @@ def fingerprints(db):
         if stop.is_set():
             break
         status["current"] = row["path"]
+        release(db, row["size"])
         try:
             value = fingerprint(row["path"], row["size"])
         except OSError:
+            continue
+        if value is None:
             continue
         db.execute("update files set hash = ?, hashed = stamp where id = ?", (value, row["id"]))
         status["done"] += 1

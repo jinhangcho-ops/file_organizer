@@ -130,7 +130,7 @@ def check(changes):
                 raise ValueError(f"칸 너비는 {low}~{high}px 사이의 정수로 쓰세요(0은 기본).")
             clean[name] = value
         elif name == "index_steps":
-            if (not isinstance(value, list) or sorted(s.get("name") for s in value if isinstance(s, dict)) != sorted(STEPS)
+            if (not isinstance(value, list) or not all(isinstance(s, dict) for s in value) or sorted(s.get("name") for s in value if isinstance(s, dict)) != sorted(STEPS)
                     or any(not isinstance(s.get("on"), bool) or len(s) != 2 for s in value)):
                 raise ValueError("색인 단계 목록이 잘못됐습니다.")
             clean[name] = [{"name": s["name"], "on": s["on"]} for s in value]

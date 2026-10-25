@@ -15,6 +15,7 @@ import webview  # noqa: E402
 from werkzeug.serving import make_server  # noqa: E402
 
 import index  # noqa: E402
+import jobs  # noqa: E402
 import lock  # noqa: E402
 import server  # noqa: E402
 import settings  # noqa: E402
@@ -34,7 +35,10 @@ user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
 user32.SetWindowDisplayAffinity.argtypes = [wintypes.HWND, wintypes.DWORD]
 user32.GetWindowDisplayAffinity.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
 EXCLUDE_FROM_CAPTURE = 0x11  # WDA_EXCLUDEFROMCAPTURE: 화면 캡처·공유·녹화에서 이 창을 뺀다(Windows 10 2004 이상).
-lock_window = [None]  # 열려 있는 잠금 창
+lock_window = [None]  # 열려 있는 잠금 창(revealed: 캡처 제외를 확인하고 보였는지)
+opening = threading.Lock()  # 잠금 창을 만들고 보이는 동안
+JOB_LIMIT = 6 * 3600  # 초. 창을 닫은 뒤 돌던 작업을 기다리는 가장 긴 시간(멈춘 작업 때문에 프로그램이 영영 남지 않게)
+REVEAL_LIMIT = 20  # 초. 이때까지 화면을 못 읽으면 숨은 잠금 창을 치운다.
 
 
 class MonitorInfo(ctypes.Structure):
@@ -76,7 +80,7 @@ def control(action, data):
     elif action == "refresh":
         window.evaluate_js("refreshAfterLock()")
     elif action == "lock_reload":  # 본 창에서 화면 색을 바꿨다
-        if lock_window[0] is not None:
+        if lock_window[0] is not None and lock_window[0].revealed:  # 아직 숨은 창은 화면을 읽으면서 색을 맞춘다
             lock_window[0].evaluate_js("load()")
     elif action == "bounds":
         return {"x": window.x, "y": window.y, "width": window.width, "height": window.height, "maximized": bool(maximized[0]), "min": MIN_SIZE}
@@ -89,18 +93,30 @@ def control(action, data):
 def open_lock(path):
     """잠금 창(잠금 관련 화면은 모두 여기)을 연다. path: 다룰 폴더(잠금 창이 /api/lock/state로 가져간다). 이미 열려 있으면 앞으로 가져와 다시 읽는다.
     나타나기 전에 캡처에서 빼므로, 창 하나 공유든 화면 전체 공유든 이 창은 나가지 않는다(사용자 화면에는 보인다)."""
-    server.lock_target = path if isinstance(path, str) else ""
-    if lock_window[0] is not None:
-        hwnd = wintypes.HWND(lock_window[0].native.Handle.ToInt64())
-        if user32.IsIconic(hwnd):  # 최소화했을 때만 되돌린다(restore는 최대화도 푼다)
-            lock_window[0].restore()
-        user32.SetForegroundWindow(hwnd)  # 뒤에 있으면 앞으로
-        lock_window[0].evaluate_js("load()")
-        return
+    with opening:  # 서버는 요청마다 스레드라 빠른 두 번의 [잠금 창 열기]가 둘 다 None을 보고 창을 둘 만들었다.
+        server.lock_target = path if isinstance(path, str) else ""
+        old = lock_window[0]
+        if old is not None and not old.revealed:  # 화면을 못 읽어(WebView2 실패 등) 숨은 채 남은 창: 버리고 새로 만든다.
+            lock_window[0] = None
+            old.destroy()
+        elif old is not None:
+            hwnd = wintypes.HWND(old.native.Handle.ToInt64())
+            if user32.IsIconic(hwnd):  # 최소화했을 때만 되돌린다(restore는 최대화도 푼다)
+                old.restore()
+            user32.SetForegroundWindow(hwnd)  # 뒤에 있으면 앞으로
+            old.evaluate_js("load()")
+            return
+        create_lock()
+
+
+def create_lock():
     url = f"http://127.0.0.1:{http.server_port}/lock?key={server.KEY}"
     # 숨긴 채 만든다(pywebview는 투명하게 한 번 보였다 숨겨 창 핸들을 만든다). pywebview의 창 이벤트는 따로 도는 스레드라
     # before_show에서 걸면 실제로 보이는 것과 앞뒤가 엇갈려, 보이는 창에 캡처 제외가 빠진 적이 있다(10번에 1번쯤).
+    # WinForms의 Shown은 그 투명한 Show 때 한 번만 와서, 실제로 보일 때의 확인은 reveal이 show() 바로 뒤에 한다.
     lock = webview.create_window("잠금", url, width=760, height=640, min_size=(560, 480), background_color=BACKGROUND[settings.dark()], hidden=True)
+    lock.revealed = False
+    ended = []  # refuse·give_up이 한 번만(알림·닫기가 두 번 되지 않게)
 
     def excluded():
         """지금 창 핸들에 캡처 제외를 걸고 걸렸는지."""
@@ -110,30 +126,50 @@ def open_lock(path):
         user32.GetWindowDisplayAffinity(hwnd, ctypes.byref(now))
         return now.value == EXCLUDE_FROM_CAPTURE
 
+    def end(message):
+        """잠금 창을 닫고 본 창에 알린다(한 번만)."""
+        if ended:
+            return
+        ended.append(True)
+        if lock_window[0] is lock:
+            lock_window[0] = None
+        lock.destroy()
+        window.evaluate_js(f"toast({message!r})")
+
     def refuse():
         """걸리지 않으면(Windows 10 2004보다 오래된 Windows 등) 잠금 창을 닫는다: 공유 화면에 나가는 것보다 안 여는 쪽이 낫다."""
-        lock.destroy()
-        window.evaluate_js("toast('이 Windows에서는 잠금 창을 화면 공유에서 뺄 수 없어 열지 않았어요(Windows 10 2004 이상 필요).')")
-
-    revealed = []
+        end("이 Windows에서는 잠금 창을 화면 공유에서 뺄 수 없어 열지 않았어요(Windows 10 2004 이상 필요).")
 
     def reveal():
-        """화면을 다 읽은 뒤(핸들이 만들어진 뒤) 캡처 제외를 확인하고서야 보인다(shown은 투명하게 보일 때 이미 지나간다)."""
-        if not excluded():
-            return refuse()
-        if not revealed:
-            revealed.append(True)
-            lock.show()
+        """화면을 다 읽은 뒤(핸들이 만들어진 뒤) 캡처 제외를 확인하고서야 보인다. 보인 바로 뒤에도 다시 확인한다(핸들이 바뀌었으면)."""
+        with opening:  # give_up·open_lock과 엇갈리지 않게
+            if ended:
+                return
+            if not excluded():
+                return refuse()
+            if not lock.revealed:
+                lock.revealed = True
+                lock.show()
+                if not excluded():
+                    refuse()
 
-    def check_shown():
-        """보인 뒤에도 한 번 더(보일 때 핸들이 바뀌었으면)."""
-        if not excluded():
-            refuse()
+    def give_up():
+        """화면을 끝내 읽지 못하면 loaded가 오지 않는다: 숨은 창을 치우고 알린다(그대로 두면 다시 열 수 없었다)."""
+        with opening:
+            if not lock.revealed:
+                end("잠금 창을 열지 못했어요. 다시 [잠금 창 열기]를 눌러 보세요.")
+
+    def closed():
+        ended.append(True)  # 닫힌 뒤에 give_up이 알리지 않게
+        if lock_window[0] is lock:  # 버리고 새로 만든 창이면 새 창을 잊지 않는다
+            lock_window[0] = None
 
     lock.events.loaded += reveal
-    lock.events.shown += check_shown
-    lock.events.closed += lambda: lock_window.__setitem__(0, None)
+    lock.events.closed += closed
     lock_window[0] = lock
+    timer = threading.Timer(REVEAL_LIMIT, give_up)
+    timer.daemon = True  # 프로그램을 닫을 때 기다리지 않게
+    timer.start()
 
 
 def close_lock():
@@ -146,5 +182,8 @@ window.events.closed += close_lock  # 본 창을 닫으면 잠금 창도 닫는�
 lock.close_all()  # 지난번에 창을 정상으로 닫지 못했으면(끄기·강제 종료) 열어 둔 잠금 폴더가 남아 있다.
 # 아이콘: 소스로 실행할 때는 icon.ico, exe에서는(파일이 없으므로) exe에 넣은 아이콘을 pywebview가 쓴다.
 webview.start(icon=os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon.ico"))  # 창을 닫으면 여기서 끝나고, 서버 스레드도 함께 끝난다.
+# 돌던 작업(옮기기·보관 등)은 창이 닫혀도 끝까지 한다: 작업 스레드는 daemon이라 그냥 끝내면 드라이브를 건너는 폴더 옮기기가 중간에 끊긴다.
+# 화면의 [✕]는 묻고 닫는다(app.js). Alt+F4·작업 표시줄로 닫아도 여기서 기다린다.
+jobs.wait(JOB_LIMIT)
 index.finish()  # 색인 중이었으면 지금 파일까지 저장하고 멈춘다(다음에 남은 것부터 이어서 한다).
 lock.close_all()  # 열어 둔 잠금 폴더를 다시 잠근다.

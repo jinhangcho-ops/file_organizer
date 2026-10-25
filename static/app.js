@@ -21,7 +21,6 @@ let anchor = -1;                  // Shift로 범위를 고를 때의 시작 줄
 const selected = new Map();       // 고른 줄: 경로(소문자) → 줄
 const opened = new Set();         // 펼쳐 둔 폴더(소문자 경로). 다시 그려도 펼친 채로 둔다.
 const children = new Map();       // 읽어 둔 하위 폴더: 경로(소문자) → [폴더]
-const DRAG = "application/x-file-organizer";  // 끌어 놓기로 넘기는 경로 목록의 형식
 
 const VIEWS = {  // 위쪽 필터 칩이자 설정 화면의 숫자 카드(이 순서). warn: 정리할 거리라 숫자를 경고 색으로.
   // 날짜 열의 내용은 서버가 고른다(받은 파일은 받은 날짜, 안 본 파일은 마지막으로 연 날짜, 그 밖은 수정한 날짜).
@@ -67,8 +66,11 @@ function failedText(result) {
 }
 
 // 뒤에서 도는 작업(정리·옮기기·휴지통·보관): 시작 요청의 답을 받아 끝날 때까지 아래 진행률 막대에 보여 주고, 결과를 돌려준다.
+let jobsStarted = 0;  // 이 화면이 기다리기 시작한 작업 수(leaveGoneFolder가 묻는 사이에 새 작업이 끼었는지 본다)
+
 async function runJob(started) {
   if (!started) return null;
+  jobsStarted++;
   const box = $("job");
   box.classList.remove("hidden", "done");
   let status = started;
@@ -104,7 +106,11 @@ $("theme").addEventListener("click", async () => {
 const windowCall = (action, data = {}) => api("/api/window", {action, ...data}).catch(() => null);  // 창 밖(검사용 브라우저)에서는 아무 일도 없다
 
 $("w-min").addEventListener("click", () => windowCall("minimize"));
-$("w-close").addEventListener("click", () => windowCall("close"));
+$("w-close").addEventListener("click", async () => {
+  const job = await api("/api/job").catch(() => null);
+  if (job?.running && !(await ask({title: "작업 중입니다. 끝나면 닫을까요?", text: `‘${job.name}’ 작업은 창을 닫아도 끝까지 하고, 끝나면 프로그램이 꺼져요.`}))) return;
+  windowCall("close");
+});
 async function toggleMaximize() {
   const answer = await windowCall("toggle");
   if (answer) document.documentElement.classList.toggle("maximized", answer.maximized);
@@ -248,19 +254,20 @@ document.querySelectorAll("[data-stop]").forEach((button) => button.addEventList
 let shown = 0;  // 색인 중에 마지막으로 화면을 새로 읽은 때
 
 async function pollIndex() {
-  const status = await api("/api/index");
-  showIndex(status);
-  if (status.running) {
-    if (Date.now() - shown > 10000) {  // 색인하는 동안에도 10초마다 숫자·폴더·목록을 새로 읽어 저장된 만큼 보여 준다.
+  let again = true;  // 요청이 한 번 실패해도 멈추지 않는다(멈추면 "색인하는 중…"에 그대로 남았다)
+  try {
+    const status = await api("/api/index");
+    showIndex(status);
+    again = status.running;
+    if (!status.running || Date.now() - shown > 10000) {  // 색인하는 동안에도 10초마다 숫자·폴더·목록을 새로 읽어 저장된 만큼 보여 준다.
       shown = Date.now();
       await loadState();
       await loadFiles();
     }
-    setTimeout(pollIndex, 1000);
-  } else {
-    await loadState();
-    await loadFiles();
+  } catch {
+    // 다음 차례에 다시 읽는다.
   }
+  if (again) setTimeout(pollIndex, 1000);
 }
 
 function showPage(name) {
@@ -449,7 +456,11 @@ function openScope(next, view = "", remember = true) {
 
 async function goBack() {
   if (page !== "files") return showPage("files");
-  while (trail.length && await gone(trail[trail.length - 1])) trail.pop();  // 그사이 색인에서 빠진 폴더로는 돌아가지 않는다
+  try {
+    while (trail.length && await gone(trail[trail.length - 1])) trail.pop();  // 그사이 색인에서 빠진 폴더로는 돌아가지 않는다
+  } catch (e) {
+    return toast(e.message);
+  }
   if (!trail.length) return toast("더 돌아갈 곳이 없어요");
   openScope(trail.pop(), "", false);
   toast("이전 폴더로 돌아왔어요");
@@ -822,10 +833,6 @@ function dropTarget(target, onDrop) {
   });
 }
 
-// 바깥(탐색기)에서 파일을 끌어 와 창에 놓아도 그 파일이 열리지 않게 한다.
-document.addEventListener("dragover", (e) => { if (!e.dataTransfer.types.includes(DRAG)) e.preventDefault(); });
-document.addEventListener("drop", (e) => e.preventDefault());
-
 // 범위 하나(view)를 바뀐 경로에 맞춘다: 폴더가 그 안이면 새 경로로, 같은 파일 보기의 기준이면 새 경로로. after가 null이면 지운 것(모든 파일로).
 function follow(view, before, after) {
   const field = view.same ? "same" : "folder", now = view[field] && lower(view[field]), old = lower(before);
@@ -851,7 +858,10 @@ async function gone(view) {
 
 // 바꾼 뒤 지금 연 폴더가 색인에 없으면 모든 파일로 간다.
 async function leaveGoneFolder() {
-  if (!(await gone(scope))) return;
+  // 묻는 동안 다른 작업이 시작됐거나(정리 직후 누른 되돌리기 등) 범위가 바뀌었으면 늦은 답은 버린다: 그 작업이 옮긴 것을 '없음'으로 보고
+  // 범위를 버리게 된다. 그 작업이 끝나면 자기 afterChange에서 범위를 따라간 뒤 다시 판단한다.
+  const view = scope, started = jobsStarted;
+  if (!$("job").classList.contains("hidden") || !(await gone(view)) || scope !== view || jobsStarted !== started) return;
   scope = {all: true};
   markTree();
   await loadFiles();
@@ -1076,14 +1086,14 @@ async function changed(row, path) {
 }
 
 $("act-move").addEventListener("click", (e) => busy(e.currentTarget, "detail-message", async () => {
-  const paths = selectedPaths();
+  const row = picked, paths = selectedPaths();  // 옮기는 동안 다른 줄을 누르거나 빈 곳을 눌러도 옮긴 그 파일을 따라간다
   const folder = await pickPath({title: "옮길 곳 고르기"});
   if (!folder) return;
   const result = await runJob((await api("/api/move", {paths, folder})).job);
   if (!result) return;
   if (paths.length !== 1) result.pairs.forEach(([before, after]) => followScope(before, after));  // 하나면 changed가 따라간다
   if (paths.length === 1 && result.paths.length === 1) {
-    await changed(picked, result.paths[0]);
+    await changed(row, result.paths[0]);
     say("detail-message", "옮겼어요." + failedText(result), result.failed.length ? "error" : "ok");
   } else {
     await afterChange(`${result.moved.toLocaleString()}개를 옮겼어요.${failedText(result)}`);
@@ -1609,7 +1619,10 @@ async function saveView(changes) {
 }
 document.querySelectorAll("input[name=list_group]").forEach((r) => r.addEventListener("change", () => saveView({list_group: r.value})));
 $("pin_installers").addEventListener("change", (e) => saveView({pin_installers: e.target.checked}));
-$("show_same_name").addEventListener("change", (e) => saveView({show_same_name: e.target.checked}));
+$("show_same_name").addEventListener("change", async (e) => {
+  await saveView({show_same_name: e.target.checked});
+  if (picked && !picked.folder) document.querySelector('[data-fold="same-name"]').classList.toggle("hidden", !state.settings.show_same_name);  // 열린 상세에도 바로
+});
 
 // ---------- 캐시 정리 ----------
 // [살펴보기]의 답(cacheFound)으로 묶음(임시 폴더·브라우저·앱)마다 체크 목록을 그린다. 끈 캐시는 설정 cache_skip에 기억한다.

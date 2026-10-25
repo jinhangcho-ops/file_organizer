@@ -241,9 +241,10 @@ def test_picture_blocked_while_reading_is_tried_again(home):
 def test_size_condition_does_not_use_size_index(home):
     import search
     import settings
-    write(home / "a.txt")
+    for n in range(20):
+        write(home / f"{n}.txt")
     build(home)
-    parts, values, _ = search.conditions({"size_min": "0.001", "size_max": "100"}, settings.load())
+    parts, values, _ = search.conditions({"size_min": "0.000001", "size_max": "100"}, settings.load())  # 1바이트 이상: 모두 걸리는 넓은 범위
     db = index.connect()
     try:
         plan = " ".join(str(r[3]) for r in db.execute("explain query plan select f.path, f.name from files f" + search.where(parts), values))

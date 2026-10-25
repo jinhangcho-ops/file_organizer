@@ -251,3 +251,11 @@ html.maximized .grip { display: none; }
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: rgba(127, 127, 127, .4); border-radius: 4px; }
 ::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+/* 띄우기: 화면은 CSP(style-src 'self')라 HTML의 style 속성이 먹지 않는다. 맨 끝에 두어 .box h3 같은 규칙보다 앞선다(h3.~). */
+.mt6 { margin-top: 6px; }
+.mt8 { margin-top: 8px; }
+.mt10 { margin-top: 10px; }
+.mt12, h3.mt12 { margin-top: 12px; }
+.mt16, h3.mt16 { margin-top: 16px; }
+.mb8 { margin-bottom: 8px; }
+.mb12 { margin-bottom: 12px; }

@@ -22,11 +22,12 @@ def masked(url):
     """주소에서 아이디·비밀번호와 ? 뒤를 가린다. 주소 모양이 아니면 ''."""
     try:
         parts = urlsplit(url.strip())
+        port = parts.port  # 범위 밖의 포트(:99999)도 ValueError
     except ValueError:
         return ""
     if not parts.scheme or not parts.hostname:
         return ""
-    host = parts.hostname + (f":{parts.port}" if parts.port else "")
+    host = parts.hostname + (f":{port}" if port else "")
     return urlunsplit((parts.scheme, host, parts.path, "", "")) + ("?…" if parts.query else "")
 
 

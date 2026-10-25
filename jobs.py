@@ -36,7 +36,7 @@ def start(name, work):
 
 
 def wait(timeout=60):
-    """검사용: 돌고 있는 작업이 끝나기를 기다린다."""
+    """돌고 있는 작업이 끝나기를(timeout초까지) 기다린다. 창을 닫은 뒤 desktop.py와 검사가 쓴다."""
     end = time.time() + timeout
     while status["running"] and time.time() < end:
         time.sleep(0.05)

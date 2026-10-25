@@ -87,9 +87,9 @@
         <div class="sec"><div class="kv" id="detail-rows"></div></div>
         <div class="sec file-only"><h3>내용 미리보기</h3><p class="preview" id="detail-preview"></p></div>
         <div class="sec folder-only hidden"><h3>구성</h3><div id="folder-kinds" class="row"></div>
-          <h3 style="margin-top:12px">큰 파일</h3><div id="folder-big"></div></div>
+          <h3 class="mt12">큰 파일</h3><div id="folder-big"></div></div>
         <div class="sec folder-only hidden"><h3>내 메모</h3><textarea id="folder-note" maxlength="500" rows="3" placeholder="이 폴더에 대한 메모(예: 2025년 계약 자료)"></textarea>
-          <div class="row" style="margin-top:6px"><button class="btn s" id="folder-note-save">메모 저장</button><span id="folder-note-message" class="hint"></span></div></div>
+          <div class="mt6 row"><button class="btn s" id="folder-note-save">메모 저장</button><span id="folder-note-message" class="hint"></span></div></div>
         <div class="sec fold file-only" data-fold="same-content"><button class="fold-head" id="same-content-title">내용이 같은 파일</button><div id="same-content"></div></div>
         <div class="sec fold file-only" data-fold="same-name"><button class="fold-head" id="same-name-title">이름이 같은 파일</button><div id="same-name"></div></div>
         <div class="acts">
@@ -109,16 +109,16 @@
           <h3>색인할 폴더</h3>
           <div class="hint">놓을 곳은 따로 넣지 않아도 색인해요. Windows, Program Files, AppData, 숨김·시스템 폴더는 들어가지 않아요.</div>
           <div class="list" id="roots"></div>
-          <div class="row" style="margin-top:10px"><span id="root-choices" class="row"></span><button class="btn s" data-pick="root">폴더 추가</button></div>
-          <div class="row" style="margin-top:12px"><button class="btn p" id="reindex">색인 갱신</button><button class="btn hidden" data-stop>멈추기</button></div>
+          <div class="mt10 row"><span id="root-choices" class="row"></span><button class="btn s" data-pick="root">폴더 추가</button></div>
+          <div class="mt12 row"><button class="btn p" id="reindex">색인 갱신</button><button class="btn hidden" data-stop>멈추기</button></div>
           <p id="index-progress" class="hint progress"></p>
         </div>
         <div class="box">
           <h3>색인 단계</h3>
           <div class="hint">파일 목록을 훑은 다음 위에서부터 차례로 해요. 끈 단계는 [색인 갱신]에서 빠지고 [이것만 하기]로만 돌아요.</div>
           <div class="list" id="steps"></div>
-          <div class="row" style="margin-top:10px">동영상 장면 간격 <input type="number" id="video_interval"> 초 · 같다고 볼 유사도 <input type="number" id="video_similar"> %</div>
-          <div class="row" style="margin-top:8px"><button class="btn p" id="numbers-save">저장</button></div>
+          <div class="mt10 row">동영상 장면 간격 <input type="number" id="video_interval"> 초 · 같다고 볼 유사도 <input type="number" id="video_similar"> %</div>
+          <div class="mt8 row"><button class="btn p" id="numbers-save">저장</button></div>
           <p id="steps-message" class="message"></p>
         </div>
         <div class="col">
@@ -127,23 +127,23 @@
             <div class="hint">모든 파일·검색 결과처럼 여러 폴더의 파일이 섞인 목록에 써요. 이름순은 A-Z 다음 ㄱ-ㅎ이에요.</div>
             <div class="row"><label><input type="radio" name="list_group" value="none"> 하나로(정렬대로)</label>
               <label><input type="radio" name="list_group" value="folder"> 폴더별로 묶기</label></div>
-            <div class="row" style="margin-top:6px"><label><input type="checkbox" id="pin_installers"> 설치파일(exe·msi 등)을 맨 위에</label></div>
-            <div class="row" style="margin-top:6px"><label><input type="checkbox" id="show_same_name"> 상세에 ‘이름이 같은 파일’ 보기</label></div>
+            <div class="mt6 row"><label><input type="checkbox" id="pin_installers"> 설치파일(exe·msi 등)을 맨 위에</label></div>
+            <div class="mt6 row"><label><input type="checkbox" id="show_same_name"> 상세에 ‘이름이 같은 파일’ 보기</label></div>
             <p id="view-message" class="message"></p>
           </div>
           <div class="box">
             <h3>캐시 정리</h3>
             <div class="hint">오래된 임시 파일과 캐시를 휴지통으로 보내요. 휴지통을 비워야 디스크 자리가 늘어요. 켜져 있는 프로그램의 캐시는 건너뛰고, 숨김·시스템 파일은 건드리지 않아요.</div>
-            <div class="row" style="margin-bottom:8px"><input type="number" id="cache_days" min="1" max="365"> 일 넘게 안 고친 것 <button class="btn" id="cache-scan">살펴보기</button></div>
+            <div class="mb8 row"><input type="number" id="cache_days" min="1" max="365"> 일 넘게 안 고친 것 <button class="btn" id="cache-scan">살펴보기</button></div>
             <div id="cache-list" class="cache-list"></div>
-            <div class="row" style="margin-top:8px"><button class="btn d" id="cache-clean" disabled>휴지통으로 보내기</button></div>
+            <div class="mt8 row"><button class="btn d" id="cache-clean" disabled>휴지통으로 보내기</button></div>
             <p id="cache-message" class="message"></p>
           </div>
           <div class="box">
             <h3>기간</h3>
             <div class="hint">목록 위쪽 버튼이 이 기준으로 파일을 골라요.</div>
-            <div class="row" style="margin-bottom:8px">최근 다운로드·최근 수정은 최근 <input type="number" id="recent_days" min="1" max="3650"> 일</div>
-            <div class="row" style="margin-bottom:12px">안 본 파일은 <input type="number" id="stale_days" min="1" max="3650"> 일 넘게</div>
+            <div class="mb8 row">최근 다운로드·최근 수정은 최근 <input type="number" id="recent_days" min="1" max="3650"> 일</div>
+            <div class="mb12 row">안 본 파일은 <input type="number" id="stale_days" min="1" max="3650"> 일 넘게</div>
             <button class="btn p" id="days-save">저장</button>
             <p id="days-message" class="message"></p>
           </div>
@@ -161,8 +161,8 @@
           <div class="list" id="blocked"></div>
           <div class="em" id="blocked-empty">차단한 폴더가 없어요.</div>
           <div class="admin-only">
-            <div class="row" style="margin-top:10px"><button class="btn s" id="block-pick">폴더 추가</button><button class="btn s" id="block-find">게임 폴더 찾기</button></div>
-            <div class="row" style="margin-top:8px" id="block-choices"></div>
+            <div class="mt10 row"><button class="btn s" id="block-pick">폴더 추가</button><button class="btn s" id="block-find">게임 폴더 찾기</button></div>
+            <div class="mt8 row" id="block-choices"></div>
           </div>
         </div>
         <div class="box">
@@ -171,26 +171,26 @@
           <div class="note hidden" id="not-admin-protect">관리자 권한으로 실행하면 바꿀 수 있어요. 지금은 보기만 돼요.</div>
           <div class="list" id="protected"></div>
           <div class="em" id="protected-empty">구조 보호 폴더가 없어요.</div>
-          <div class="admin-only"><div class="row" style="margin-top:10px"><button class="btn s" id="protect-pick">폴더 추가</button></div></div>
+          <div class="admin-only"><div class="mt10 row"><button class="btn s" id="protect-pick">폴더 추가</button></div></div>
         </div>
         <div class="box">
           <h3>사진·동영상 인식</h3>
           <div class="hint">색인 단계의 ‘사진·동영상 인식’을 켜거나 [이것만 하기]를 누르면 해요. 모델은 이 PC에서만 돌고 사진을 밖으로 보내지 않아요. 결과는 추정이라 틀릴 수 있어요.</div>
           <div class="list" id="model-list"></div>
-          <div class="row" style="margin-top:8px"><button class="btn s" id="models-get">모델 받기</button></div>
-          <div class="row" style="margin-top:12px"><label><input type="checkbox" id="face_on"> 얼굴로 같은 사람 찾기</label><button class="btn s" id="faces-forget">얼굴 정보 지우기</button></div>
-          <h3 style="margin-top:16px">내 분류 모델</h3>
+          <div class="mt8 row"><button class="btn s" id="models-get">모델 받기</button></div>
+          <div class="mt12 row"><label><input type="checkbox" id="face_on"> 얼굴로 같은 사람 찾기</label><button class="btn s" id="faces-forget">얼굴 정보 지우기</button></div>
+          <h3 class="mt16">내 분류 모델</h3>
           <div class="hint">이미지 분류 모델(.onnx, 옆에 config.json)을 고르면 분류마다 점수를 매겨요. 분류 이름은 여기서 붙인 이름만 보여요.</div>
           <p class="hint mono" id="custom-path"></p>
           <div class="row"><button class="btn s" id="custom-pick">파일 고르기</button><button class="btn s" id="custom-clear">빼기</button></div>
           <div class="list" id="custom-labels"></div>
-          <div class="row hidden" id="custom-save-row" style="margin-top:8px"><button class="btn p" id="custom-save">저장</button></div>
+          <div class="mt8 row hidden" id="custom-save-row"><button class="btn p" id="custom-save">저장</button></div>
           <p id="recognize-message" class="message"></p>
         </div>
         <div class="box">
           <h3>잠금 폴더</h3>
           <div class="hint">잠금은 따로 뜨는 잠금 창에서 다뤄요. 그 창은 화면 공유·녹화·캡처에 나오지 않아요. 폴더를 오른쪽 클릭 → [잠금…]으로도 열려요.</div>
-          <div class="row" style="margin-top:10px"><button class="btn s" id="lock-open">잠금 창 열기</button></div>
+          <div class="mt10 row"><button class="btn s" id="lock-open">잠금 창 열기</button></div>
         </div>
       </div>
     </div>

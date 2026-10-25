@@ -5,7 +5,6 @@ import os
 import stat
 import time
 
-import pytest
 from PIL import Image, ImageOps
 
 import blacklist
@@ -39,21 +38,20 @@ def test_other_accounts_profile_is_not_trashed(home, client, monkeypatch, fake_t
     assert client.post("/api/trash", json={"paths": [str(other)], "confirm": True}).status_code == 400 and fake_trash == []
 
 
-def test_read_only_file_stays_whole_when_moving_to_another_drive(tmp_path, monkeypatch):
+def test_read_only_file_moves_whole_to_another_drive(tmp_path, monkeypatch):
+    """7차에서 바꿈: 읽기 전용 파일도 다른 디스크로 옮긴다(같은 디스크에서는 원래 옮겨졌다). 같은 파일이 두 곳에 남지 않는다."""
     monkeypatch.setattr(organize.drives, "same_drive", lambda a, b: False)
     source = tmp_path / "프로젝트"
     write(source / "a.txt")
     locked = write(source / ".git" / "obj", "읽기 전용")
     os.chmod(locked, stat.S_IREAD)
     try:
-        with pytest.raises(organize.Partial):
-            organize.move_folder(str(source), str(tmp_path / "옮긴 곳"))
-        assert os.path.exists(locked) and (tmp_path / "옮긴 곳" / ".git" / "obj").exists()  # 원래 폴더에 남기고 알린다
+        organize.move_folder(str(source), str(tmp_path / "옮긴 곳"))
+        assert not source.exists() and (tmp_path / "옮긴 곳" / ".git" / "obj").read_text(encoding="utf-8") == "읽기 전용"
         single = write(tmp_path / "하나.txt", "읽기 전용")
         os.chmod(single, stat.S_IREAD)
-        with pytest.raises(OSError):
-            organize.move(single, str(tmp_path / "다른 곳" / "하나.txt"))
-        assert os.path.exists(single) and not (tmp_path / "다른 곳" / "하나.txt").exists()  # 같은 파일이 두 곳에 남지 않는다
+        organize.move(single, str(tmp_path / "다른 곳" / "하나.txt"))
+        assert not os.path.exists(single) and (tmp_path / "다른 곳" / "하나.txt").exists()
     finally:
         for folder, _, names in os.walk(tmp_path):
             for name in names:

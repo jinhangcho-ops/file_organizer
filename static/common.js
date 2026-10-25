@@ -3,6 +3,7 @@
 // 화면 공유에서 창 하나만 공유해도 보이게, 말풍선과 고르기는 창 안에 그린다(브라우저의 title 말풍선·Windows 고르기 창은 따로 뜨는 창이다).
 
 const $ = (id) => document.getElementById(id);
+const DRAG = "application/x-file-organizer";  // 본 창의 끌어 놓기로 넘기는 경로 목록의 형식
 const FOLDER_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M3 6.5A2.5 2.5 0 0 1 5.5 4h4l2 2.5h7A2.5 2.5 0 0 1 21 9v8.5a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/></svg>';
 
 // 화면 색: theme()이 주는 설정(auto면 Windows 설정을 따른다)대로 맞추는 함수를 돌려주고, Windows 색이 바뀌면 다시 맞춘다.
@@ -75,7 +76,7 @@ document.body.append(
       el("div", {id: "picker-list", className: "list picker-list"}),
       el("p", {id: "picker-message", className: "message"}),
       el("div", {className: "row end"}, el("button", {type: "button", id: "picker-new", className: "btn s", textContent: "새 폴더"}),
-        el("span", {style: "flex:1"}), el("button", {type: "button", id: "picker-cancel", className: "btn", textContent: "취소"}),
+        el("span", {className: "grow"}), el("button", {type: "button", id: "picker-cancel", className: "btn", textContent: "취소"}),
         el("button", {type: "button", id: "picker-ok", className: "btn p", textContent: "이 폴더 고르기"})))),
   el("div", {id: "tip", className: "tip hidden"}),
   el("div", {id: "toast", className: "toast"}),
@@ -169,6 +170,11 @@ function pickPath({title = "폴더 고르기", ext = "", start = ""} = {}) {
   show(start);
   return done;
 }
+
+// 바깥(탐색기)에서 파일을 끌어 와 창에 놓아도 그 파일이 열리지 않게 한다(잠금 창도: 놓으면 file:// 로 넘어가 잠금 화면이 사라졌다).
+// 본 창 안의 끌기(DRAG)는 막지 않는다: 놓을 곳(app.js의 dropTarget)만 받고, 그 밖에 놓으면 아무 일도 없다.
+document.addEventListener("dragover", (e) => { if (!e.dataTransfer.types.includes(DRAG)) e.preventDefault(); });
+document.addEventListener("drop", (e) => e.preventDefault());
 
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;

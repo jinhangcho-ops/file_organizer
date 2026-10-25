@@ -7,6 +7,7 @@ zip을 다시 열어 CRC와 크기를 확인한 뒤에만 원본을 휴지통으
   보낼 수 없는 파일을 넣으면 zip과 원본이 둘 다 남아 자리만 더 차지하기 때문이다."""
 import datetime
 import os
+import sqlite3
 import time
 import zipfile
 
@@ -46,9 +47,9 @@ def candidates(days, dest=""):
 
 def preview(days, dest=""):
     """종류별 개수·용량과 합계. 휴지통으로 보낼 수 없는 곳의 파일은 따로 센다."""
-    groups, blocked = {}, 0
+    groups, blocked, disks = {}, 0, {}  # disks: 디스크 검사는 볼륨마다 한 번만
     for row in candidates(days, dest):
-        if trash.problem(row["path"]):
+        if trash.problem(row["path"], disks):
             blocked += 1
             continue
         count, size = groups.get(row["kind"], (0, 0))
@@ -75,7 +76,8 @@ def verify(zip_path, written):
 def run(dest, days, progress=lambda *args: None):
     """보관한다. {"zip", "files", "original", "zip_size", "freed", "failed": [{"from", "error"}]}"""
     dest = settings.folder_text(dest, "보관할 곳")
-    rows = [row for row in candidates(days, dest) if not trash.problem(row["path"])]
+    disks = {}  # 디스크 검사는 볼륨마다 한 번만
+    rows = [row for row in candidates(days, dest) if not trash.problem(row["path"], disks)]
     if not rows:
         raise ValueError("보관할 파일이 없습니다.")
     zip_path = organize.free_name(dest, datetime.datetime.now().strftime("%Y-%m-%d_%H%M") + ".zip", set())
@@ -101,12 +103,15 @@ def run(dest, days, progress=lambda *args: None):
     sent = []
     for n, row in enumerate(written):  # 확인한 뒤에만 원본을 휴지통으로
         progress(len(rows) + n, None, row["path"])
-        ok, refused = trash.to_trash([row["path"]])
+        ok, refused = trash.to_trash([row["path"]], disks)
         sent += ok
         failed += [{"from": p, "error": reason} for p, reason in refused]
     progress(len(rows) * 2, None)
     if sent:
-        index.removed(sent)
+        try:
+            index.removed(sent)
+        except (OSError, sqlite3.Error) as e:  # 색인이 잠겨 있어도 보관은 끝났다: 다음 색인 때 바로잡힌다
+            failed.append({"from": "색인", "error": f"보관했지만 색인에 반영하지 못했습니다(다음 색인 때 바로잡힙니다): {e}"})
     sizes = {row["path"]: row["size"] for row in written}
     return {"zip": zip_path, "files": len(written), "original": sum(sizes.values()), "zip_size": os.path.getsize(zip_path),
             "freed": sum(sizes[p] for p in sent), "failed": failed}

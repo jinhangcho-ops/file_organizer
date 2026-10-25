@@ -5,6 +5,7 @@
 모아 보기에는 예외(exclude)를 적용한다. 위치·검색에는 적용하지 않는다."""
 import datetime
 import json
+import os
 import time
 
 import exclude
@@ -23,7 +24,9 @@ SAME = {
     "text": "f.texthash in (select texthash from files where texthash <> '' group by texthash having count(*) > 1)",
     "media": "f.id in (select a from media_pair union select b from media_pair)",
 }
-DUPLICATE = "(" + " or ".join(SAME.values()) + ")"
+# 중복 의심인 파일은 연결마다 한 번 임시 표에 모은다(same_files). 목록·종류별 개수·합계마다 세 가지 묶기를 다시 하면 30만 줄에 6.3초였다.
+DUPLICATE = "f.id in (select id from temp.same_files)"
+DUPLICATE_ONCE = "(" + " or ".join(SAME.values()) + ")"  # 한 번만 셀 때(사이드바 숫자): 임시 표를 만드는 것보다 빠르다
 # 줄마다 붙이는 표시는 그 줄의 지문으로 색인을 찾아본다(위 SAME처럼 표 전체를 묶어 세면 보여 줄 500줄에도 매번 1초 넘게 걸린다).
 SAME_ROW = {
     "bytes": "f.hash is not null and exists(select 1 from files g where g.hash = f.hash and g.id <> f.id)",
@@ -63,11 +66,49 @@ def number(value, name):
     return number
 
 
+WIDE = 10  # 걸리는 파일이 전체의 1/WIDE보다 많으면 색인을 따라가지 않고 표를 훑는다(폴더 범위·크기 조건).
+
+
+def same_files(db):
+    """이 연결의 임시 표 same_files에 중복 의심인 파일 id를 모은다(DUPLICATE를 쓰기 전에 부른다). 연결을 닫으면 사라진다."""
+    db.execute("create temp table if not exists same_files(id integer primary key)")
+    db.execute("insert or ignore into same_files select f.id from files f where " + DUPLICATE_ONCE)
+
+
+def wide(db, sql, values):
+    """sql(걸리는 줄을 고르는 select 1 …)이 전체 줄의 1/WIDE보다 많이 고르는지. 그만큼만 세어 보고 멈춘다."""
+    cap = (db.execute("select max(rowid) from files").fetchone()[0] or 0) // WIDE + 1
+    return db.execute(f"select count(*) from ({sql} limit ?)", [*values, cap]).fetchone()[0] >= cap
+
+
 def under(path):
     """폴더 path 아래(하위 폴더 포함) 파일의 조건과 값. key가 '폴더\' 이상 '폴더]' 미만인 범위로 비교해 key 색인을 탄다
-    (바이트 순서로 '\' 바로 다음 글자가 ']'라서, 이 범위는 정확히 '폴더\'로 시작하는 것들이다)."""
+    (바이트 순서로 '\' 바로 다음 글자가 ']'라서, 이 범위는 정확히 '폴더\'로 시작하는 것들이다).
+    큰 폴더(전체의 많은 부분)면 +f.key로 색인을 쓰지 않는다: 색인 순서로 한 줄씩 찾아가면 30만 줄에 21.9초, 훑으면 5.0초였다."""
     prefix = index.prefix(path)
-    return "f.key >= ? and f.key < ?", [prefix, prefix[:-1] + "]"]
+    values = [prefix, prefix[:-1] + "]"]
+    db = index.connect()
+    try:
+        big = wide(db, "select 1 from files where key >= ? and key < ?", values)
+    finally:
+        db.close()
+    column = "+f.key" if big else "f.key"
+    return f"{column} >= ? and {column} < ?", values
+
+
+def size_parts(low, high):
+    """크기 조건(바이트, 없으면 None)들. 걸리는 파일이 적으면 크기 색인을 타고('1GB 이상' 등), 많으면 +f.size로 훑는다
+    (넓은 범위를 색인으로 읽으면 1.4초, 훑으면 0.6ms. 좁은 범위를 훑으면 1.15초, 색인은 0.9ms였다)."""
+    bounds = [b for b in (("f.size >= ?", low), ("f.size <= ?", high)) if b[1] is not None]
+    if not bounds:
+        return [], []
+    values = [value for _, value in bounds]
+    db = index.connect()
+    try:
+        big = wide(db, "select 1 from files f where " + " and ".join(part for part, _ in bounds), values)
+    finally:
+        db.close()
+    return [("+" if big else "") + part for part, _ in bounds], values
 
 
 def conditions(query, config):
@@ -101,21 +142,22 @@ def conditions(query, config):
         part, more = tag_condition(query["tag"], config)
         parts.append(part)
         values += more
-    if (query.get("name") or "").strip():  # 이름이나 폴더 이름
-        parts.append("(instr(lower(f.name), lower(?)) > 0 or instr(f.folder, lower(?)) > 0)")
-        values += [query["name"].strip()] * 2
+    if (query.get("name") or "").strip():  # 파일 이름이나 그 파일이 바로 든 폴더의 이름(위 폴더 경로 전체가 아니라)
+        # 대소문자: SQLite lower()는 영문만 낮추므로, key(os.path.normcase)에서 이름 부분을 잘라 낮춘 찾는 말과 견준다.
+        parts.append("(instr(substr(f.key, length(f.key) - length(f.name) + 1), ?) > 0"
+                     " or f.folder in (select key from folders where instr(substr(key, length(key) - length(name) + 1), ?) > 0))")
+        values += [os.path.normcase(query["name"].strip())] * 2
     if (query.get("date_from") or "").strip():
         parts.append("f.modified >= ?")
         values.append(day(query["date_from"]))
     if (query.get("date_to") or "").strip():
         parts.append("f.modified < ?")
         values.append(day(query["date_to"], end=True))
-    if str(query.get("size_min") or "").strip():
-        parts.append("+f.size >= ?")  # +: files_size 색인을 쓰지 않는다(범위가 넓으면 훑기보다 훨씬 느렸다)
-        values.append(number(query["size_min"], "최소 크기") * MB)
-    if str(query.get("size_max") or "").strip():
-        parts.append("+f.size <= ?")
-        values.append(number(query["size_max"], "최대 크기") * MB)
+    low, high = ((number(query[name], label) * MB if str(query.get(name) or "").strip() else None)
+                 for name, label in (("size_min", "최소 크기"), ("size_max", "최대 크기")))
+    more_parts, more = size_parts(low, high)
+    parts += more_parts
+    values += more
     text = (query.get("text") or "").strip()
     if text:
         if len(text) >= 3:  # trigram 색인으로 찾는다(대소문자 무시, 글자 그대로).
@@ -199,6 +241,7 @@ def listing(query):
     snippet = ", (select substr(text, max(1, instr(lower(text), lower(?)) - 40), 120) from body where rowid = f.id) snippet" if text else ""
     db = index.connect()
     try:
+        same_files(db)  # 아래의 목록(view) 개수가 늘 중복 의심을 센다
         # 두 단계: 안쪽은 정렬해서 앞의 줄만 고르고(가벼운 칸만), 바깥은 그 줄에만 같은 파일 표시 같은 무거운 칸을 붙인다.
         # 한 번에 하면 색인을 못 타는 정렬(폴더별 묶기 등)에서 모든 줄의 무거운 칸을 먼저 계산해 25만 줄에 13초가 걸렸다.
         ordering = f"order by {first_keys(config, query)}{sort} {order}, f.id {order}"
@@ -348,6 +391,7 @@ def counts():
         found = {"all": db.execute("select count(*) from files").fetchone()[0]}
         for view in VIEWS:
             parts, values, _ = conditions({"view": view}, config)
+            parts = [DUPLICATE_ONCE if part == DUPLICATE else part for part in parts]  # 한 번만 센다: 임시 표 없이
             found[view] = db.execute(f"select count(*) from files f{where(parts)}", values).fetchone()[0]
         return found
     finally:

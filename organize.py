@@ -7,6 +7,7 @@
 - 옮긴 기록(moves.json)으로 마지막 정리를 되돌린다."""
 import os
 import shutil
+import sqlite3
 import stat
 
 import captures
@@ -84,7 +85,7 @@ def move(before, after):
         now = os.stat(before)
         if (now.st_size, now.st_mtime_ns) != (st.st_size, st.st_mtime_ns):  # 복사하는 동안 다른 프로그램이 저장했다: 새 내용을 지우지 않는다
             raise OSError("옮기는 동안 원본이 바뀌어 옮기지 않았습니다.")
-        os.remove(before)
+        remove_original(before)
     except OSError:  # 읽기 전용·사용 중: 원본은 그대로 두고 방금 만든 사본을 치운다(같은 파일이 두 곳에 남지 않게).
         remove_copy(after)
         raise
@@ -94,6 +95,27 @@ def remove_copy(path):
     """이번에 만든 사본 파일을 지운다. 복사는 읽기 전용 표시까지 가져오므로 그것을 풀고 지운다."""
     os.chmod(path, stat.S_IWRITE)
     os.remove(path)
+
+
+def remove_original(path):
+    """복사를 확인한 원본을 지운다. 읽기 전용이면 표시를 풀고 지운다(사본에는 표시가 남아 있다). 못 지우면(사용 중) 표시를 되돌린다."""
+    mode = os.stat(path).st_mode
+    os.chmod(path, stat.S_IWRITE)
+    try:
+        os.remove(path)
+    except OSError:
+        os.chmod(path, mode)
+        raise
+
+
+def reflect(pairs):
+    """옮긴 (전, 후)를 색인에 반영한다. 실패하면(색인 중이라 DB가 잠김 등) 까닭 글을 돌려준다: 옮긴 것은 그대로이고 색인은 다음 색인 때 바로잡힌다.
+    여기서 멈추면 되돌리기 기록·잠금 기록·메모가 빠져, 옮긴 파일을 되돌릴 수 없게 된다."""
+    try:
+        index.moved(pairs)
+    except (OSError, sqlite3.Error) as e:
+        return f"옮겼지만 색인에 반영하지 못했습니다(다음 색인 때 바로잡힙니다): {getattr(e, 'strerror', None) or e}"
+    return None
 
 
 def writable_then_retry(function, path, _):
@@ -116,9 +138,13 @@ def move_folder(before, after):
     if os.path.islink(before) or os.path.isjunction(before):
         raise OSError("링크·정션은 다른 디스크로 옮기지 않습니다(가리키는 곳의 파일까지 옮겨진다).")
     copied = []
+
+    def unreadable(error):  # 건너뛰면 그 폴더는 남는데 색인은 통째로 옮긴 것으로 고친다: 복사 전에 멈춘다
+        raise OSError(f"안을 읽을 수 없는 폴더가 있어 옮기지 않았습니다: {error.filename}") from error
+
     os.makedirs(after)  # 이미 있으면 실패한다: 실패했을 때 치우는 사본(after)은 모두 이번에 만든 것이어야 한다.
     try:
-        for folder, dirs, names in os.walk(before):
+        for folder, dirs, names in os.walk(before, onerror=unreadable):
             if any(os.path.islink(os.path.join(folder, d)) or os.path.isjunction(os.path.join(folder, d)) for d in dirs):
                 raise OSError("링크·정션이 든 폴더는 다른 디스크로 옮기지 않습니다(가리키는 곳의 파일까지 옮겨진다).")
             target = os.path.join(after, os.path.relpath(folder, before))
@@ -140,8 +166,8 @@ def move_folder(before, after):
         now = os.stat(source)
         if (now.st_size, now.st_mtime_ns) == (st.st_size, st.st_mtime_ns):
             try:
-                os.remove(source)
-            except OSError:  # 읽기 전용·사용 중인 파일은 원래 폴더에 남긴다(Partial로 알린다).
+                remove_original(source)
+            except OSError:  # 사용 중인 파일은 원래 폴더에 남긴다(Partial로 알린다).
                 kept = True
         else:
             kept = True
@@ -151,7 +177,7 @@ def move_folder(before, after):
     except OSError:
         kept = True
     if kept:
-        raise Partial("옮기는 동안 새로 생기거나 바뀐 파일은 원래 폴더에 남겼습니다(나머지는 옮겼습니다).")
+        raise Partial("옮기는 동안 새로 생기거나 바뀐 파일과 다른 프로그램이 쓰는 중인 파일은 원래 폴더에 남겼습니다(나머지는 옮겼습니다).")
 
 
 def apply(moves, progress=lambda *args: None):
@@ -167,8 +193,9 @@ def apply(moves, progress=lambda *args: None):
         except OSError as e:
             failed.append({"from": before, "to": after, "error": e.strerror or str(e)})
     progress(len(moves), len(moves))
-    if done:
-        index.moved(done)
+    error = done and reflect(done)
+    if error:
+        failed.append({"from": "색인", "to": "", "error": error})
     return done, failed
 
 

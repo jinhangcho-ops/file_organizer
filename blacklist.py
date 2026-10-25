@@ -96,6 +96,16 @@ def candidates(roots):
     return sorted(p for p in found if not fence.inside(p, blocked))
 
 
+def library(path):
+    """게임 묶음 폴더(GAMES 이름)인지: candidates처럼 드라이브 바로 아래와 그 한 단계 아래만 본다.
+    더 깊은 곳의 같은 이름(문서 안의 steam, 사진 안의 Blizzard 등)은 보통 폴더다(안을 색인하고 옮길 수 있게)."""
+    if os.path.basename(path).lower() not in GAMES:
+        return False
+    tops = {exclude.key(d) for d in drive_roots([path])}
+    parent = os.path.dirname(path)
+    return exclude.key(parent) in tops or exclude.key(os.path.dirname(parent)) in tops
+
+
 def drive_roots(roots):
     """게임 폴더를 찾기 시작할 곳: 색인하는 폴더들의 드라이브(C:\\ 등). 테스트는 임시 폴더로 바꾼다."""
     return sorted({os.path.splitdrive(os.path.abspath(root))[0] + "\\" for root in roots})

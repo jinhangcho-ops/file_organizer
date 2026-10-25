@@ -309,7 +309,9 @@ def checked(path, found=None, fences=None):
         raise ValueError(f"색인에 없는 경로입니다. 색인을 갱신하세요: {path}")
     if os.path.isreserved(path):  # 'abc.'는 Windows가 옆의 abc로 읽어 다른 파일을 옮기거나 보여 준다
         raise ValueError(f"Windows가 다룰 수 없는 이름이라 다루지 않습니다: {path}")
-    return fence.refuse(path, fences)
+    # 색인 비교(key)는 끝의 \를 떼고 맞추지만 경로는 그대로라, 'A\'를 옮기면 basename이 ''이 되어 ' (2)'가 됐다. 다듬은 경로를 돌려준다
+    # (abspath는 끝의 점도 떼므로 isreserved 검사 뒤에).
+    return fence.refuse(os.path.abspath(path), fences)
 
 
 def indexed_path():
@@ -323,11 +325,12 @@ def indexed_paths(movable=True):
     if not isinstance(paths, list) or not paths or not all(isinstance(path, str) for path in paths):
         raise ValueError("고른 파일이 없습니다.")
     found, fences, game_keys = index.look(paths), fence.keys(), games.keys()  # 연결 하나, 차단·잠금·게임 목록 한 번으로 모두 본다.
+    clean = []
     for path in paths:
-        fence.refuse_system(checked(path, found, fences), game_keys)
+        clean.append(fence.refuse_system(checked(path, found, fences), game_keys))
         if movable and found[path][1]:
             raise ValueError(f"색인한 맨 위 폴더는 옮기거나 지울 수 없습니다: {path}")
-    return list(dict.fromkeys(paths))
+    return list(dict.fromkeys(clean))
 
 
 @app.post("/api/move")

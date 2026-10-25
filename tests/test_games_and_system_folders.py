@@ -3,6 +3,7 @@
 import json
 import os
 
+import blacklist
 import fence
 import games
 import organize
@@ -14,6 +15,7 @@ def listed(client):
 
 
 def test_index_detects_game_folders_and_skips_inside(home, client, monkeypatch):
+    monkeypatch.setattr(blacklist, "drive_roots", lambda roots: [str(home)])  # 게임 묶음 이름은 드라이브 바로 아래에서만 보므로
     write(home / "문서" / "메모.txt")
     write(home / "놀이" / "유니티 게임" / "UnityPlayer.dll")
     write(home / "놀이" / "유니티 게임" / "Data" / "level1.assets")

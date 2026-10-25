@@ -60,9 +60,9 @@ def image_hash(path):
             small = ImageOps.exif_transpose(img).convert("L").resize((9, 8), Image.Resampling.LANCZOS)
             return dhash(small.tobytes())
     except OSError as e:
-        if e.errno is not None:  # 읽다가 막혔다(다른 프로그램이 일부를 잠금 등): 기록하지 않고 다음 색인에 다시
+        if e.errno is not None and again(e, path):  # 읽다가 잠시 막혔다(다른 프로그램이 일부를 잠금 등): 기록하지 않고 다음 색인에 다시
             raise
-        return None  # 깨진 그림(UnidentifiedImageError 등, errno 없음)
+        return None  # 깨진 그림(UnidentifiedImageError 등, errno 없음), 늘 나는 읽기 오류(배드 섹터 등)
     except (ValueError, SyntaxError, EOFError, RuntimeError, Image.DecompressionBombError):  # 깨진 EXIF·끊긴 HEIC, 깨진 HEIC(pillow_heif의 RuntimeError)
         return None
 
@@ -151,26 +151,50 @@ def openable(path):
     return True
 
 
+def read_error(path):
+    """Windows 함수로 처음부터 다시 읽어 막히는 곳의 오류 번호. 끝까지 읽히면 None."""
+    try:
+        handle = _winapi.CreateFile(path, _winapi.GENERIC_READ, 7, 0, _winapi.OPEN_EXISTING, 0, 0)
+        try:
+            while _winapi.ReadFile(handle, 1024 * 1024)[0]:
+                pass
+        finally:
+            _winapi.CloseHandle(handle)
+    except OSError as e:
+        return e.winerror
+    return None
+
+
+def again(error, path):
+    """읽다 난 OSError가 잠시 막힌 것(AGAIN)이라 다음 색인에 다시 할지. open()으로 읽으면 C 런타임을 거쳐 winerror가 비고
+    잠금(33)도 배드 섹터(23)도 EACCES라, 그때는 다시 읽어 본다(다시 읽히면 그사이 풀린 것이라 다시 한다)."""
+    code = error.winerror if error.winerror is not None else read_error(path)
+    return code is None or code in AGAIN
+
+
 def fingerprint(db, row, interval):
-    """파일 하나의 지문을 만들어 media에 넣는다. 읽은 뒤 연 시각은 되돌린다."""
+    """파일 하나의 지문을 만들어 media에 넣는다. 읽은 뒤 연 시각은 되돌린다. 클라우드 전용 파일은 하지 않는다.
+    다 읽은 뒤에 쓴다(읽는 동안 쓰기 잠금을 잡지 않게: index.release)."""
     st = os.stat(row["path"])
-    if index.stamp(st) != row["stamp"]:  # 목록을 훑은 뒤에 바뀌었다: 다음 색인 때 한다.
+    if index.stamp(st) != row["stamp"] or index.cloud_only(st):  # 목록을 훑은 뒤에 바뀌었다: 다음 색인 때 한다.
         return
     readable = openable(row["path"])
+    if row["ext"] in IMAGE_EXTS:
+        h = image_hash(row["path"]) if readable else None
+    else:
+        length = video_length(row["path"]) if readable else None
+        frames = frame_hashes(row["path"], frame_times(length, interval)) if length else []
     for table, column in (("media", "id"), ("media_todo", "id"), ("media_pair", "a"), ("media_pair", "b")):
         db.execute(f"delete from {table} where {column} = ?", (row["id"],))
     if row["ext"] in IMAGE_EXTS:
-        h = image_hash(row["path"]) if readable else None
         db.execute("insert into media(id, kind, duration, frames, made, interval) values(?, 'image', null, ?, ?, null)",
                    (row["id"], encode([h]) if h is not None else "", row["stamp"]))
         if h is not None:
             db.execute("insert or ignore into media_todo(id) values(?)", (row["id"],))
     else:
-        length = video_length(row["path"]) if readable else None
-        frames = frame_hashes(row["path"], frame_times(length, interval)) if length else []
         db.execute("insert into media(id, kind, duration, frames, made, interval) values(?, 'video', ?, ?, ?, ?)",
                    (row["id"], length, encode(frames), row["stamp"], interval))
-        db.execute("delete from meta where name = 'video_similar'")  # 동영상 짝을 다시 맞추게 한다
+        db.execute("insert or ignore into media_todo(id) values(?)", (row["id"],))  # 이 동영상만 다른 동영상들과 견준다(match_videos)
     filetime.restore_access(row["path"], st)
 
 
@@ -182,7 +206,7 @@ def match_images(db):
     """아직 짝을 맞추지 않은 사진(media_todo)마다, 같은 조각이 SAME_BANDS개 이상인 사진과만 비교해 IMAGE_BITS 안쪽이면 짝으로 남긴다.
     사진 지문과 조각 표는 메모리에 한 번 만든다(후보마다 DB에 묻거나, 조각 하나만 같은 것까지 비교하면 사진 수십만 장에서 수십억 번이 된다).
     멈추면(index.stop) 남은 사진은 media_todo에 남아 다음 색인 때 이어서 한다."""
-    ids = [i for (i,) in db.execute("select id from media_todo")]
+    ids = [i for (i,) in db.execute("select t.id from media_todo t join media m on m.id = t.id where m.kind = 'image'")]  # 동영상은 match_videos가
     if not ids:
         return
     hashes = {}
@@ -211,9 +235,15 @@ def match_images(db):
 
 
 def match_videos(db, similar):
-    """동영상 짝을 모두 다시 정한다(유사도 기준을 바꿔도 맞게). 길이 순으로 놓고 LENGTH_GAP 안쪽의 영상끼리만 비교한다."""
+    """동영상 짝을 맞춘다. 길이 순으로 놓고 LENGTH_GAP 안쪽의 영상끼리만 비교한다.
+    지난번과 기준(similar, meta의 video_similar)이 같으면 새로 지문을 만든 동영상(media_todo)만 다른 모든 동영상과 견준다
+    (모두 다시 하면 5,000개에 9.8초, 2만 개에 178초였다). 기준이 바뀌었거나 처음이면 모두 다시 한다(기준은 run이 남긴다)."""
     videos = [(r["id"], r["duration"], decode(r["frames"])) for r in db.execute(
-        "select id, duration, frames from media where kind = 'video' and duration > 0 order by duration")]
+        "select id, duration, frames from media where kind = 'video' and duration > 0 order by duration, id")]
+    last = db.execute("select value from meta where name = 'video_similar'").fetchone()
+    if last is not None and last[0] == similar:
+        new_videos(db, similar, videos)
+        return
     found = []
     for i, (a, length, frames) in enumerate(videos):
         if index.stop.is_set():  # 멈추면 있던 짝은 그대로 두고, 표시(meta)를 남기지 않아 다음에 처음부터 다시 맞춘다
@@ -227,6 +257,32 @@ def match_videos(db, similar):
     db.execute("delete from media_pair where a in (select id from media where kind = 'video')")
     for a, b, score in found:
         pair(db, a, b, score)
+    db.execute("delete from media_todo where id in (select id from media where kind = 'video')")
+
+
+def new_videos(db, similar, videos):
+    """기준이 그대로일 때(match_videos): 할 일인 동영상마다 앞뒤로 LENGTH_GAP 안쪽의 영상과 견준다(모두 다시 할 때와 같은 쌍·같은 순서로)."""
+    todo = {i for (i,) in db.execute("select t.id from media_todo t join media m on m.id = t.id where m.kind = 'video'")}
+    for i, (a, length, frames) in enumerate(videos):
+        if a not in todo:
+            continue
+        if index.stop.is_set():  # 남은 것은 할 일에 남아 다음에 한다
+            return
+        near = []
+        for j in range(i - 1, -1, -1):  # 짧은 쪽: 그 영상 길이의 (1 + LENGTH_GAP)배가 이 영상보다 짧으면 끝
+            if length > videos[j][1] * (1 + LENGTH_GAP):
+                break
+            near.append((videos[j][0], similarity(videos[j][2], frames)))
+        for b, other_length, other_frames in videos[i + 1:]:
+            if other_length > length * (1 + LENGTH_GAP):
+                break
+            near.append((b, similarity(frames, other_frames)))
+        for b, score in near:
+            if score is not None and score >= similar:
+                pair(db, a, b, score)
+        db.execute("delete from media_todo where id = ?", (a,))
+        index.save_now(db)
+    db.execute("delete from media_todo where id in (select id from media where kind = 'video')")  # 길이를 모르는 것 등
 
 
 def run(db):
@@ -238,16 +294,17 @@ def run(db):
         if index.stop.is_set():
             break
         index.status["current"] = row["path"]
+        index.release(db)
         try:
             fingerprint(db, row, config["video_interval"])
         except (OSError, subprocess.SubprocessError):
             continue
         index.status["done"] += 1
-        index.save_now(db)
     match_images(db)
     last = db.execute("select value from meta where name = 'video_similar'").fetchone()
-    if not index.stop.is_set() and (last is None or last[0] != config["video_similar"]):  # 새 동영상 지문은 이 표시를 지운다. 지운 동영상의 짝은 drop_ids가 함께 지운다.
+    new = db.execute("select 1 from media_todo t join media m on m.id = t.id where m.kind = 'video' limit 1").fetchone()
+    if not index.stop.is_set() and (last is None or last[0] != config["video_similar"] or new):  # 지운 동영상의 짝은 drop_ids가 함께 지운다.
         match_videos(db, config["video_similar"])
-        if not index.stop.is_set():
+        if not index.stop.is_set():  # 끝까지 맞췄다: 다음에는 새 동영상만 견준다
             db.execute("insert or replace into meta(name, value) values('video_similar', ?)", (config["video_similar"],))
     index.save_now(db, force=True)

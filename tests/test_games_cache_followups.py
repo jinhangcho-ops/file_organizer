@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 import actions
+import blacklist
 import cache
 import drives
 import exclude
@@ -26,6 +27,7 @@ def test_game_keys_are_read_once_and_refreshed_after_indexing(home, monkeypatch)
 
 
 def test_game_folders_show_with_size_in_the_folder_list(home, monkeypatch):
+    monkeypatch.setattr(blacklist, "drive_roots", lambda roots: [str(home)])  # 게임 묶음 이름은 드라이브 바로 아래에서만 보므로
     write(home / "문서" / "메모.txt", "12345")
     big = home / "놀이" / "큰 게임"
     write(big / "steam_api64.dll")

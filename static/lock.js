@@ -21,17 +21,20 @@ async function load() {
 }
 
 // 잠금을 바꾸는 요청. 성공하면 다시 그리고 본 창의 목록·숫자도 다시 읽게 한다.
+// 바꾸기는 됐는데 다시 읽기만 실패하면, 성공을 알리고 본 창도 새로 읽게 한 뒤 다시 읽기 실패를 따로 알린다.
 async function lockCall(url, data, done) {
+  let answer;
   try {
-    const answer = await api(url, data);
-    await load();
-    if (data.path) await api("/api/window", {action: "refresh"}).catch(() => {});  // 비밀번호·금고 위치는 본 창의 목록을 바꾸지 않는다
-    if (done) say("lock-message", typeof done === "function" ? done(answer) : done, "ok");
-    return answer;
+    answer = await api(url, data);
   } catch (e) {
     say("lock-message", e.message, "error");
     return null;
   }
+  if (data.path) await api("/api/window", {action: "refresh"}).catch(() => {});  // 비밀번호·금고 위치는 본 창의 목록을 바꾸지 않는다
+  const text = !done ? "" : typeof done === "function" ? done(answer) : done;
+  if (text) say("lock-message", text, "ok");
+  await load().catch((e) => say("lock-message", `${text} 목록을 다시 읽지 못했어요: ${e.message}`.trim(), "error"));
+  return answer;
 }
 
 async function lockFolder(vault) {

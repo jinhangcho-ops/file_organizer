@@ -42,6 +42,7 @@ def summary(path):
         if row is None:
             return None
         lo, hi = values
+        search.same_files(db)
         children = db.execute("select count(*) from folders where parent = ?", (key,)).fetchone()[0]
         below = db.execute("select count(*) from folders where key >= ? and key < ?", (lo, hi)).fetchone()[0]
         kinds = [list(r) for r in db.execute(f"select f.kind, count(*) n from files f where {part} group by f.kind order by n desc", values)]
