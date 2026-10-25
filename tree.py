@@ -45,7 +45,8 @@ def summary(path):
         search.same_files(db)
         children = db.execute("select count(*) from folders where parent = ?", (key,)).fetchone()[0]
         below = db.execute("select count(*) from folders where key >= ? and key < ?", (lo, hi)).fetchone()[0]
-        kinds = [list(r) for r in db.execute(f"select f.kind, count(*) n from files f where {part} group by f.kind order by n desc", values)]
+        # +f.kind: 종류 색인을 따라 폴더 밖의 줄까지 찾아가지 않게(search.listing의 종류별 개수와 같다)
+        kinds = [list(r) for r in db.execute(f"select f.kind, count(*) n from files f where {part} group by +f.kind order by n desc, f.kind", values)]
         biggest = [dict(r) for r in db.execute(f"select f.path, f.name, f.size from files f where {part} order by f.size desc limit 3", values)]
         latest = db.execute(f"select max(f.modified) from files f where {part}", values).fetchone()[0]
         same = db.execute(f"select count(*) from files f where {part} and {search.DUPLICATE}", values).fetchone()[0]

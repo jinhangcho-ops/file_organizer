@@ -279,6 +279,14 @@ def todo(db, signature, faces_on):
                             and (r.id is null or r.made <> f.stamp or r.custom <> ? or r.faces <> ?)""", exts + [signature, int(faces_on)]).fetchall()
 
 
+def local(path):
+    """이 PC에 내용이 있는 파일인지(클라우드 전용이거나 사라졌으면 False)."""
+    try:
+        return not index.cloud_only(os.stat(path))
+    except OSError:
+        return False
+
+
 def recognize_one(db, engine, row, config, centers):
     """파일 하나를 인식해 tags·faces·recognized에 넣는다. 열지 못하면 빈 결과로 표시만 한다(다시 시도하지 않게)."""
     from PIL import Image
@@ -395,7 +403,8 @@ def work(db, report):
         raise ValueError("사진·동영상 인식 모델이 없습니다. 설정 → 사진·동영상 인식에서 [모델 받기]를 누르세요.")
     config = settings.load()
     faces_on = bool(config.get("face_on", True)) and models.ready("face")
-    rows = todo(db, custom_signature(config), faces_on)
+    # 클라우드 전용만 남았으면 모델(약 400MB)을 올리지 않는다: 미리 빼 둔다(기록하지 않아 받은 뒤의 색인에서 한다)
+    rows = [row for row in todo(db, custom_signature(config), faces_on) if local(row["path"])]
     report(total=len(rows), done=0)
     if not rows:
         return

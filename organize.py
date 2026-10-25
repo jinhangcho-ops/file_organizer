@@ -202,7 +202,8 @@ def apply(moves, progress=lambda *args: None):
 def run(source, dest, progress=lambda *args: None):
     """미리보기와 같은 목록을 서버에서 다시 만들어 옮긴다(화면이 보낸 경로를 그대로 믿지 않는다)."""
     done, failed = apply([(item["from"], item["to"]) for item in plan(source, dest)], progress)
-    settings.write(LOG, [{"from": before, "to": after} for before, after in done])
+    if done:  # 하나도 못 옮겼으면 앞 정리의 되돌리기 기록을 남긴다
+        settings.write(LOG, [{"from": before, "to": after} for before, after in done])
     undo_log.record("organize", done, f"다운로드 정리 {len(done)}개")
     return {"moved": len(done), "failed": failed, "pairs": done}
 

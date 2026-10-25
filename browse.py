@@ -24,6 +24,7 @@ def listing(path, ext=None):
         raise ValueError(f"없는 폴더입니다: {path}")
     fences = fence.keys()
     fence.refuse(path, fences)
+    fence.refuse(os.path.realpath(path), fences)  # 경로 칸에 친 정션이 차단·잠금 폴더를 가리킬 수 있다
     folders, files = [], []
     try:
         with os.scandir(path) as entries:
@@ -54,6 +55,7 @@ def make_folder(path, name):
     if not path or not os.path.isdir(path):
         raise ValueError("새 폴더를 만들 곳을 먼저 여세요.")
     fence.refuse_system(fence.refuse(os.path.abspath(path)))
+    fence.refuse_system(fence.refuse(os.path.realpath(path)))  # 정션이 가리키는 곳도
     target = os.path.join(os.path.abspath(path), name)
     if os.path.lexists(target):
         raise ValueError(f"같은 이름이 있습니다: {name}")

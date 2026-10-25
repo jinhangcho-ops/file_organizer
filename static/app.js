@@ -62,7 +62,9 @@ function josa(word, withFinal, without) {
 }
 
 function failedText(result) {
-  return result.failed.length ? `\n${result.failed.length}개는 못 했어요.\n` + result.failed.map((f) => `${f.from}: ${f.error}`).join("\n") : "";
+  const failed = result.failed.filter((f) => f.from !== "색인");  // 색인 줄은 못 한 파일이 아니다(파일은 다 했고 기록만 못 고쳤다): 따로 적는다.
+  const notes = result.failed.filter((f) => f.from === "색인").map((f) => `\n색인: ${f.error}`).join("");
+  return (failed.length ? `\n${failed.length}개는 못 했어요.\n` + failed.map((f) => `${f.from}: ${f.error}`).join("\n") : "") + notes;
 }
 
 // 뒤에서 도는 작업(정리·옮기기·휴지통·보관): 시작 요청의 답을 받아 끝날 때까지 아래 진행률 막대에 보여 주고, 결과를 돌려준다.
@@ -108,7 +110,8 @@ const windowCall = (action, data = {}) => api("/api/window", {action, ...data}).
 $("w-min").addEventListener("click", () => windowCall("minimize"));
 $("w-close").addEventListener("click", async () => {
   const job = await api("/api/job").catch(() => null);
-  if (job?.running && !(await ask({title: "작업 중입니다. 끝나면 닫을까요?", text: `‘${job.name}’ 작업은 창을 닫아도 끝까지 하고, 끝나면 프로그램이 꺼져요.`}))) return;
+  // changes: 파일을 바꾸는 작업만 끝까지 한다(읽기·받기만 하는 jobs.CUTTABLE은 닫으면 끊겨 묻지 않는다).
+  if (job?.running && job.changes && !(await ask({title: "작업이 아직 돌고 있어요. 창을 닫을까요?", text: `창은 바로 닫히고, ‘${job.name}’ 작업은 끝까지 마친 뒤 프로그램이 꺼져요.`}))) return;
   windowCall("close");
 });
 async function toggleMaximize() {
@@ -258,12 +261,12 @@ async function pollIndex() {
   try {
     const status = await api("/api/index");
     showIndex(status);
-    again = status.running;
     if (!status.running || Date.now() - shown > 10000) {  // 색인하는 동안에도 10초마다 숫자·폴더·목록을 새로 읽어 저장된 만큼 보여 준다.
       shown = Date.now();
       await loadState();
       await loadFiles();
     }
+    again = status.running;  // 새로 읽은 뒤에만: 마지막 읽기가 실패하면 다시 한다(숫자·폴더가 옛것으로 남았다)
   } catch {
     // 다음 차례에 다시 읽는다.
   }
@@ -1105,9 +1108,9 @@ $("act-rename").addEventListener("click", async (e) => {
   const name = await ask({title: "이름 바꾸기", text: row.name, value: row.name});
   if (name === null || name === row.name) return;
   busy(e.target, "detail-message", async () => {
-    const {path} = await api("/api/rename", {path: row.path, name});
+    const {path, note} = await api("/api/rename", {path: row.path, name});
     await changed(row, path);
-    say("detail-message", "이름을 바꿨어요.", "ok");
+    say("detail-message", note ? `이름을 바꿨어요. ${note}` : "이름을 바꿨어요.", note ? "error" : "ok");
   });
 });
 

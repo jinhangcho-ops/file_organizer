@@ -114,7 +114,7 @@ def move_back(pairs, progress=lambda *args: None):
 
 def trash_many(paths, progress=lambda *args: None):
     """파일·폴더들을 휴지통으로 보낸다(trash.to_trash). 보낼 수 없는 것은 그대로 두고 까닭을 알린다."""
-    sent, failed, disks = [], [], {}  # 디스크 검사(레지스트리·정책·볼륨)는 디스크마다 한 번만(캐시 정리는 수만 개를 보낸다)
+    sent, failed, disks = [], [], {}  # 디스크 검사(레지스트리·정책·볼륨)는 디스크마다 몇 초에 한 번만(캐시 정리는 수만 개를 보낸다)
     for n, path in enumerate(paths):
         progress(n, len(paths), path)
         ok, refused = trash.to_trash([path], disks)

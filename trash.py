@@ -4,6 +4,7 @@ send2trash는 휴지통이 없거나 꺼져 있는 곳, 휴지통보다 큰 파�
 import ctypes
 import os
 import shutil
+import time
 import winreg
 
 from send2trash import send2trash
@@ -11,6 +12,7 @@ from send2trash import send2trash
 import drives
 
 FIXED = 3  # GetDriveTypeW: 고정 디스크
+RECHECK = 2  # 디스크 검사를 이 초마다 다시 한다: 작업 중에 휴지통을 끄거나 정책이 들어오면 남은 것이 영구 삭제된다
 BITBUCKET = r"Software\Microsoft\Windows\CurrentVersion\Explorer\BitBucket\Volume"
 send = send2trash  # 검사는 이것을 바꿔 끼워 실제 휴지통에 넣지 않는다.
 
@@ -115,15 +117,15 @@ def disk(place):
 
 def problem(path, disks=None):
     """휴지통으로 보낼 수 없는 까닭(없으면 None). 영구 삭제될 수 있는 경우를 모두 막는다.
-    disks: 여러 개를 보낼 때 디스크 검사(disk)를 볼륨마다 한 번만 하도록 넘기는 {볼륨 맨 위: 결과}."""
+    disks: 여러 개를 보낼 때 디스크 검사(disk)를 볼륨마다 RECHECK초에 한 번만 하도록 넘기는 {볼륨 맨 위: (결과, 검사한 시각)}."""
     if os.path.isreserved(path):  # 끝의 점·빈칸, CON·NUL 같은 이름: Windows가 다른 파일(abc. → abc)로 읽는다
         return "Windows가 다룰 수 없는 이름입니다"
     if not os.path.lexists(path):
         return "없는 파일입니다"
     root, disks = drives.volume_root(path), {} if disks is None else disks
-    if root not in disks:
-        disks[root] = disk(path)
-    reason, capacity = disks[root]
+    if root not in disks or time.monotonic() - disks[root][1] >= RECHECK:
+        disks[root] = disk(path), time.monotonic()
+    (reason, capacity), _ = disks[root]
     if reason:
         return reason
     try:

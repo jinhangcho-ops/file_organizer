@@ -352,7 +352,10 @@ def rename():
         raise ValueError(f"색인한 맨 위 폴더는 이름을 바꿀 수 없습니다. 설정에서 색인할 폴더를 바꾸세요: {path}")
     fence.refuse_holding(path, True)
     lock.refuse_clash(path, os.path.join(os.path.dirname(path), str(body().get("name") or "").strip()))
-    return jsonify(path=actions.rename(path, body().get("name")))
+    target = actions.rename(path, body().get("name"))
+    # 색인 반영이 실패해도 이름은 바뀌었다(색인 중이라 DB가 잠김 등): 다음 색인 전까지 옮기기·휴지통이 거부되니 알린다.
+    note = "" if index.look([target])[target][0] else "색인에는 아직 반영하지 못했어요. [색인 갱신] 뒤에 옮기거나 지울 수 있어요."
+    return jsonify(path=target, note=note)
 
 
 @app.get("/api/folder_summary")

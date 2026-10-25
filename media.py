@@ -272,7 +272,8 @@ def new_videos(db, similar, videos):
         for j in range(i - 1, -1, -1):  # 짧은 쪽: 그 영상 길이의 (1 + LENGTH_GAP)배가 이 영상보다 짧으면 끝
             if length > videos[j][1] * (1 + LENGTH_GAP):
                 break
-            near.append((videos[j][0], similarity(videos[j][2], frames)))
+            if videos[j][0] not in todo:  # 할 일끼리는 앞의 것이 뒤쪽으로 견줄 때 이미 견줬다(두 번 견주지 않게)
+                near.append((videos[j][0], similarity(videos[j][2], frames)))
         for b, other_length, other_frames in videos[i + 1:]:
             if other_length > length * (1 + LENGTH_GAP):
                 break
@@ -300,7 +301,9 @@ def run(db):
         except (OSError, subprocess.SubprocessError):
             continue
         index.status["done"] += 1
+    index.release(db)  # 사진·동영상 짝 맞추기는 오래 걸린다(2만 개 178초): 그동안 쓰기 잠금을 잡고 있지 않게 마지막 지문을 저장해 둔다
     match_images(db)
+    index.release(db)  # match_images가 save_now 간격 안에 지운 할 일
     last = db.execute("select value from meta where name = 'video_similar'").fetchone()
     new = db.execute("select 1 from media_todo t join media m on m.id = t.id where m.kind = 'video' limit 1").fetchone()
     if not index.stop.is_set() and (last is None or last[0] != config["video_similar"] or new):  # 지운 동영상의 짝은 drop_ids가 함께 지운다.

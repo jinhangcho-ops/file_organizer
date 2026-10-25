@@ -73,6 +73,11 @@ def verify(zip_path, written):
     return all(sizes.get(arcname(row["path"])) == row["size"] for row in written)
 
 
+def unchanged(row, st):
+    """파일이 색인한 때(row)와 같은지: 수정 시각과 크기."""
+    return index.stamp(st) == row["stamp"] and st.st_size == row["size"]
+
+
 def run(dest, days, progress=lambda *args: None):
     """보관한다. {"zip", "files", "original", "zip_size", "freed", "failed": [{"from", "error"}]}"""
     dest = settings.folder_text(dest, "보관할 곳")
@@ -88,7 +93,7 @@ def run(dest, days, progress=lambda *args: None):
             progress(n, None, row["path"])
             try:
                 st = os.stat(row["path"])
-                if index.stamp(st) != row["stamp"] or st.st_size != row["size"]:  # 색인한 뒤에 바뀌었다(오래된 파일이 아니게 됐다).
+                if not unchanged(row, st):  # 색인한 뒤에 바뀌었다(오래된 파일이 아니게 됐다).
                     raise ValueError("색인한 뒤에 바뀐 파일이라 넣지 않았습니다.")
                 stored = row["kind"] in STORED_KINDS or os.path.splitext(row["path"])[1].lower() in STORED_EXTS
                 archive.write(row["path"], arcname(row["path"]), zipfile.ZIP_STORED if stored else zipfile.ZIP_DEFLATED)
@@ -100,9 +105,15 @@ def run(dest, days, progress=lambda *args: None):
     if not written or not verify(zip_path, written):
         trash.to_trash([zip_path])  # 잘못 만든 zip도 영구 삭제하지 않는다. 원본은 그대로 둔다.
         raise ValueError("zip을 확인하지 못해 원본은 그대로 두었습니다." if written else "zip에 넣은 파일이 없습니다.")
-    sent = []
+    sent, disks = [], {}  # zip을 만드는 동안(수십 분) 휴지통이 꺼졌을 수 있다: 디스크를 다시 검사한다
     for n, row in enumerate(written):  # 확인한 뒤에만 원본을 휴지통으로
         progress(len(rows) + n, None, row["path"])
+        try:
+            if not unchanged(row, os.stat(row["path"])):  # zip에 넣은 뒤 저장했으면 새 내용은 zip에 없다
+                raise ValueError("zip에 넣은 뒤에 바뀐 파일이라 휴지통으로 보내지 않았습니다(원본은 그대로입니다).")
+        except (OSError, ValueError) as e:
+            failed.append({"from": row["path"], "error": getattr(e, "strerror", None) or str(e)})
+            continue
         ok, refused = trash.to_trash([row["path"]], disks)
         sent += ok
         failed += [{"from": p, "error": reason} for p, reason in refused]

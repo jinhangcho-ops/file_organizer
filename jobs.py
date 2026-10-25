@@ -2,7 +2,9 @@
 import threading
 import time
 
-status = {"running": False, "name": "", "done": 0, "total": 0, "current": "", "error": "", "result": None, "number": 0, "last": None}
+# 파일을 바꾸지 않고 읽기·받기만 하는 작업: 창을 닫으면 끊는다(desktop.py는 기다리지 않고, 화면의 [✕]도 묻지 않는다).
+CUTTABLE = {"캐시 살펴보기", "게임 크기 세기", "모델 받기"}
+status = {"running": False, "changes": False, "name": "", "done": 0, "total": 0, "current": "", "error": "", "result": None, "number": 0, "last": None}
 lock = threading.Lock()
 
 
@@ -19,7 +21,7 @@ def start(name, work):
     with lock:
         if status["running"]:
             raise ValueError(f"'{status['name']}' 작업이 아직 끝나지 않았습니다.")
-        status.update(running=True, name=name, done=0, total=0, current="", error="", result=None, number=status["number"] + 1)
+        status.update(running=True, changes=name not in CUTTABLE, name=name, done=0, total=0, current="", error="", result=None, number=status["number"] + 1)
 
     def run():
         try:

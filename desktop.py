@@ -11,6 +11,23 @@ if "--recognize" in sys.argv:  # 사진·동영상 인식 프로세스: 창 없�
     recognize.child_main()
     sys.exit(0)
 
+MUTEX = "file_organizer_app"  # installer.iss의 AppMutex와 같은 이름(설치·업데이트가 켜진 프로그램을 알아본다)
+
+
+def already_running(name=MUTEX):
+    """이 이름의 뮤텍스가 이미 있으면 True. 핸들은 닫지 않는다: 프로세스가 끝날 때까지 쥐고 있어야 다음 실행이 알아본다."""
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.CreateMutexW.restype = wintypes.HANDLE
+    kernel.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
+    kernel.CreateMutexW(None, False, name)
+    return ctypes.get_last_error() == 183  # ERROR_ALREADY_EXISTS
+
+
+# 둘째 프로세스는 같은 색인·설정을 함께 쓰고, 돌던 작업과 되돌리기 기록을 모른다(창을 닫고 작업을 마치는 중인 프로세스도 있다).
+if already_running():
+    ctypes.windll.user32.MessageBoxW(None, "파일 정리가 이미 켜져 있거나, 앞서 닫은 작업이 아직 끝나는 중이에요. 잠시 뒤에 다시 켜 주세요.", "파일 정리", 0x40)
+    sys.exit(0)
+
 import webview  # noqa: E402
 from werkzeug.serving import make_server  # noqa: E402
 
@@ -96,17 +113,16 @@ def open_lock(path):
     with opening:  # 서버는 요청마다 스레드라 빠른 두 번의 [잠금 창 열기]가 둘 다 None을 보고 창을 둘 만들었다.
         server.lock_target = path if isinstance(path, str) else ""
         old = lock_window[0]
-        if old is not None and not old.revealed:  # 화면을 못 읽어(WebView2 실패 등) 숨은 채 남은 창: 버리고 새로 만든다.
-            lock_window[0] = None
-            old.destroy()
-        elif old is not None:
-            hwnd = wintypes.HWND(old.native.Handle.ToInt64())
-            if user32.IsIconic(hwnd):  # 최소화했을 때만 되돌린다(restore는 최대화도 푼다)
-                old.restore()
-            user32.SetForegroundWindow(hwnd)  # 뒤에 있으면 앞으로
-            old.evaluate_js("load()")
+        if old is None:
+            return create_lock()
+        if not old.revealed:  # 아직 읽는 중인 창: 버리지 않는다(reveal이 보이거나 give_up이 REVEAL_LIMIT 뒤에 치운다).
             return
-        create_lock()
+    # 잠금 밖에서: evaluate_js는 닫히는 창에서 끝없이 기다릴 수 있어, 잠금 안에서 부르면 잠금 창을 다시는 못 열었다.
+    hwnd = wintypes.HWND(old.native.Handle.ToInt64())
+    if user32.IsIconic(hwnd):  # 최소화했을 때만 되돌린다(restore는 최대화도 푼다)
+        old.restore()
+    user32.SetForegroundWindow(hwnd)  # 뒤에 있으면 앞으로
+    old.evaluate_js("load()")
 
 
 def create_lock():
@@ -134,7 +150,8 @@ def create_lock():
         if lock_window[0] is lock:
             lock_window[0] = None
         lock.destroy()
-        window.evaluate_js(f"toast({message!r})")
+        # 알림은 따로: end는 opening 안에서 불리고, evaluate_js는 본 창이 닫히는 중이면 끝없이 기다린다.
+        threading.Thread(target=window.evaluate_js, args=(f"toast({message!r})",), daemon=True).start()
 
     def refuse():
         """걸리지 않으면(Windows 10 2004보다 오래된 Windows 등) 잠금 창을 닫는다: 공유 화면에 나가는 것보다 안 여는 쪽이 낫다."""
@@ -148,8 +165,11 @@ def create_lock():
             if not excluded():
                 return refuse()
             if not lock.revealed:
-                lock.revealed = True
-                lock.show()
+                try:
+                    lock.show()
+                except Exception:  # 보이기가 20초를 넘었거나(WebViewException) Invoke가 실패: 보인 셈 치면 다시 열 수 없었다.
+                    return end("잠금 창을 열지 못했어요. 다시 [잠금 창 열기]를 눌러 보세요.")
+                lock.revealed = True  # 보인 뒤에만(그 전에 open_lock이 와도 읽는 중으로 보고 기다린다)
                 if not excluded():
                     refuse()
 
@@ -182,8 +202,10 @@ window.events.closed += close_lock  # 본 창을 닫으면 잠금 창도 닫는�
 lock.close_all()  # 지난번에 창을 정상으로 닫지 못했으면(끄기·강제 종료) 열어 둔 잠금 폴더가 남아 있다.
 # 아이콘: 소스로 실행할 때는 icon.ico, exe에서는(파일이 없으므로) exe에 넣은 아이콘을 pywebview가 쓴다.
 webview.start(icon=os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon.ico"))  # 창을 닫으면 여기서 끝나고, 서버 스레드도 함께 끝난다.
-# 돌던 작업(옮기기·보관 등)은 창이 닫혀도 끝까지 한다: 작업 스레드는 daemon이라 그냥 끝내면 드라이브를 건너는 폴더 옮기기가 중간에 끊긴다.
-# 화면의 [✕]는 묻고 닫는다(app.js). Alt+F4·작업 표시줄로 닫아도 여기서 기다린다.
-jobs.wait(JOB_LIMIT)
+lock.close_all()  # 열어 둔 잠금 폴더를 바로 다시 잠근다(작업은 fence로 잠금 폴더를 피하고, lock.guard가 moved와 차례를 지킨다).
+# 파일을 바꾸는 작업(옮기기·보관 등)은 창이 닫혀도 끝까지 한다: 작업 스레드는 daemon이라 그냥 끝내면 드라이브를 건너는 폴더 옮기기가 중간에 끊긴다.
+# 읽기·받기만 하는 작업(jobs.CUTTABLE)은 끊는다. 화면의 [✕]는 묻고 닫는다(app.js). Alt+F4·작업 표시줄로 닫아도 여기서 기다린다.
+if jobs.status["changes"]:
+    jobs.wait(JOB_LIMIT)
 index.finish()  # 색인 중이었으면 지금 파일까지 저장하고 멈춘다(다음에 남은 것부터 이어서 한다).
-lock.close_all()  # 열어 둔 잠금 폴더를 다시 잠근다.
+lock.close_all()  # 작업 중에 다시 연 것은 없지만(창이 없다) 한 번 더 해도 해가 없다.

@@ -93,6 +93,7 @@ def folder_text(value, name):
         raise ValueError(f"{name}: 없는 폴더입니다. {path}")
     if not index.storable(path):
         raise ValueError(f"{name}: 이름에 쓸 수 없는 글자가 든 폴더입니다. {path}")
+    fence.refuse_system(fence.refuse(os.path.realpath(path)))  # 정션·링크가 가리키는 곳이 차단·게임·Windows 폴더일 수 있다
     return fence.refuse_system(fence.refuse(path))
 
 
@@ -130,7 +131,8 @@ def check(changes):
                 raise ValueError(f"칸 너비는 {low}~{high}px 사이의 정수로 쓰세요(0은 기본).")
             clean[name] = value
         elif name == "index_steps":
-            if (not isinstance(value, list) or not all(isinstance(s, dict) for s in value) or sorted(s.get("name") for s in value if isinstance(s, dict)) != sorted(STEPS)
+            if (not isinstance(value, list) or not all(isinstance(s, dict) and isinstance(s.get("name"), str) for s in value)  # 글자가 아니면 sorted가 TypeError(500)
+                    or sorted(s["name"] for s in value) != sorted(STEPS)
                     or any(not isinstance(s.get("on"), bool) or len(s) != 2 for s in value)):
                 raise ValueError("색인 단계 목록이 잘못됐습니다.")
             clean[name] = [{"name": s["name"], "on": s["on"]} for s in value]

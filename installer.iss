@@ -15,6 +15,8 @@ AppId={{304EE660-B6BF-470B-BC13-BF179A6A61A4}
 AppName=파일 정리
 AppVersion={#AppVersion}
 AppPublisher=jinhangcho-ops
+; 켜져 있거나 창을 닫고 작업을 마치는 중인 프로그램(desktop.py의 MUTEX)이 있으면 설치·제거 전에 닫으라고 한다.
+AppMutex=file_organizer_app
 DefaultDirName={autopf}\file_organizer
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest

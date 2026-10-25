@@ -12,6 +12,7 @@ from urllib.parse import urlsplit, urlunsplit
 from xml.etree import ElementTree
 
 import filetime
+import index
 
 OFFICE = (".docx", ".xlsx", ".xlsm", ".pptx")
 CORE_MAX = 1024 * 1024  # 문서 정보 파일이 이보다 크면 읽지 않는다(이상한 파일).
@@ -96,8 +97,9 @@ def info(path):
     st = os.stat(path)
     ext = os.path.splitext(path)[1].lower()
     source, referrer = zone(path)
-    author, last_saved_by = office_people(path) if ext in OFFICE else ("", "")
-    if ext == ".pdf":
+    cloud = index.cloud_only(st)  # 클라우드 전용(OneDrive 온라인 전용): 문서를 열면 받아 오므로 열지 않는다
+    author, last_saved_by = office_people(path) if ext in OFFICE and not cloud else ("", "")
+    if ext == ".pdf" and not cloud:
         author = pdf_author(path)
     filetime.restore_access(path, st)
     return {"source": source, "referrer": referrer, "author": author, "last_saved_by": last_saved_by, "owner": owner(path)}

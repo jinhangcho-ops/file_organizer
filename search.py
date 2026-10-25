@@ -77,7 +77,8 @@ def same_files(db):
 
 def wide(db, sql, values):
     """sql(걸리는 줄을 고르는 select 1 …)이 전체 줄의 1/WIDE보다 많이 고르는지. 그만큼만 세어 보고 멈춘다."""
-    cap = (db.execute("select max(rowid) from files").fetchone()[0] or 0) // WIDE + 1
+    # 줄 수로 센다: max(rowid)는 큰 폴더를 지운 뒤 id가 듬성듬성해지면 실제 줄 수보다 커서 넓은 조건도 좁다고 보았다.
+    cap = db.execute("select count(*) from files").fetchone()[0] // WIDE + 1
     return db.execute(f"select count(*) from ({sql} limit ?)", [*values, cap]).fetchone()[0] >= cap
 
 
@@ -231,6 +232,8 @@ def listing(query):
     if ext and (not kind or kinds.of(ext) != kind):
         raise ValueError(f"{kind or '종류'}에 없는 확장자입니다: {ext}")
     sort = SORTS.get(query.get("sort"), date)
+    if any(part.startswith(("f.size ", "f.key ")) for part in parts):  # size_parts·under가 좁다고 보고 색인을 타게 둔 조건
+        sort = "+" + sort  # 정렬 색인을 따라 전체를 훑지 않고 고른 몇 줄만 정렬한다(95MB 이상 1,165줄: 1.82초 → 0.03초)
     order = "asc" if query.get("order") == "asc" else "desc"
     stale_since = int(time.time()) - config["stale_days"] * DAY
     by_kind = parts + (["f.kind = ?"] if kind else [])
@@ -241,7 +244,8 @@ def listing(query):
     snippet = ", (select substr(text, max(1, instr(lower(text), lower(?)) - 40), 120) from body where rowid = f.id) snippet" if text else ""
     db = index.connect()
     try:
-        same_files(db)  # 아래의 목록(view) 개수가 늘 중복 의심을 센다
+        if query.get("view") == "duplicates" or not query.get("rows_only"):  # 아래의 목록(view) 개수가 늘 중복 의심을 센다(정렬만 바꿀 때는 필요 없다)
+            same_files(db)
         # 두 단계: 안쪽은 정렬해서 앞의 줄만 고르고(가벼운 칸만), 바깥은 그 줄에만 같은 파일 표시 같은 무거운 칸을 붙인다.
         # 한 번에 하면 색인을 못 타는 정렬(폴더별 묶기 등)에서 모든 줄의 무거운 칸을 먼저 계산해 25만 줄에 13초가 걸렸다.
         ordering = f"order by {first_keys(config, query)}{sort} {order}, f.id {order}"
@@ -252,7 +256,9 @@ def listing(query):
         places = place_names(db)
         if query.get("rows_only"):
             return finish_rows(rows, places, pairs)
-        counts = dict(db.execute(f"select f.kind, count(*) from files f{where(parts)} group by f.kind", values).fetchall())
+        # 조건이 있으면 +f.kind: 종류 색인을 따라 한 줄씩 찾아가지 않고 고른 줄만 묶는다(30만 줄 이름 검색 2.36초 → 1.12초).
+        # 조건이 없으면 종류 색인만 읽는 쪽이 빠르다(0.04초, +는 0.16초).
+        counts = dict(db.execute(f"select f.kind, count(*) from files f{where(parts)} group by {'+' if parts else ''}f.kind", values).fetchall())
         views = []
         for view in VIEWS:
             view_parts, view_values, _ = conditions(query | {"view": view}, config)
