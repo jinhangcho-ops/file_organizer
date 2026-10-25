@@ -317,6 +317,7 @@ def take_out(path, password, folder=None):
     if not drives.same_drive(parent, data["vault"]):
         raise ValueError("금고와 같은 디스크의 폴더를 고르세요.")
     fence.refuse_system(fence.refuse(parent))  # Windows·게임 폴더 안으로도 꺼내지 않는다
+    fence.refuse_system(fence.refuse(os.path.realpath(parent)))  # 정션이 가리키는 곳도
     target = fence.refuse(organize.free_name(parent, os.path.basename(found["path"]), set()))  # 지운 차단 폴더 자리에 꺼내지 않게
     with Opened(data):
         os.rename(os.path.join(data["vault"], found["id"]), target)

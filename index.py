@@ -34,6 +34,7 @@ HIDDEN = stat_flags.FILE_ATTRIBUTE_HIDDEN | stat_flags.FILE_ATTRIBUTE_SYSTEM
 CLOUD = 0x400000 | stat_flags.FILE_ATTRIBUTE_OFFLINE  # 0x400000: FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS(stat 모듈에 없다)
 RELEASE_AT = 1024 * 1024  # 이보다 큰 파일을 읽기 전에는 쓴 것을 저장해 둔다(release)
 SAVE_EVERY = 2  # 이 초마다 저장해서, 색인하는 중에도 목록에 나오고 끊겨도 거기까지는 남게 한다.
+GONE_CHUNK = 1000  # 사라진 파일을 이만큼씩 지운다(build)
 WHOLE = 8 * 1024 * 1024  # 이보다 큰 파일은 앞·가운데·뒤 SAMPLE씩만 읽어 지문을 만든다(그래서 '중복 의심').
 SAMPLE = 1024 * 1024
 # 문서 비교: Office 문서(zip)에서 문서 정보(docProps: 만든·저장한 사람, 시각, 편집 시간)를 뺀 나머지로 만드는 지문.
@@ -128,13 +129,20 @@ def release(db, size=None):
 
 
 def roots(config):
-    """색인할 폴더들: 설정의 폴더와 놓을 곳. 없는 폴더, 다른 폴더 안에 든 폴더, 차단·잠금 폴더(또는 그 아래)는 뺀다."""
+    """색인할 폴더들: 설정의 폴더와 놓을 곳. 없는 폴더, 다른 폴더 안에 든 폴더, 차단·잠금 폴더(또는 그 아래)는 뺀다.
+    정션(문서 폴더를 mklink /J로 옮긴 것 등)은 실제 경로로 바꾼다: 그 아래의 차단·게임 폴더와 글자 그대로 견주므로."""
     found, fences = [], fence.keys()
     for path in config["roots"] + [config["dest"]]:
         if path and os.path.isdir(path) and not fence.inside(path, fences):
-            found.append(os.path.abspath(path))
+            found.append(real(path))
     keys = {exclude.key(path): path for path in found}
     return [path for k, path in keys.items() if not fence.inside(k, keys.keys() - {k})]
+
+
+def real(path):
+    """링크·정션을 따라간 실제 경로. 네트워크 드라이브(Z:)는 \\\\서버\\공유로 바뀌므로 그대로 둔다(드라이브로 고르기가 맞게)."""
+    found = os.path.realpath(path)
+    return os.path.abspath(path) if found.startswith("\\\\") and not os.path.abspath(path).startswith("\\\\") else found
 
 
 def storable(text):
@@ -290,10 +298,17 @@ def build(paths, only=None):
             missing = {exclude.key(p) for p in config["roots"] + [config["dest"]] if p and not os.path.isdir(p) and not fence.inside(p, {exclude.key(r) for r in paths})}
             missing |= {exclude.key(p) for p in unreadable}
             gone = [(key,) for key in old if key not in seen and not under(key, missing)]
-            drop_ids(db, [row[0] for key in gone for row in db.execute("select id from files where key = ?", key)])
-            db.executemany("delete from files where key = ?", gone)
-            db.executemany("delete from folders where key = ?",
-                           [(key,) for (key,) in db.execute("select key from folders") if key not in folders and not under(key, missing)])
+            # 조금씩 지우고 저장한다: 한 번에 지우면 13만 줄에 45초 동안 쓰기 잠금을 쥐고, 창을 닫으면(finish) 모두 되돌아갔다.
+            for start in range(0, len(gone), GONE_CHUNK):
+                if stop.is_set():  # 남은 것은 다음 색인이 지운다(폴더 줄도 그때)
+                    break
+                chunk = gone[start:start + GONE_CHUNK]
+                drop_ids(db, [row[0] for key in chunk for row in db.execute("select id from files where key = ?", key)])
+                db.executemany("delete from files where key = ?", chunk)
+                save_now(db)
+            else:
+                db.executemany("delete from folders where key = ?",
+                               [(key,) for (key,) in db.execute("select key from folders") if key not in folders and not under(key, missing)])
         totals(db)
         save_now(db, force=True)
         for name in settings.steps(settings.load()):
@@ -566,6 +581,8 @@ def moved(pairs):
     db = connect()
     try:
         for before, after in pairs:
+            # 색인은 실제 경로로 한다(roots): 정션 경로로 알려 온 것(설정의 놓을 곳 등)도 위 폴더만 실제 경로로(파일 링크는 따라가지 않게)
+            before, after = (os.path.join(real(os.path.dirname(p)), os.path.basename(p)) for p in (before, after))
             if not storable(after):  # 색인에 넣지 못하는 이름: 옛 기록만 뺀다
                 forget(db, before)
                 continue
@@ -590,7 +607,10 @@ def moved(pairs):
                 db.execute("update files set path = ?, key = ?, folder = ?, name = ?, ext = ?, kind = ? where id = ?",
                            (after, key, os.path.dirname(key), os.path.basename(after), ext, kinds.of(ext), row["id"]))
             else:  # 색인에 없던 파일이 들어왔다(정리 등): 몇 개뿐이니 내용까지 바로 읽는다.
-                st = os.stat(after)
+                try:
+                    st = os.stat(after)
+                except OSError:  # 그사이 사라졌다: 이것만 건너뛴다(나머지까지 되돌리지 않게)
+                    continue
                 save_file(db, after, st)
                 row = db.execute("select id from files where key = ?", (exclude.key(after),)).fetchone()
                 read_text(db, row["id"], after, os.path.splitext(after)[1].lower(), st)

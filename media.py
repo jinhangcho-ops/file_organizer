@@ -8,6 +8,7 @@ import _winapi
 import os
 import re
 import subprocess
+import time
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
@@ -202,6 +203,18 @@ def pair(db, a, b, score):
     db.execute("insert or replace into media_pair(a, b, score) values(?, ?, ?)", (min(a, b), max(a, b), score))
 
 
+def keep(db, found, finished, force=False):
+    """짝 맞추기가 모아 둔 짝(found)과 끝낸 할 일(finished)을 SAVE_EVERY초마다(또는 force) 한 번에 쓰고 저장한다.
+    사진마다 쓰면 저장하자마자 쓰기 잠금을 다시 잡아, 다른 연결(옮기기의 index.moved 등)이 30초를 기다리다 실패했다."""
+    if force or time.time() - index.saved[0] >= index.SAVE_EVERY:
+        for a, b, score in found:  # 짝은 사진 수보다 훨씬 적다(할 일은 짝을 넣은 뒤에 지운다: 끊기면 남아 다음에 다시)
+            pair(db, a, b, score)
+        db.executemany("delete from media_todo where id = ?", [(i,) for i in finished])
+        index.save_now(db, force=True)
+        found.clear()
+        finished.clear()
+
+
 def match_images(db):
     """아직 짝을 맞추지 않은 사진(media_todo)마다, 같은 조각이 SAME_BANDS개 이상인 사진과만 비교해 IMAGE_BITS 안쪽이면 짝으로 남긴다.
     사진 지문과 조각 표는 메모리에 한 번 만든다(후보마다 DB에 묻거나, 조각 하나만 같은 것까지 비교하면 사진 수십만 장에서 수십억 번이 된다).
@@ -219,19 +232,21 @@ def match_images(db):
         for n in range(BANDS):
             bands[n, h >> (8 * n) & 255].append(i)
     index.status.update(step="사진 짝 맞추기", done=0, total=len(ids))
+    found, finished = [], []
     for me in ids:
         if index.stop.is_set():
-            return
+            break
         h = hashes.get(me)
         if h is not None:
             same = Counter(other for n in range(BANDS) for other in bands[n, h >> (8 * n) & 255] if other != me)
             for other in (o for o, c in same.items() if c >= SAME_BANDS):
                 d = distance(h, hashes[other])
                 if d <= IMAGE_BITS:
-                    pair(db, me, other, round(100 * (1 - d / 64)))
-        db.execute("delete from media_todo where id = ?", (me,))
+                    found.append((me, other, round(100 * (1 - d / 64))))
+        finished.append(me)
         index.status["done"] += 1
-        index.save_now(db)
+        keep(db, found, finished)
+    keep(db, found, finished, force=True)
 
 
 def match_videos(db, similar):
@@ -263,10 +278,12 @@ def match_videos(db, similar):
 def new_videos(db, similar, videos):
     """기준이 그대로일 때(match_videos): 할 일인 동영상마다 앞뒤로 LENGTH_GAP 안쪽의 영상과 견준다(모두 다시 할 때와 같은 쌍·같은 순서로)."""
     todo = {i for (i,) in db.execute("select t.id from media_todo t join media m on m.id = t.id where m.kind = 'video'")}
+    found, finished = [], []
     for i, (a, length, frames) in enumerate(videos):
         if a not in todo:
             continue
         if index.stop.is_set():  # 남은 것은 할 일에 남아 다음에 한다
+            keep(db, found, finished, force=True)
             return
         near = []
         for j in range(i - 1, -1, -1):  # 짧은 쪽: 그 영상 길이의 (1 + LENGTH_GAP)배가 이 영상보다 짧으면 끝
@@ -278,11 +295,10 @@ def new_videos(db, similar, videos):
             if other_length > length * (1 + LENGTH_GAP):
                 break
             near.append((b, similarity(frames, other_frames)))
-        for b, score in near:
-            if score is not None and score >= similar:
-                pair(db, a, b, score)
-        db.execute("delete from media_todo where id = ?", (a,))
-        index.save_now(db)
+        found += [(a, b, score) for b, score in near if score is not None and score >= similar]
+        finished.append(a)
+        keep(db, found, finished)
+    keep(db, found, finished, force=True)
     db.execute("delete from media_todo where id in (select id from media where kind = 'video')")  # 길이를 모르는 것 등
 
 

@@ -4,6 +4,7 @@
 - 최근 받은 파일: 다운로드 표시가 있고 만든 시각(받은 시각)이 기간 안.
 모아 보기에는 예외(exclude)를 적용한다. 위치·검색에는 적용하지 않는다."""
 import datetime
+import functools
 import json
 import os
 import time
@@ -75,14 +76,15 @@ def same_files(db):
     db.execute("insert or ignore into same_files select f.id from files f where " + DUPLICATE_ONCE)
 
 
-def wide(db, sql, values):
-    """sql(걸리는 줄을 고르는 select 1 …)이 전체 줄의 1/WIDE보다 많이 고르는지. 그만큼만 세어 보고 멈춘다."""
+def wide(db, sql, values, files=None):
+    """sql(걸리는 줄을 고르는 select 1 …)이 전체 줄의 1/WIDE보다 많이 고르는지. 그만큼만 세어 보고 멈춘다.
+    files: 전체 줄 수를 돌려주는 함수(목록 한 번에 여러 번 부를 때 한 번만 세게. 없으면 여기서 센다)."""
     # 줄 수로 센다: max(rowid)는 큰 폴더를 지운 뒤 id가 듬성듬성해지면 실제 줄 수보다 커서 넓은 조건도 좁다고 보았다.
-    cap = db.execute("select count(*) from files").fetchone()[0] // WIDE + 1
+    cap = (files() if files else db.execute("select count(*) from files").fetchone()[0]) // WIDE + 1
     return db.execute(f"select count(*) from ({sql} limit ?)", [*values, cap]).fetchone()[0] >= cap
 
 
-def under(path):
+def under(path, files=None):
     """폴더 path 아래(하위 폴더 포함) 파일의 조건과 값. key가 '폴더\' 이상 '폴더]' 미만인 범위로 비교해 key 색인을 탄다
     (바이트 순서로 '\' 바로 다음 글자가 ']'라서, 이 범위는 정확히 '폴더\'로 시작하는 것들이다).
     큰 폴더(전체의 많은 부분)면 +f.key로 색인을 쓰지 않는다: 색인 순서로 한 줄씩 찾아가면 30만 줄에 21.9초, 훑으면 5.0초였다."""
@@ -90,14 +92,14 @@ def under(path):
     values = [prefix, prefix[:-1] + "]"]
     db = index.connect()
     try:
-        big = wide(db, "select 1 from files where key >= ? and key < ?", values)
+        big = wide(db, "select 1 from files where key >= ? and key < ?", values, files)
     finally:
         db.close()
     column = "+f.key" if big else "f.key"
     return f"{column} >= ? and {column} < ?", values
 
 
-def size_parts(low, high):
+def size_parts(low, high, files=None):
     """크기 조건(바이트, 없으면 None)들. 걸리는 파일이 적으면 크기 색인을 타고('1GB 이상' 등), 많으면 +f.size로 훑는다
     (넓은 범위를 색인으로 읽으면 1.4초, 훑으면 0.6ms. 좁은 범위를 훑으면 1.15초, 색인은 0.9ms였다)."""
     bounds = [b for b in (("f.size >= ?", low), ("f.size <= ?", high)) if b[1] is not None]
@@ -106,14 +108,15 @@ def size_parts(low, high):
     values = [value for _, value in bounds]
     db = index.connect()
     try:
-        big = wide(db, "select 1 from files f where " + " and ".join(part for part, _ in bounds), values)
+        big = wide(db, "select 1 from files f where " + " and ".join(part for part, _ in bounds), values, files)
     finally:
         db.close()
     return [("+" if big else "") + part for part, _ in bounds], values
 
 
-def conditions(query, config):
-    """query에서 종류를 뺀 조건들(종류별 개수를 셀 때 종류 조건 없이 세려고 나눈다). (조건 목록, 값 목록, 날짜 칸)"""
+def conditions(query, config, files=None):
+    """query에서 종류를 뺀 조건들(종류별 개수를 셀 때 종류 조건 없이 세려고 나눈다). (조건 목록, 값 목록, 날짜 칸)
+    files: 전체 줄 수를 돌려주는 함수(wide)."""
     parts, values = [], []
     view = query.get("view")
     date = "f.modified"
@@ -132,11 +135,11 @@ def conditions(query, config):
         parts.append("f.folder = ?")
         values.append(exclude.key(query["folder"]))
     elif query.get("folder"):
-        part, more = under(query["folder"])
+        part, more = under(query["folder"], files)
         parts.append(part)
         values += more
     if query.get("drive"):  # 왼쪽에서 고른 드라이브('모든 파일'을 볼 때만 화면이 보낸다)
-        part, more = under(settings.check_drive(query["drive"]))
+        part, more = under(settings.check_drive(query["drive"]), files)
         parts.append(part)
         values += more
     if query.get("tag"):
@@ -156,7 +159,7 @@ def conditions(query, config):
         values.append(day(query["date_to"], end=True))
     low, high = ((number(query[name], label) * MB if str(query.get(name) or "").strip() else None)
                  for name, label in (("size_min", "최소 크기"), ("size_max", "최대 크기")))
-    more_parts, more = size_parts(low, high)
+    more_parts, more = size_parts(low, high, files)
     parts += more_parts
     values += more
     text = (query.get("text") or "").strip()
@@ -212,7 +215,8 @@ def listing(query):
     rows_only면 줄(rows·more)만 돌려준다(정렬만 바꿀 때: 개수는 바뀌지 않으므로 화면이 직전 값을 쓴다).
     정렬의 2차 기준은 id라서 이름·크기·날짜 색인(B-트리)을 그대로 타 앞의 몇 줄만 읽는다."""
     config = settings.load()
-    parts, values, date = conditions(query, config)
+    files = functools.cache(index.count)  # 전체 줄 수는 이 목록에서 한 번만 센다(조건마다 세면 한 번 누를 때 열 번이었다)
+    parts, values, date = conditions(query, config, files)
     pairs = {}
     if query.get("same_as"):
         db = index.connect()
@@ -232,11 +236,12 @@ def listing(query):
     if ext and (not kind or kinds.of(ext) != kind):
         raise ValueError(f"{kind or '종류'}에 없는 확장자입니다: {ext}")
     sort = SORTS.get(query.get("sort"), date)
-    if any(part.startswith(("f.size ", "f.key ")) for part in parts):  # size_parts·under가 좁다고 보고 색인을 타게 둔 조건
+    narrow = any(part.startswith(("f.size ", "f.key ")) for part in parts)  # size_parts·under가 좁다고 보고 색인을 타게 둔 조건
+    if narrow:
         sort = "+" + sort  # 정렬 색인을 따라 전체를 훑지 않고 고른 몇 줄만 정렬한다(95MB 이상 1,165줄: 1.82초 → 0.03초)
     order = "asc" if query.get("order") == "asc" else "desc"
     stale_since = int(time.time()) - config["stale_days"] * DAY
-    by_kind = parts + (["f.kind = ?"] if kind else [])
+    by_kind = parts + ([("+" if narrow else "") + "f.kind = ?"] if kind else [])  # 좁은 조건이면 종류 색인으로 그 종류 전체를 읽지 않게(1.93초 → 0.15초)
     by_kind_values = values + ([kind] if kind else [])
     extra, extra_values = by_kind[len(parts):] + (["f.ext = ?"] if ext else []), by_kind_values[len(values):] + ([ext] if ext else [])
     picked, picked_values = parts + extra, values + extra_values
@@ -261,7 +266,7 @@ def listing(query):
         counts = dict(db.execute(f"select f.kind, count(*) from files f{where(parts)} group by {'+' if parts else ''}f.kind", values).fetchall())
         views = []
         for view in VIEWS:
-            view_parts, view_values, _ = conditions(query | {"view": view}, config)
+            view_parts, view_values, _ = conditions(query | {"view": view}, config, files)
             views.append([view, db.execute(f"select count(*) from files f{where(view_parts + extra)}", view_values + extra_values).fetchone()[0]])
         exts = db.execute(f"select f.ext, count(*) n from files f{where(by_kind)} group by f.ext order by n desc, f.ext",
                           by_kind_values).fetchall() if kind else []

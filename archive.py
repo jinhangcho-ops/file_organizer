@@ -2,7 +2,7 @@
 zip을 다시 열어 CRC와 크기를 확인한 뒤에만 원본을 휴지통으로 보낸다(trash). 영구 삭제는 하지 않는다.
 - zip 안의 경로는 원래 경로를 살린다(C:\\Users\\a.docx → C/Users/a.docx).
 - 이미 압축된 형식(압축, 동영상, 음악, 사진 등)은 다시 압축하지 않고 그대로 넣는다(ZIP_STORED).
-- 설치파일(exe 등), 보관할 곳 안의 파일, 예외로 지정한 곳, 구조 보호 폴더 안, 휴지통으로 보낼 수 없는 곳(trash.problem)의 파일은 넣지 않는다.
+- 설치파일(exe 등), 클라우드 전용 파일(읽으면 받아 온다), 보관할 곳 안의 파일, 예외로 지정한 곳, 구조 보호 폴더 안, 휴지통으로 보낼 수 없는 곳(trash.problem)의 파일은 넣지 않는다.
 - 게임 폴더와 Windows·프로그램 폴더(fence.refuse_system과 같은 곳) 안의 파일도 넣지 않는다. 예전 판의 색인에는 게임 파일이 들어 있다.
   보낼 수 없는 파일을 넣으면 zip과 원본이 둘 다 남아 자리만 더 차지하기 때문이다."""
 import datetime
@@ -42,7 +42,15 @@ def candidates(days, dest=""):
     into = {exclude.key(dest)} if dest else set()
     kept = protect.keys() | games.keys()  # 구조 보호 폴더와 게임 폴더 안의 원본은 휴지통으로 보내지 않는다.
     return [dict(row) for row in rows if not fence.inside(row["path"], into) and not fence.inside(row["path"], kept)
-            and not fence.system_folder(row["path"])]
+            and not fence.system_folder(row["path"]) and not cloud(row["path"])]
+
+
+def cloud(path):
+    """클라우드 전용(OneDrive 온라인 전용)인지. zip에 넣으려고 읽으면 받아 오므로 넣지 않는다. 없는 파일은 뒤(trash.problem·run)가 알린다."""
+    try:
+        return index.cloud_only(os.stat(path))
+    except OSError:
+        return False
 
 
 def preview(days, dest=""):
@@ -95,6 +103,8 @@ def run(dest, days, progress=lambda *args: None):
                 st = os.stat(row["path"])
                 if not unchanged(row, st):  # 색인한 뒤에 바뀌었다(오래된 파일이 아니게 됐다).
                     raise ValueError("색인한 뒤에 바뀐 파일이라 넣지 않았습니다.")
+                if index.cloud_only(st):  # 고른 뒤 zip을 만드는 동안(수십 분) 온라인 전용이 됐다: 읽으면 받아 온다
+                    raise ValueError("클라우드 전용 파일이라 넣지 않았습니다.")
                 stored = row["kind"] in STORED_KINDS or os.path.splitext(row["path"])[1].lower() in STORED_EXTS
                 archive.write(row["path"], arcname(row["path"]), zipfile.ZIP_STORED if stored else zipfile.ZIP_DEFLATED)
                 filetime.restore_access(row["path"], st)  # zip이 잘못돼 원본을 남기게 되면 '오래된 파일'인 채로 남게

@@ -123,15 +123,22 @@ def problem(path, disks=None):
     if not os.path.lexists(path):
         return "없는 파일입니다"
     root, disks = drives.volume_root(path), {} if disks is None else disks
-    if root not in disks or time.monotonic() - disks[root][1] >= RECHECK:
-        disks[root] = disk(path), time.monotonic()
-    (reason, capacity), _ = disks[root]
+
+    def bin_state():
+        if root not in disks or time.monotonic() - disks[root][1] >= RECHECK:
+            disks[root] = disk(path), time.monotonic()
+        return disks[root][0]
+
+    reason, _ = bin_state()  # 휴지통이 없는 디스크는 세기 전에 바로 거부한다
     if reason:
         return reason
     try:
         size, longest = size_of(path)
     except OSError:
         return "안을 읽을 수 없는 폴더가 들어 있습니다"
+    reason, capacity = bin_state()  # 수십만 개를 세는 동안(수십 초) 휴지통이 꺼질 수 있어 센 뒤에 다시 본다
+    if reason:
+        return reason
     # 휴지통 안 이름($R…)에는 원래 확장자가 붙고(파일·폴더 모두), 폴더에 탑재한 디스크는 휴지통이 그 폴더 아래에 있다.
     head = BIN_PREFIX + width(os.path.splitext(path)[1]) + width(root) - 3
     if longest >= MAX_PATH or longest - width(os.path.abspath(path)) + head >= MAX_PATH:

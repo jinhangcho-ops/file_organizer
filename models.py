@@ -57,7 +57,11 @@ def fetch(url, target, progress):
 def download(groups, progress=lambda *args: None):
     """groups의 빠진 파일을 받는다. 임시 이름으로 받아 크기·SHA-256이 맞을 때만 제자리로 옮긴다(틀리면 지우고 알린다).
     {"done": [자리], "failed": [{"from", "error"}]}"""
-    todo = [f for group in groups for f in FILES[group] if not (os.path.isfile(path(f[0])) and os.path.getsize(path(f[0])) == f[2])]
+    for rel, *_ in (f for files in FILES.values() for f in files):  # 받는 중에 창을 닫아 끊긴 받기의 임시 파일(앱이 붙인 이름만)
+        left = Path(path(rel) + ".part")
+        if left.is_file():
+            left.unlink()
+    todo =[f for group in groups for f in FILES[group] if not (os.path.isfile(path(f[0])) and os.path.getsize(path(f[0])) == f[2])]
     total = sum(f[2] for f in todo)
     done, failed, before = [], [], 0
     for rel, url, size, digest in todo:

@@ -163,7 +163,11 @@ def move_folder(before, after):
         raise
     kept = False
     for source, _, st in copied:
-        now = os.stat(source)
+        try:
+            now = os.stat(source)
+        except OSError:  # 복사한 뒤 다른 프로그램이 지우거나 옮겼다: 여기서 멈추면 반쯤 옮긴 채 색인·되돌리기에 안 들어간다
+            kept = True
+            continue
         if (now.st_size, now.st_mtime_ns) == (st.st_size, st.st_mtime_ns):
             try:
                 remove_original(source)

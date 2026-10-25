@@ -6,6 +6,7 @@ import time
 CUTTABLE = {"캐시 살펴보기", "게임 크기 세기", "모델 받기"}
 status = {"running": False, "changes": False, "name": "", "done": 0, "total": 0, "current": "", "error": "", "result": None, "number": 0, "last": None}
 lock = threading.Lock()
+closing = False  # 창을 닫았다(desktop.py가 lock 안에서 켠다). 그 뒤의 start는 거부한다.
 
 
 def progress(done, total=None, current=""):
@@ -19,6 +20,8 @@ def progress(done, total=None, current=""):
 def start(name, work):
     """work(progress)를 따로 돌린다. 다른 작업이 돌고 있으면 거부한다. 끝나면 work의 돌려준 값이 result에 남는다."""
     with lock:
+        if closing:
+            raise ValueError("프로그램을 닫는 중이라 작업을 시작하지 않았습니다.")
         if status["running"]:
             raise ValueError(f"'{status['name']}' 작업이 아직 끝나지 않았습니다.")
         status.update(running=True, changes=name not in CUTTABLE, name=name, done=0, total=0, current="", error="", result=None, number=status["number"] + 1)

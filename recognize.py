@@ -403,10 +403,12 @@ def work(db, report):
         raise ValueError("사진·동영상 인식 모델이 없습니다. 설정 → 사진·동영상 인식에서 [모델 받기]를 누르세요.")
     config = settings.load()
     faces_on = bool(config.get("face_on", True)) and models.ready("face")
-    # 클라우드 전용만 남았으면 모델(약 400MB)을 올리지 않는다: 미리 빼 둔다(기록하지 않아 받은 뒤의 색인에서 한다)
-    rows = [row for row in todo(db, custom_signature(config), faces_on) if local(row["path"])]
-    report(total=len(rows), done=0)
-    if not rows:
+    # 클라우드 전용만 남았으면 모델(약 400MB)을 올리지 않는다. 이 PC에 있는 것을 하나 찾을 때까지만 본다
+    # (모두 미리 stat하면 사진 20만 장에 38초였다). 나머지 클라우드 전용·사라진 파일은 recognize_one이 건너뛴다.
+    rows = todo(db, custom_signature(config), faces_on)
+    here = any(not index.stop.is_set() and local(row["path"]) for row in rows)
+    report(total=len(rows) if here else 0, done=0)
+    if not here:
         return
     engine = Engine(config)
     try:

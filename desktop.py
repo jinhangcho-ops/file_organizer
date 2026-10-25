@@ -16,16 +16,56 @@ MUTEX = "file_organizer_app"  # installer.iss의 AppMutex와 같은 이름(설�
 
 def already_running(name=MUTEX):
     """이 이름의 뮤텍스가 이미 있으면 True. 핸들은 닫지 않는다: 프로세스가 끝날 때까지 쥐고 있어야 다음 실행이 알아본다."""
+    class Security(ctypes.Structure):  # SECURITY_ATTRIBUTES
+        _fields_ = [("nLength", wintypes.DWORD), ("lpSecurityDescriptor", ctypes.c_void_p), ("bInheritHandle", wintypes.BOOL)]
+
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel.CreateMutexW.restype = wintypes.HANDLE
     kernel.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
-    kernel.CreateMutexW(None, False, name)
-    return ctypes.get_last_error() == 183  # ERROR_ALREADY_EXISTS
+    # 관리자 권한으로 켠 프로그램의 뮤텍스는 기본 권한이면 관리자만 열 수 있어, 보통으로 켠 프로그램과 설치(AppMutex)가 몰랐다.
+    # 모두에게 기다리기(SYNCHRONIZE)만 준다: 설치는 그것으로 열고, 보통 실행은 전체 권한을 못 받아 5로 알아본다.
+    descriptor = ctypes.c_void_p()
+    ctypes.WinDLL("advapi32").ConvertStringSecurityDescriptorToSecurityDescriptorW("D:(A;;0x00100000;;;WD)", 1, ctypes.byref(descriptor), None)
+    security = Security(ctypes.sizeof(Security), descriptor, False) if descriptor.value else None
+    kernel.CreateMutexW(ctypes.byref(security) if security else None, False, name)
+    return ctypes.get_last_error() in (183, 5)  # ERROR_ALREADY_EXISTS, ERROR_ACCESS_DENIED(다른 권한으로 켠 프로그램의 뮤텍스)
+
+
+def show_running(title="파일 정리"):
+    """켜져 있는 프로그램의 본 창을 앞으로 가져온다. 창이 없거나(창을 닫고 작업을 마치는 중) 앞으로 못 가져오면 False."""
+    user32 = ctypes.windll.user32
+    user32.FindWindowW.restype = wintypes.HWND
+    user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+    hwnd = user32.FindWindowW(None, title)
+    if not hwnd or not same_program(hwnd):  # 같은 제목의 다른 창(예: '파일 정리' 폴더를 연 탐색기)은 건드리지 않는다
+        return False
+    if user32.IsIconic(hwnd):  # 최소화했을 때만 되돌린다(restore는 최대화도 푼다)
+        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+    return bool(user32.SetForegroundWindow(hwnd))
+
+
+def same_program(hwnd):
+    """그 창의 프로세스가 이 프로그램과 같은 실행 파일인지(이름만 본다: 설치 위치가 달라도 같은 프로그램)."""
+    pid = wintypes.DWORD()
+    ctypes.windll.user32.GetWindowThreadProcessId(wintypes.HWND(hwnd), ctypes.byref(pid))
+    kernel = ctypes.windll.kernel32
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    process = kernel.OpenProcess(0x1000, False, pid.value)  # PROCESS_QUERY_LIMITED_INFORMATION(관리자 권한 프로세스도 열린다)
+    if not process:
+        return False
+    try:
+        text, size = ctypes.create_unicode_buffer(32768), wintypes.DWORD(32768)
+        if not kernel.QueryFullProcessImageNameW(wintypes.HANDLE(process), 0, text, ctypes.byref(size)):
+            return False
+        return os.path.basename(text.value).lower() == os.path.basename(sys.executable).lower()
+    finally:
+        kernel.CloseHandle(wintypes.HANDLE(process))
 
 
 # 둘째 프로세스는 같은 색인·설정을 함께 쓰고, 돌던 작업과 되돌리기 기록을 모른다(창을 닫고 작업을 마치는 중인 프로세스도 있다).
 if already_running():
-    ctypes.windll.user32.MessageBoxW(None, "파일 정리가 이미 켜져 있거나, 앞서 닫은 작업이 아직 끝나는 중이에요. 잠시 뒤에 다시 켜 주세요.", "파일 정리", 0x40)
+    if not show_running():  # 창이 열려 있으면(최소화·뒤에 있어도) 그 창을 보여 주고 조용히 끝낸다
+        ctypes.windll.user32.MessageBoxW(None, "파일 정리가 이미 켜져 있거나, 앞서 닫은 작업이 아직 끝나는 중이에요. 잠시 뒤에 다시 켜 주세요.", "파일 정리", 0x40)
     sys.exit(0)
 
 import webview  # noqa: E402
@@ -202,6 +242,8 @@ window.events.closed += close_lock  # 본 창을 닫으면 잠금 창도 닫는�
 lock.close_all()  # 지난번에 창을 정상으로 닫지 못했으면(끄기·강제 종료) 열어 둔 잠금 폴더가 남아 있다.
 # 아이콘: 소스로 실행할 때는 icon.ico, exe에서는(파일이 없으므로) exe에 넣은 아이콘을 pywebview가 쓴다.
 webview.start(icon=os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon.ico"))  # 창을 닫으면 여기서 끝나고, 서버 스레드도 함께 끝난다.
+with jobs.lock:  # 창을 닫은 뒤에는 새 작업을 받지 않는다: 확인하던 요청이 이제 시작한 작업은 아래 확인이 못 보고, 프로세스와 함께 중간에 끊겼다.
+    jobs.closing = True
 lock.close_all()  # 열어 둔 잠금 폴더를 바로 다시 잠근다(작업은 fence로 잠금 폴더를 피하고, lock.guard가 moved와 차례를 지킨다).
 # 파일을 바꾸는 작업(옮기기·보관 등)은 창이 닫혀도 끝까지 한다: 작업 스레드는 daemon이라 그냥 끝내면 드라이브를 건너는 폴더 옮기기가 중간에 끊긴다.
 # 읽기·받기만 하는 작업(jobs.CUTTABLE)은 끊는다. 화면의 [✕]는 묻고 닫는다(app.js). Alt+F4·작업 표시줄로 닫아도 여기서 기다린다.

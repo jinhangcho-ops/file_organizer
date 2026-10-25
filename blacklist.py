@@ -66,7 +66,7 @@ def save(paths, name=FILE):
 
 def add(path, others):
     """폴더를 차단 목록에 넣는다. others: 겹치면 안 되는 잠금 폴더 key들."""
-    path = os.path.abspath(path)
+    path = os.path.realpath(path)  # 정션 경로를 넣으면 가리키는 진짜 폴더가 막히지 않는다
     if not os.path.isdir(path):
         raise ValueError(f"없는 폴더입니다: {path}")
     if os.path.dirname(path) == path:
