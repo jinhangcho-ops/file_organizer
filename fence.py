@@ -13,7 +13,12 @@ import protect
 
 def keys():
     """비교용 key들(exclude.key)."""
-    return {exclude.key(path) for path in blacklist.load() + lock.folders()}
+    return both(blacklist.load() + lock.folders())
+
+
+def both(paths):
+    """paths의 key들: 적힌 그대로와 정션을 따라간 곳(index.real) 둘 다. 색인은 실제 경로로 하는데 목록에는 정션 경로가 남아 있을 수 있다."""
+    return {exclude.key(q) for p in paths for q in (p, index.real(p))}
 
 
 def inside(path, fences):
@@ -48,12 +53,12 @@ def system_folder(path):
     parts = exclude.key(path).split(os.sep)
     if len(parts) > 1 and parts[1] in index.SKIP:
         return True
-    return inside(path, system_places()) and not inside(path, {exclude.key(tempfile.gettempdir())})
+    return inside(path, system_places()) and not inside(path, both([tempfile.gettempdir()]))
 
 
 def system_places():
     """환경 변수가 가리키는 Windows·프로그램 폴더의 key들."""
-    return {exclude.key(os.environ[name]) for name in SYSTEM_VARS if os.environ.get(name)}
+    return both([os.environ[name] for name in SYSTEM_VARS if os.environ.get(name)])
 
 
 def refuse_system(path, game_keys=None):
@@ -68,9 +73,9 @@ def refuse_system(path, game_keys=None):
 
 def holding_lists():
     """refuse_holding이 보는 목록들. 여러 개를 볼 때 한 번 만들어 넘긴다(잠금 목록은 읽을 때마다 비밀 파일을 푼다)."""
-    profiles = {exclude.key(os.path.join(p, "AppData")) for p in drives.profile_folders()}  # 다른 계정의 사용자 폴더도(관리자로 켰을 때)
+    profiles = both([os.path.join(p, "AppData") for p in drives.profile_folders()])  # 다른 계정의 사용자 폴더도(관리자로 켰을 때)
     return {"blocked": blacklist.keys(), "system": system_places() | profiles, "games": games.keys(), "kept": protect.keys(),
-            "locks": {exclude.key(p) for p in lock.folders()}}
+            "locks": both(lock.folders())}
 
 
 def refuse_holding(path, locks_ok, moving=False, lists=None):

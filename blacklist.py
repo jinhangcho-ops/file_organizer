@@ -34,7 +34,7 @@ def load(name=FILE):
 
 def keys():
     """차단 폴더의 비교용 key들(exclude.key)."""
-    return {exclude.key(path) for path in load()}
+    return fence.both(load())
 
 
 def is_admin():
@@ -66,13 +66,13 @@ def save(paths, name=FILE):
 
 def add(path, others):
     """폴더를 차단 목록에 넣는다. others: 겹치면 안 되는 잠금 폴더 key들."""
-    path = os.path.realpath(path)  # 정션 경로를 넣으면 가리키는 진짜 폴더가 막히지 않는다
+    path = index.real(path)  # 정션 경로를 넣으면 가리키는 진짜 폴더가 막히지 않는다(네트워크 드라이브는 글자 그대로)
     if not os.path.isdir(path):
         raise ValueError(f"없는 폴더입니다: {path}")
     if os.path.dirname(path) == path:
         raise ValueError(f"드라이브 전체는 차단하지 않습니다. 색인할 폴더에서 빼세요: {path}")
     paths = load()
-    if fence.inside(path, {exclude.key(p) for p in paths}):
+    if fence.inside(path, keys()):
         raise ValueError(f"이미 차단한 폴더(또는 그 아래)입니다: {path}")
     if fence.overlaps(path, others):
         raise ValueError(f"잠금 폴더와 겹칩니다. 잠금을 먼저 푸세요: {path}")

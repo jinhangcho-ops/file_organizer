@@ -9,6 +9,7 @@ import winreg
 
 import blacklist
 import exclude
+import fence
 import index
 
 # 게임 폴더에만 있는 파일(소문자): Steam·Epic·GOG·Ubisoft의 연동 라이브러리, Unity 엔진.
@@ -142,7 +143,7 @@ def found_games():
 def keys():
     """게임 폴더들의 비교용 key(exclude.key). KEYS_FRESH초 동안은 읽어 둔 것을 쓴다(색인이 games 표를 고치면 forget)."""
     if time.time() - keys_memo["at"] > KEYS_FRESH:
-        keys_memo.update(at=time.time(), keys={exclude.key(g["path"]) for g in launcher_games()} | {exclude.key(g["path"]) for g in found_games()})
+        keys_memo.update(at=time.time(), keys=fence.both([g["path"] for g in launcher_games()]) | {exclude.key(g["path"]) for g in found_games()})
     return keys_memo["keys"]
 
 

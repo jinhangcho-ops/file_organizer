@@ -432,8 +432,8 @@ def change_blacklist():
     not_busy()
     if data.get("remove"):
         return jsonify(blacklist=blacklist.remove(path))
-    paths = blacklist.add(path, {exclude.key(p) for p in lock.folders()})
-    index.removed([path])
+    paths = blacklist.add(path, fence.both(lock.folders()))
+    index.removed(sorted({path, index.real(path)}))  # 색인은 실제 경로라 정션으로 고른 폴더도 그쪽을 뺀다
     return jsonify(blacklist=paths)
 
 

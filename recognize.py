@@ -339,6 +339,15 @@ def child_command():
     return [sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "desktop.py"), "--recognize"]
 
 
+running = [None]  # 지금(또는 마지막으로) 띄운 인식 프로세스. 창을 닫을 때 남아 있으면 desktop.py가 끝낸다.
+
+
+def end():
+    """인식 프로세스가 아직 돌면 끝낸다(모델을 올리는 동안은 멈추라는 표시를 못 본다)."""
+    if running[0] is not None and running[0].poll() is None:
+        running[0].kill()
+
+
 def run(db):
     """색인 단계(본 프로그램 쪽): 인식 프로세스를 띄워 진행을 index.status에 옮기고, index.stop이 켜지면 멈추라고 알린다."""
     if not models.ready("clip"):
@@ -347,8 +356,8 @@ def run(db):
     index.status.update(step="사진·동영상 인식", done=0, total=0, current="모델을 올리는 중")
     stop_file = settings.folder() / STOP
     stop_file.unlink(missing_ok=True)  # 지난번의 표시 파일(이 앱이 만든 것)
-    child = subprocess.Popen(child_command(), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, text=True, encoding="utf-8",
-                             creationflags=media.NO_WINDOW)
+    child = running[0] = subprocess.Popen(child_command(), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, text=True, encoding="utf-8",
+                                          creationflags=media.NO_WINDOW)
 
     def tell_stop():  # 인식 프로세스가 끝나면 이 스레드도 끝난다.
         while child.poll() is None:

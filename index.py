@@ -7,6 +7,7 @@
 단계마다 아직 하지 않았거나 그 뒤에 바뀐 파일만 하므로, 멈추거나 창을 닫았다 다시 하면 남은 것부터 이어서 한다. 한 단계만 따로 돌릴 수도 있다(only).
 SAVE_EVERY초마다 저장해서 중간에 끊겨도 거기까지는 남는다. 내용을 읽은 파일은 연 시각을 읽기 전으로 되돌린다.
 바이트 지문은 크기가 같은 파일이 둘 이상일 때만 만든다(크기가 다르면 같은 파일일 수 없다)."""
+import functools
 import hashlib
 import os
 import sqlite3
@@ -133,16 +134,21 @@ def roots(config):
     정션(문서 폴더를 mklink /J로 옮긴 것 등)은 실제 경로로 바꾼다: 그 아래의 차단·게임 폴더와 글자 그대로 견주므로."""
     found, fences = [], fence.keys()
     for path in config["roots"] + [config["dest"]]:
-        if path and os.path.isdir(path) and not fence.inside(path, fences):
+        if path and os.path.isdir(path) and not any(fence.inside(p, fences) for p in (path, real(path))):  # 차단 폴더를 가리키는 정션도
             found.append(real(path))
     keys = {exclude.key(path): path for path in found}
     return [path for k, path in keys.items() if not fence.inside(k, keys.keys() - {k})]
 
 
 def real(path):
-    """링크·정션을 따라간 실제 경로. 네트워크 드라이브(Z:)는 \\\\서버\\공유로 바뀌므로 그대로 둔다(드라이브로 고르기가 맞게)."""
-    found = os.path.realpath(path)
-    return os.path.abspath(path) if found.startswith("\\\\") and not os.path.abspath(path).startswith("\\\\") else found
+    """링크·정션을 따라간 실제 경로. 드라이브 자체가 다른 곳을 가리키면(네트워크 드라이브 Z: → \\\\서버\\공유, subst S:)
+    글자 그대로 둔다(드라이브로 고르기가 맞게)."""
+    path, found = os.path.abspath(path), os.path.realpath(path)
+    drive = os.path.splitdrive(path)[0]
+    if os.path.normcase(drive) != os.path.normcase(os.path.splitdrive(found)[0]):  # 드라이브가 바뀔 때만 드라이브를 본다(늘 보면 두 배 느리다)
+        if os.path.normcase(os.path.realpath(drive + os.sep)) != os.path.normcase(drive + os.sep):
+            return path
+    return found
 
 
 def storable(text):
@@ -276,9 +282,17 @@ def step_work(name):
 def build(paths, only=None):
     """paths 아래를 훑어 색인을 맞추고(①), 켜 둔 단계를 설정의 순서로 한다. 끝까지 훑었으면 사라진 파일·폴더를 지운다.
     only: 그 단계 하나만 한다(파일 목록은 훑지 않는다). 멈추면(stop) 그때까지 한 것은 남기고 끝낸다.
-    사라진 것 지우기는 끝까지 훑었을 때만 한다(못 본 파일이 사라진 것인지 알 수 없으므로)."""
+    사라진 것 지우기는 끝까지 훑었을 때만 한다(못 본 파일이 사라진 것인지 알 수 없으므로).
+    paths는 색인할 폴더 전부(roots)여야 한다: 그 밖의 줄은 처음에 지운다(폴더 하나만 다시 색인하는 데 쓰면 나머지가 지워진다)."""
     db = connect()
     try:
+        config = settings.load()
+        migrate(db)
+        # 지금 색인할 폴더 밖의 줄(빠진 폴더, 끊긴 첫 색인의 옛 줄)은 먼저 지운다: 한 단계만 돌려도 같은 파일이 두 번 보이지 않게
+        tops = {exclude.key(p) for p in paths} | missing_roots(config, paths)
+        if drop_gone(db, [(key,) for (key,) in db.execute("select key from files") if not under(key, tops)]):
+            db.executemany("delete from folders where key = ?", [(key,) for (key,) in db.execute("select key from folders") if not under(key, tops)])
+        save_now(db, force=True)
         if only:
             step_work(only)(db)
             return
@@ -294,19 +308,8 @@ def build(paths, only=None):
             db.executemany("insert or ignore into games(key, path, size) values(?, ?, ?)",
                            [(exclude.key(p), p, sizes.get(exclude.key(p))) for p in found_games])
             games.forget()
-            config = settings.load()
-            missing = {exclude.key(p) for p in config["roots"] + [config["dest"]] if p and not os.path.isdir(p) and not fence.inside(p, {exclude.key(r) for r in paths})}
-            missing |= {exclude.key(p) for p in unreadable}
-            gone = [(key,) for key in old if key not in seen and not under(key, missing)]
-            # 조금씩 지우고 저장한다: 한 번에 지우면 13만 줄에 45초 동안 쓰기 잠금을 쥐고, 창을 닫으면(finish) 모두 되돌아갔다.
-            for start in range(0, len(gone), GONE_CHUNK):
-                if stop.is_set():  # 남은 것은 다음 색인이 지운다(폴더 줄도 그때)
-                    break
-                chunk = gone[start:start + GONE_CHUNK]
-                drop_ids(db, [row[0] for key in chunk for row in db.execute("select id from files where key = ?", key)])
-                db.executemany("delete from files where key = ?", chunk)
-                save_now(db)
-            else:
+            missing = missing_roots(config, paths) | {exclude.key(p) for p in unreadable}
+            if drop_gone(db, [(key,) for key in old if key not in seen and not under(key, missing)]):  # 멈추면 폴더 줄도 다음 색인이
                 db.executemany("delete from folders where key = ?",
                                [(key,) for (key,) in db.execute("select key from folders") if key not in folders and not under(key, missing)])
         totals(db)
@@ -317,6 +320,50 @@ def build(paths, only=None):
             step_work(name)(db)
     finally:
         db.close()
+
+
+def missing_roots(config, paths):
+    """설정의 폴더 중 지금 없는 것(외장 디스크를 뺀 것 등)의 key: 그 아래 줄은 지우지 않고 둔다. 줄은 실제 경로로 넣었으므로
+    정션의 대상도 함께(끊긴 정션도 realpath는 대상을 준다). 지금 색인하는 폴더 안의 것은 빼고 본다."""
+    inside = {exclude.key(r) for r in paths}
+    return {exclude.key(q) for p in config["roots"] + [config["dest"]] if p and not os.path.isdir(p)
+            for q in (p, real(p)) if not fence.inside(q, inside)}
+
+
+def drop_gone(db, gone):
+    """사라진 줄(key 묶음)을 지운다. 끝까지 지웠으면 True, 멈췄으면(stop) False(남은 것은 다음 색인이 지운다).
+    조금씩 지우고 저장한다: 한 번에 지우면 13만 줄에 45초 동안 쓰기 잠금을 쥐고, 창을 닫으면(finish) 모두 되돌아갔다."""
+    for start in range(0, len(gone), GONE_CHUNK):
+        if stop.is_set():
+            return False
+        chunk = gone[start:start + GONE_CHUNK]
+        drop_ids(db, [row[0] for key in chunk for row in db.execute("select id from files where key = ?", key)])
+        db.executemany("delete from files where key = ?", chunk)
+        save_now(db)
+    return True
+
+
+def migrate(db):
+    """업데이트 전 색인이 정션 경로(설정의 글자 그대로)로 넣은 줄을 실제 경로(roots)로 옮긴다. id를 그대로 두어
+    글자·지문·인식·얼굴·짝이 남는다. 같은 파일·폴더의 실제 경로 줄이 이미 있으면(끊긴 첫 색인 등) 그것을 남기고 옛 줄을 뺀다.
+    색인한 맨 위 폴더 줄로 찾는다(설정을 다시 저장해 실제 경로로 바뀌었어도 옛 줄을 찾게)."""
+    for (before,) in db.execute("select path from folders where parent is null").fetchall():
+        after = real(before)
+        if exclude.key(before) == exclude.key(after):
+            continue
+        where, values = below(before)
+
+        def taken(table, column):  # 옮겨 갈 key에 이미 줄이 있는 옛 줄들
+            return [row[0] for row in db.execute(f"select {column}, path from {table} where {where}", values)
+                    if db.execute(f"select 1 from {table} where key = ?", (exclude.key(after + row[1][len(before):]),)).fetchone()]
+        ids = taken("files", "id")
+        drop_ids(db, ids)
+        db.executemany("delete from files where id = ?", [(i,) for i in ids])
+        folders = taken("folders", "key")
+        db.executemany("delete from folders where key = ?", [(k,) for k in folders])
+        move_folder_rows(db, before, after)
+        if exclude.key(before) not in folders:  # 옮긴 줄은 맨 위 폴더로 남긴다(move_folder_rows는 위 폴더를 붙인다)
+            db.execute("update folders set parent = null where key = ?", (exclude.key(after),))
 
 
 def scan(db, paths, old, seen, folders, found_games, unreadable=None):
@@ -578,11 +625,13 @@ def move_folder_rows(db, before, after):
 
 def moved(pairs):
     """정리·되돌리기·옮기기·이름 바꾸기로 옮긴 (전, 후) 경로(파일 또는 폴더)를 색인에 반영한다. 옮겨 간 곳이 색인 밖이면 색인에서 뺀다."""
+    # 색인은 실제 경로로 한다(roots): 정션 경로로 알려 온 것(설정의 놓을 곳 등)도 위 폴더만 실제 경로로(파일 링크는 따라가지 않게).
+    # 폴더마다 한 번, 쓰기 전에 찾는다(파일마다 찾으면 5,000개에 3.3초 → 8초, 그동안 쓰기 잠금을 쥐었다).
+    folder_of = functools.cache(real)
+    pairs = [[os.path.join(folder_of(os.path.dirname(p)), os.path.basename(p)) for p in pair] for pair in pairs]
     db = connect()
     try:
         for before, after in pairs:
-            # 색인은 실제 경로로 한다(roots): 정션 경로로 알려 온 것(설정의 놓을 곳 등)도 위 폴더만 실제 경로로(파일 링크는 따라가지 않게)
-            before, after = (os.path.join(real(os.path.dirname(p)), os.path.basename(p)) for p in (before, after))
             if not storable(after):  # 색인에 넣지 못하는 이름: 옛 기록만 뺀다
                 forget(db, before)
                 continue

@@ -12,7 +12,13 @@ MAX = 500  # 메모 한 개의 최대 글자 수
 
 def load():
     data = settings.read(FILE, {})
-    return data if isinstance(data, dict) else {}
+    if not isinstance(data, dict):
+        return {}
+
+    def convert(data):
+        paths = [exclude.real(v["path"], os.path.isdir(v["path"])) for v in data.values()]
+        return {exclude.key(p): {**v, "path": p} for p, v in zip(paths, data.values())}
+    return exclude.once(FILE, data, convert)
 
 
 def get(path):

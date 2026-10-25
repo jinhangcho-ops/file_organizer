@@ -34,14 +34,19 @@ def already_running(name=MUTEX):
 def show_running(title="파일 정리"):
     """켜져 있는 프로그램의 본 창을 앞으로 가져온다. 창이 없거나(창을 닫고 작업을 마치는 중) 앞으로 못 가져오면 False."""
     user32 = ctypes.windll.user32
-    user32.FindWindowW.restype = wintypes.HWND
-    user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
-    hwnd = user32.FindWindowW(None, title)
-    if not hwnd or not same_program(hwnd):  # 같은 제목의 다른 창(예: '파일 정리' 폴더를 연 탐색기)은 건드리지 않는다
-        return False
+    user32.FindWindowExW.restype = wintypes.HWND
+    user32.FindWindowExW.argtypes = [wintypes.HWND, wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR]
+    hwnd = None
+    while True:  # 같은 제목의 다른 창(예: '파일 정리' 폴더를 연 탐색기)은 건너뛴다: 그 창이 위에 있으면 FindWindowW는 그것만 줬다
+        hwnd = user32.FindWindowExW(None, hwnd, None, title)
+        if not hwnd:
+            return False
+        if same_program(hwnd):
+            break
     if user32.IsIconic(hwnd):  # 최소화했을 때만 되돌린다(restore는 최대화도 푼다)
         user32.ShowWindow(hwnd, 9)  # SW_RESTORE
-    return bool(user32.SetForegroundWindow(hwnd))
+    # 관리자 권한으로 켠 창은 보통 권한에서 되돌릴 수 없다(UIPI, 5). 앞으로 가져오기는 성공해도 최소화된 채라 안 보이니 False(안내를 띄운다).
+    return bool(user32.SetForegroundWindow(hwnd)) and not user32.IsIconic(hwnd)
 
 
 def same_program(hwnd):
@@ -74,6 +79,7 @@ from werkzeug.serving import make_server  # noqa: E402
 import index  # noqa: E402
 import jobs  # noqa: E402
 import lock  # noqa: E402
+import recognize  # noqa: E402
 import server  # noqa: E402
 import settings  # noqa: E402
 
@@ -96,6 +102,7 @@ lock_window = [None]  # 열려 있는 잠금 창(revealed: 캡처 제외를 확�
 opening = threading.Lock()  # 잠금 창을 만들고 보이는 동안
 JOB_LIMIT = 6 * 3600  # 초. 창을 닫은 뒤 돌던 작업을 기다리는 가장 긴 시간(멈춘 작업 때문에 프로그램이 영영 남지 않게)
 REVEAL_LIMIT = 20  # 초. 이때까지 화면을 못 읽으면 숨은 잠금 창을 치운다.
+RECOGNIZE_LIMIT = 30  # 초. index.finish 뒤에도 색인이 안 끝났으면 더 기다리는 시간. 그 뒤에는 인식 프로세스를 끝낸다.
 
 
 class MonitorInfo(ctypes.Structure):
@@ -250,4 +257,7 @@ lock.close_all()  # 열어 둔 잠금 폴더를 바로 다시 잠근다(작업�
 if jobs.status["changes"]:
     jobs.wait(JOB_LIMIT)
 index.finish()  # 색인 중이었으면 지금 파일까지 저장하고 멈춘다(다음에 남은 것부터 이어서 한다).
+if index.worker is not None and index.worker.is_alive():  # 인식 프로세스는 모델을 올리는 동안 멈추라는 표시를 못 본다
+    index.worker.join(RECOGNIZE_LIMIT)
+    recognize.end()  # 뮤텍스를 놓은 뒤에 남아 색인을 쓰지 않게(다음 실행과 겹친다)
 lock.close_all()  # 작업 중에 다시 연 것은 없지만(창이 없다) 한 번 더 해도 해가 없다.

@@ -2,9 +2,11 @@
 폴더를 예외로 하면 그 아래 전부, 파일을 예외로 하면 그 파일 하나만."""
 import os
 
+import index
 import settings
 
 FILE = "exclude.json"
+fixed = set()  # 옛 판이 정션 경로로 적어 둔 것을 실제 경로로 바꿔 둔 설정 폴더들(한 번만 본다)
 
 
 def key(path):
@@ -12,8 +14,25 @@ def key(path):
     return os.path.normcase(os.path.abspath(path))
 
 
+def real(path, folder):
+    """색인에 적히는 모양(index.real): 폴더는 그 자신까지, 파일은 든 폴더만 따라간다(파일 링크는 따라가지 않게, index.moved와 같다)."""
+    return index.real(path) if folder else os.path.join(index.real(os.path.dirname(path)), os.path.basename(path))
+
+
+def once(name, data, convert):
+    """설정 폴더마다 처음 읽을 때 한 번 convert(data)로 정션 경로를 실제 경로로 바꾸고, 바뀐 것이 있으면 저장한다."""
+    place = (str(settings.folder()), name)
+    if place in fixed:
+        return data
+    fixed.add(place)
+    new = convert(data)
+    if new != data:
+        settings.write(name, new)
+    return new
+
+
 def load():
-    return settings.read(FILE, [])
+    return once(FILE, settings.read(FILE, []), lambda rules: [{**r, "path": real(r["path"], r["kind"] == "folder")} for r in rules])
 
 
 def add(path):

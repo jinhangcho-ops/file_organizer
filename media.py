@@ -200,7 +200,10 @@ def fingerprint(db, row, interval):
 
 
 def pair(db, a, b, score):
-    db.execute("insert or replace into media_pair(a, b, score) values(?, ?, ?)", (min(a, b), max(a, b), score))
+    """짝 하나를 넣는다. 둘 다 media에 남아 있을 때만: 맞추는 동안 다른 연결(휴지통 등)이 지운 사진의 짝이 홀로 남지 않게."""
+    db.execute("""insert or replace into media_pair(a, b, score) select ?, ?, ?
+                  where exists(select 1 from media where id = ?) and exists(select 1 from media where id = ?)""",
+               (min(a, b), max(a, b), score, a, b))
 
 
 def keep(db, found, finished, force=False):

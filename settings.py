@@ -94,7 +94,8 @@ def folder_text(value, name):
     if not index.storable(path):
         raise ValueError(f"{name}: 이름에 쓸 수 없는 글자가 든 폴더입니다. {path}")
     fence.refuse_system(fence.refuse(os.path.realpath(path)))  # 정션·링크가 가리키는 곳이 차단·게임·Windows 폴더일 수 있다
-    return fence.refuse_system(fence.refuse(path))
+    fence.refuse_system(fence.refuse(path))
+    return index.real(path)  # 색인처럼 실제 경로로 저장한다(정션인 놓을 곳으로 옮긴 잠금 기록·메모가 색인과 어긋나지 않게)
 
 
 def check_drive(value):

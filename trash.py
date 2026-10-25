@@ -117,7 +117,8 @@ def disk(place):
 
 def problem(path, disks=None):
     """휴지통으로 보낼 수 없는 까닭(없으면 None). 영구 삭제될 수 있는 경우를 모두 막는다.
-    disks: 여러 개를 보낼 때 디스크 검사(disk)를 볼륨마다 RECHECK초에 한 번만 하도록 넘기는 {볼륨 맨 위: (결과, 검사한 시각)}."""
+    disks: 여러 개를 보낼 때 디스크 검사(disk)를 볼륨마다 RECHECK초에 한 번만 하도록 넘기는 {볼륨 맨 위: (결과, 검사한 시각, 받은 크기 합)}.
+    받은 크기 합에 더해 휴지통 최대 크기를 넘으면 거부한다: 넘치면 Windows가 먼저 넣은 것을 말없이 영구 삭제한다."""
     if os.path.isreserved(path):  # 끝의 점·빈칸, CON·NUL 같은 이름: Windows가 다른 파일(abc. → abc)로 읽는다
         return "Windows가 다룰 수 없는 이름입니다"
     if not os.path.lexists(path):
@@ -126,7 +127,7 @@ def problem(path, disks=None):
 
     def bin_state():
         if root not in disks or time.monotonic() - disks[root][1] >= RECHECK:
-            disks[root] = disk(path), time.monotonic()
+            disks[root] = disk(path), time.monotonic(), disks.get(root, (0, 0, 0))[2]
         return disks[root][0]
 
     reason, _ = bin_state()  # 휴지통이 없는 디스크는 세기 전에 바로 거부한다
@@ -143,8 +144,9 @@ def problem(path, disks=None):
     head = BIN_PREFIX + width(os.path.splitext(path)[1]) + width(root) - 3
     if longest >= MAX_PATH or longest - width(os.path.abspath(path)) + head >= MAX_PATH:
         return "경로가 너무 길어(260자 이상) 휴지통에 넣을 수 없습니다"
-    if size > capacity:
+    if size + disks[root][2] > capacity:
         return "휴지통 최대 크기보다 큽니다"
+    disks[root] = (*disks[root][:2], disks[root][2] + size)
     return None
 
 

@@ -17,6 +17,7 @@ from ctypes import wintypes
 import drives
 import exclude
 import fence
+import index
 import organize
 import settings
 
@@ -190,10 +191,10 @@ def put(data, item):
 
 def check_new(path, others):
     """새로 잠그거나 금고로 모을 수 있는 폴더인지. others: 겹치면 안 되는 차단 폴더 key들."""
-    path = os.path.abspath(path)
+    path = index.real(path)  # 기록은 색인처럼 실제 경로로(정션 경로로 적으면 옮기기·휴지통 검사가 어긋난다)
     if not os.path.isdir(path) or os.path.dirname(path) == path:
         raise ValueError(f"잠글 수 있는 폴더가 아닙니다: {path}")
-    if fence.overlaps(path, {exclude.key(p) for p in folders()} | set(others)):
+    if fence.overlaps(path, fence.both(folders()) | set(others)):
         raise ValueError(f"이미 잠갔거나 차단한 폴더(또는 금고)와 겹칩니다: {path}")
     if any(exclude.key(f["path"]) == exclude.key(path) for f in load()["folders"]):  # 기록은 원래 위치로 찾으므로 겹치면 금고 기록이 덮인다.
         raise ValueError(f"금고에 같은 원래 위치의 폴더가 있습니다. 먼저 금고에서 꺼내거나 이 폴더의 이름을 바꾸세요: {path}")

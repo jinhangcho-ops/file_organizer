@@ -62,6 +62,8 @@ def move_each(pairs, plan, progress):
 def moved(pairs):
     """옮긴 (전, 후)들을 색인·잠금 기록(옮긴 폴더 안의 잠금 폴더·금고 위치)·메모에 반영한다.
     색인 반영이 실패해도 잠금 기록·메모는 고치고 그 까닭 글을 돌려준다(organize.reflect)."""
+    # 기록은 색인처럼 실제 경로로 한다: 정션 경로로 알려 온 것도 위 폴더만 따라간다(index.moved와 같게)
+    pairs = [tuple(os.path.join(index.real(os.path.dirname(p)), os.path.basename(p)) for p in pair) for pair in pairs]
     error = organize.reflect(pairs)
     lock.moved(pairs)
     notes.moved(pairs)
