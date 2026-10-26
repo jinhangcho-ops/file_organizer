@@ -57,7 +57,7 @@ def write(path, text="", encoding="utf-8"):
 
 
 def mark_downloaded(path):
-    with open(path + ":Zone.Identifier", "w") as stream:
+    with open(path + ":Zone.Identifier", "w", encoding="utf-8") as stream:
         stream.write("[ZoneTransfer]\nZoneId=3\n")
 
 

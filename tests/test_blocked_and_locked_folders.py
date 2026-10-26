@@ -21,6 +21,7 @@ def test_blacklist_needs_admin_and_removes_from_everywhere(home, client, monkeyp
     game = write(home / "큰 폴더" / "game.dat")
     build(home)
     assert game in listed(client)
+    monkeypatch.setattr(blacklist, "is_admin", lambda: False)  # 관리자로 도는 CI에서도 거부를 본다
     assert client.post("/api/blacklist", json={"path": str(home / "큰 폴더")}).status_code == 400  # 관리자가 아니면 거부
     monkeypatch.setattr(blacklist, "is_admin", lambda: True)
     assert client.post("/api/blacklist", json={"path": str(home / "큰 폴더")}).status_code == 200

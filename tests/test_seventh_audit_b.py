@@ -371,7 +371,7 @@ def test_bad_port_in_zone_url_is_masked(tmp_path):
 def dotted(home):
     write(home / "abc", "옆의 다른 파일")
     odd = str(home / "abc.")
-    with open("\\\\?\\" + odd, "w") as stream:
+    with open("\\\\?\\" + odd, "w", encoding="utf-8") as stream:
         stream.write("끝에 점")
     yield odd
     os.remove("\\\\?\\" + odd)

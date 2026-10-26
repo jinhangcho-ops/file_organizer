@@ -88,7 +88,8 @@ def test_provenance_of_downloaded_and_office_files(home, client):
     assert info["source"] == "https://files.example.com/d/report.docx?…" and info["referrer"] == "https://example.com/page?…"
     assert "SECRET" not in str(info) and "pw" not in info["source"]
     assert info["author"] == "김작성" and info["last_saved_by"] == "이수정"
-    assert info["owner"].lower().endswith(getpass.getuser().lower())
+    # 관리자 권한으로 만든 파일은 주인이 Administrators 묶음이다(관리자로 도는 CI)
+    assert info["owner"].lower().endswith(getpass.getuser().lower()) or (blacklist.is_admin() and info["owner"] == "BUILTIN\\Administrators")
     plain = write(home / "그냥.txt")
     build(home)
     info = client.get("/api/provenance?path=" + plain).json

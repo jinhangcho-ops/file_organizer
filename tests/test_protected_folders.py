@@ -16,6 +16,7 @@ def test_protected_folder_rules(home, client, monkeypatch, fake_trash):
     outside = write(home / "밖.txt")
     (home / "다른 곳").mkdir()
     build(home)
+    monkeypatch.setattr(blacklist, "is_admin", lambda: False)  # 관리자로 도는 CI에서도 거부를 본다
     assert client.post("/api/protect", json={"path": str(work)}).status_code == 400  # 관리자가 아니면 거부
     monkeypatch.setattr(blacklist, "is_admin", lambda: True)
     assert client.post("/api/protect", json={"path": str(work)}).json["protected"] == [str(work)]

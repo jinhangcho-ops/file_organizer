@@ -12,6 +12,8 @@ jobs:
     runs-on: windows-2025
     permissions:
       contents: read
+    env:
+      PYTHONUTF8: "1"  # 러너의 Windows는 영어 코드 페이지(cp1252)라 한글 출력·파일 쓰기가 깨진다
     steps:
       - uses: actions/checkout@v4
         with:
