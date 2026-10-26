@@ -63,7 +63,7 @@ def test_lock_open_close_release(home, client, monkeypatch, unlock_after):
     assert b"hash" not in secret_file.read_bytes() and os.stat(secret_file).st_file_attributes & 0x2  # 암호화한 숨김 파일
     assert client.post("/api/lock", json={"path": str(home), "password": PASSWORD}).status_code == 400  # 색인한 맨 위 폴더
     assert client.post("/api/lock", json={"path": box, "password": "틀림"}).status_code == 400
-    assert client.post("/api/lock", json={"path": box, "password": PASSWORD}).json["locks"] == [{"path": box, "open": False, "vault": False, "missing": False}]
+    assert client.post("/api/lock", json={"path": box, "password": PASSWORD}).json["locks"] == [{"path": box, "open": False, "vault": False, "missing": False, "sealed": True}]
     assert secret not in listed(client)
     with pytest.raises(PermissionError):
         os.listdir(box)
@@ -73,7 +73,7 @@ def test_lock_open_close_release(home, client, monkeypatch, unlock_after):
     build(home)
     assert secret not in listed(client)
     assert client.post("/api/lock/open", json={"path": box, "password": "틀림"}).status_code == 400
-    assert client.post("/api/lock/open", json={"path": box, "password": PASSWORD}).json["locks"] == [{"path": box, "open": True, "vault": False, "missing": False}]
+    assert client.post("/api/lock/open", json={"path": box, "password": PASSWORD}).json["locks"] == [{"path": box, "open": True, "vault": False, "missing": False, "sealed": None}]
     assert opened == [box] and os.listdir(box) == ["일기.txt"]
     build(home)
     assert secret not in listed(client)  # 열어 둔 동안에도 색인하지 않는다

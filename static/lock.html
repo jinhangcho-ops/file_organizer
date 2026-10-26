@@ -9,16 +9,28 @@
 <body class="lock-page">
 <!-- 잠금 창: 화면 캡처·공유에서 빠지는 따로 뜨는 창(desktop.open_lock). 잠금 관련 화면은 모두 여기에만 있다. -->
 <div class="lock-wrap">
+  <!-- 잠금 폴더가 있을 때만 보이는 전환: 잠금 관리 / 잠금 파일 보기(열어 둔 잠금 폴더 안만) -->
+  <div class="row hidden" id="lock-tabs"><button class="btn p" data-view="manage">잠금 관리</button><button class="btn" data-view="files">잠금 파일 보기</button></div>
+  <div class="box hidden" id="files-box">
+    <h3>잠금 파일</h3>
+    <div class="hint">잠금 폴더 안의 파일만 보여요. 잠긴 폴더는 눌러서 비밀번호를 넣으면 보여요(다 보면 잠금 관리에서 [다시 잠그기]). 파일을 두 번 누르면 열어요. 이 창은 화면 공유·녹화·캡처에 나오지 않아요.</div>
+    <div class="row mb8"><button class="btn s" id="files-up">↑ 위로</button><span class="mono" id="files-path"></span></div>
+    <div class="list picker-list" id="files-list"></div>
+    <div class="em hidden" id="files-empty">빈 폴더예요.</div>
+    <p class="message" id="files-message"></p>
+  </div>
   <div class="box hidden" id="target-box">
     <h3>고른 폴더</h3>
     <p class="mono" id="target"></p>
     <div class="row"><button class="btn p" id="do-lock">잠그기</button><button class="btn" id="do-vault">금고로 모으기</button></div>
   </div>
-  <div class="box">
+  <div class="box" id="manage-box">
     <h3>잠금 폴더</h3>
     <div class="hint">비밀번호를 넣어야 열리는 폴더예요. 본 창의 왼쪽 폴더 목록에서 폴더를 오른쪽 클릭하고 [잠금…]을 고르면 여기서 잠가요. Windows 권한으로 내 계정의 접근을 막고 숨겨요. 암호화는 아니어서 관리자나 권한 명령을 아는 사람은 풀 수 있어요(가리기 수준). 열어 둔 폴더는 프로그램을 닫을 때 다시 잠가요.</div>
     <div class="hint">[금고로 모으기]는 폴더를 금고 안으로 옮겨(무작위 이름) 금고 하나만 잠가요. 원래 위치는 암호화한 비밀 파일에만 남고, [꺼내기]로 되돌려요. 금고와 같은 디스크의 폴더만 모을 수 있어요.</div>
     <div class="hint">이 창은 화면 공유·녹화·캡처에 나오지 않아요.</div>
+    <div class="hint">창을 열 때마다 잠긴 폴더가 실제로 잠겼는지(숨김이고, 내 계정으로 열면 Windows가 막는지) 확인해요. 앱 밖에서 권한을 고쳐 풀렸으면 ‘잠금이 풀려 있음’으로 알려요.</div>
+    <div class="row mb8"><button class="btn s" id="lock-check">다시 확인</button></div>
     <div class="list" id="locks"></div>
     <div class="em" id="locks-empty">잠근 폴더가 없어요.</div>
     <p class="hint mono" id="vault-path"></p>

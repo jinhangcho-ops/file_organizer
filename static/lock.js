@@ -3,14 +3,23 @@
 // 이 창은 desktop.open_lock이 화면 캡처에서 빼 둔다. 바꾼 뒤에는 본 창이 목록을 다시 읽게 한다(refresh).
 
 let lockState = null;  // /api/lock/state의 답
+let view = "manage";  // 잠금 관리(manage) / 잠금 파일 보기(files). 잠금 폴더가 있을 때만 바꿀 수 있다.
+let filesAt = "";  // 잠금 파일 보기에서 보고 있는 폴더(""는 잠금 폴더들)
 const password = (title, text = "") => ask({title, text, value: "", secret: true});
+const messageId = () => (view === "files" ? "files-message" : "lock-message");
 
 const applyTheme = followTheme(() => lockState?.theme);
 
 async function load() {
   lockState = await api("/api/lock/state");
   applyTheme();
-  $("target-box").classList.toggle("hidden", !lockState.target);
+  if (!lockState.locks.length) view = "manage";
+  $("lock-tabs").classList.toggle("hidden", !lockState.locks.length);
+  document.querySelectorAll("[data-view]").forEach((b) => b.classList.toggle("p", b.dataset.view === view));
+  $("manage-box").classList.toggle("hidden", view !== "manage");
+  $("files-box").classList.toggle("hidden", view !== "files");
+  if (view === "files") await showFiles(filesAt);
+  $("target-box").classList.toggle("hidden", !lockState.target || view !== "manage");
   $("target").textContent = lockState.target;
   $("locks").replaceChildren(...lockState.locks.map(lockRow));
   $("locks-empty").classList.toggle("hidden", lockState.locks.length > 0);
@@ -27,14 +36,71 @@ async function lockCall(url, data, done) {
   try {
     answer = await api(url, data);
   } catch (e) {
-    say("lock-message", e.message, "error");
+    say(messageId(), e.message, "error");
     return null;
   }
   if (data.path) await api("/api/window", {action: "refresh"}).catch(() => {});  // 비밀번호·금고 위치는 본 창의 목록을 바꾸지 않는다
   const text = !done ? "" : typeof done === "function" ? done(answer) : done;
-  if (text) say("lock-message", text, "ok");
-  await load().catch((e) => say("lock-message", `${text} 목록을 다시 읽지 못했어요: ${e.message}`.trim(), "error"));
+  if (text) say(messageId(), text, "ok");
+  await load().catch((e) => say(messageId(), `${text} 목록을 다시 읽지 못했어요: ${e.message}`.trim(), "error"));
   return answer;
+}
+
+document.querySelectorAll("[data-view]").forEach((b) => b.addEventListener("click", () => {
+  view = b.dataset.view;
+  load().catch((e) => say(messageId(), e.message, "error"));
+}));
+$("lock-check").addEventListener("click", () => load().then(() => say("lock-message", "다시 확인했어요.", "ok")).catch((e) => say("lock-message", e.message, "error")));
+
+// 잠금 파일 보기: path가 비면 잠금 폴더들, 아니면 열어 둔 잠금 폴더 안. 다시 잠가 볼 수 없게 됐으면 처음으로 돌아간다.
+async function showFiles(path) {
+  let found;
+  try {
+    found = await api(`/api/lock/files?path=${encodeURIComponent(path)}`);
+  } catch (e) {
+    if (path) return showFiles("");
+    return say("files-message", e.message, "error");
+  }
+  filesAt = found.path;
+  $("files-path").textContent = found.label || "잠금 폴더";
+  $("files-up").disabled = !found.path;
+  $("files-up").onclick = () => showFiles(found.parent);
+  const rows = found.path ? [...found.folders.map(folderRow), ...found.files.map(fileRow)] : found.folders.map(topRow);
+  $("files-list").replaceChildren(...rows);
+  $("files-empty").classList.toggle("hidden", rows.length > 0);
+}
+
+function pickerRow(text, small, file) {
+  const row = el("button", {type: "button", className: "picker-row" + (file ? " file" : "")});
+  if (!file) row.insertAdjacentHTML("beforeend", FOLDER_ICON);
+  row.append(el("span", {textContent: text, title: text}));
+  if (small) row.append(el("small", {textContent: small}));
+  return row;
+}
+
+function topRow(item) {
+  const row = pickerRow(item.label, item.open ? "열림" : "잠김 · 눌러서 열기");
+  row.addEventListener("click", async () => {
+    if (item.open) return showFiles(item.path);
+    const pw = await password("잠금 폴더 열기", `${item.label}\n\n열면 이 창에서 안의 파일을 볼 수 있어요. 다 보면 잠금 관리에서 [다시 잠그기]를 누르세요(프로그램을 닫을 때도 다시 잠가요).`);
+    if (pw === null) return;
+    const answer = await lockCall("/api/lock/open", {path: item.label, password: pw, explorer: false});
+    if (answer) await showFiles(answer.path);
+  });
+  return row;
+}
+
+function folderRow(item) {
+  const row = pickerRow(item.name, "");
+  row.addEventListener("click", () => showFiles(item.path));
+  return row;
+}
+
+function fileRow(item) {
+  const row = pickerRow(item.name, `${size(item.size)} · ${new Date(item.modified * 1000).toLocaleDateString()}`, true);
+  row.title = "두 번 누르면 열어요";
+  row.addEventListener("dblclick", () => api("/api/lock/open_file", {path: item.path}).catch((e) => say("files-message", e.message, "error")));
+  return row;
 }
 
 async function lockFolder(vault) {
@@ -89,15 +155,18 @@ function lockRow(item) {
   const row = el("div");
   row.insertAdjacentHTML("beforeend", FOLDER_ICON);
   const where = item.vault ? "금고" : "제자리";
-  const status = item.missing ? "찾을 수 없음" : item.open ? "열림" : "잠김";
+  // sealed: 서버가 실제 Windows 권한·속성으로 확인한 결과(잠겨 있어야 할 때만 true·false)
+  const status = item.missing ? "찾을 수 없음" : item.open ? "열림" : item.sealed ? "잠김(확인함)" : "잠금이 풀려 있음";
   row.append(el("span", {className: "mono", textContent: `${where}·${status}  ${item.path}`,
-    title: item.missing ? "앱 밖에서 옮기거나 지운 것 같아요. [잠금 풀기]로 목록에서 뺄 수 있어요." : item.path}));
+    title: item.missing ? "앱 밖에서 옮기거나 지운 것 같아요. [잠금 풀기]로 목록에서 뺄 수 있어요."
+      : item.sealed === false ? "기록은 잠김인데 실제로는 열리거나 숨겨져 있지 않아요. [다시 잠그기]를 누르세요." : item.path}));
+  if (item.sealed === false) row.classList.add("unsealed");
   const button = (text, act) => {
     const b = el("button", {className: "btn s", textContent: text});
     b.addEventListener("click", act);
     row.append(b);
   };
-  if (item.open) button("다시 잠그기", () => lockCall("/api/lock/close", {path: item.path}, item.vault ? "금고를 다시 잠갔어요." : "다시 잠갔어요."));
+  if (item.open || item.sealed === false) button("다시 잠그기", () => lockCall("/api/lock/close", {path: item.path}, item.vault ? "금고를 다시 잠갔어요." : "다시 잠갔어요."));
   else if (!item.missing) button("열기", async () => {
     const pw = await password(item.vault ? "금고에서 열기" : "잠금 폴더 열기", item.vault ? `${item.path}\n\n금고를 잠시 풀고 열어요.` : item.path);
     if (pw !== null) await lockCall("/api/lock/open", {path: item.path, password: pw});

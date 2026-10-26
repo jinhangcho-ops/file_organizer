@@ -239,6 +239,7 @@ body.lock-page { overflow: auto; }
 .lock-wrap { display: grid; gap: 14px; padding: 16px; }
 .lock-wrap .hint { margin-bottom: 8px; }
 .lock-wrap .list > div { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.lock-wrap .list > div.unsealed { background: var(--warnbg); color: var(--warn); }  /* 기록은 잠김인데 실제로는 풀려 있다 */
 .marquee { position: fixed; z-index: 20; border: 1px solid var(--acc); background: rgba(11, 110, 117, .12); pointer-events: none; }
 
 /* 가장자리 크기 조절 손잡이(테두리 없는 창이라 직접 한다). 최대화하면 숨긴다. */

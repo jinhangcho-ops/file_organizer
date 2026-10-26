@@ -56,7 +56,7 @@ def test_parent_of_locked_folder_moves_only_on_same_drive_and_lock_follows(locke
     job = client.post("/api/move", json={"paths": [renamed], "folder": str(locked / "다른 곳")}).json["job"]
     assert job and server.jobs.wait()["result"]["moved"] == 1
     moved = str(locked / "다른 곳" / "나" / "비밀")
-    assert lock.listing() == [{"path": moved, "open": False, "vault": False, "missing": False}]
+    assert lock.listing() == [{"path": moved, "open": False, "vault": False, "missing": False, "sealed": True}]
     with pytest.raises(PermissionError):
         os.listdir(moved)  # 옮겨도 잠긴 그대로
     assert client.post("/api/lock/release", json={"path": moved, "password": PASSWORD}).status_code == 200
@@ -75,7 +75,7 @@ def test_vault_collect_open_take_out(locked, client, monkeypatch, unlock_after):
     vault = client.post("/api/lock/vault", json={"password": PASSWORD, "place": str(place)}).json["vault"]
     assert vault == str(place / ".vault") and os.stat(vault).st_file_attributes & 0x6 == 0x6
     assert client.post("/api/lock", json={"path": trip, "password": PASSWORD, "vault": True}).json["locks"] == [
-        {"path": trip, "open": False, "vault": True, "missing": False}]
+        {"path": trip, "open": False, "vault": True, "missing": False, "sealed": True}]
     assert not os.path.exists(trip)  # 원래 자리에서 사라졌다
     with pytest.raises(PermissionError):
         os.listdir(vault)

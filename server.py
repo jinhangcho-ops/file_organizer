@@ -579,11 +579,24 @@ def lock_state():
 
 @app.post("/api/lock/open")
 def lock_open():
-    """비밀번호가 맞으면 잠금 폴더(금고 안의 것이면 금고)를 잠시 풀고 탐색기로 연다."""
+    """비밀번호가 맞으면 잠금 폴더(금고 안의 것이면 금고)를 잠시 풀고 탐색기로 연다. explorer가 false면(잠금 파일 보기) 탐색기는 띄우지 않는다."""
     data = body()
     path = lock.open_folder(data.get("path"), data.get("password"))
-    os.startfile(path)
-    return jsonify(locks=lock.listing())
+    if data.get("explorer", True):
+        os.startfile(path)
+    return jsonify(locks=lock.listing(), path=path)
+
+
+@app.get("/api/lock/files")
+def lock_files():
+    """잠금 파일 보기(잠금 창): path가 없으면 잠금 폴더들, 있으면 열어 둔 잠금 폴더 안."""
+    return jsonify(lock.files(request.args.get("path", "")))
+
+
+@app.post("/api/lock/open_file")
+def lock_open_file():
+    lock.open_file(body().get("path"))
+    return jsonify(ok=True)
 
 
 @app.post("/api/lock/take_out")

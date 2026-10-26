@@ -99,10 +99,88 @@ def folders():
 
 
 def listing():
-    """화면에 보여 줄 잠금 폴더들 [{"path", "open", "vault", "missing"}]. 금고 안의 것은 금고가 열려 있으면 open."""
+    """화면에 보여 줄 잠금 폴더들 [{"path", "open", "vault", "missing", "sealed"}]. 금고 안의 것은 금고가 열려 있으면 open.
+    sealed: 잠겨 있어야 할 것이 실제로 잠겼는지(sealed()로 확인). 열려 있거나 없는 것은 None."""
     data = load()
-    return [{"path": f["path"], "vault": bool(f.get("id")), "open": data["vault_open"] if f.get("id") else bool(f.get("open")),
-             "missing": not f.get("id") and not os.path.isdir(f["path"])} for f in data["folders"]]
+    vault = sealed(data["vault"]) if data["vault"] and not data["vault_open"] else None
+    rows = []
+    for f in data["folders"]:
+        is_open = data["vault_open"] if f.get("id") else bool(f.get("open"))
+        missing = not f.get("id") and not os.path.isdir(f["path"])
+        check = None if is_open or missing else vault if f.get("id") else sealed(f["path"])
+        rows.append({"path": f["path"], "vault": bool(f.get("id")), "open": is_open, "missing": missing, "sealed": check})
+    return rows
+
+
+def sealed(path):
+    """실제로 잠겼는지: 숨김·시스템 속성이 켜져 있고, 내 계정으로 폴더 안을 열면 Windows가 막는다.
+    앱 밖에서 권한을 고쳤거나(icacls, 탐색기의 보안 탭) 잠그다 중간에 실패했으면 False다."""
+    now = kernel.GetFileAttributesW(path)
+    if now == 0xFFFFFFFF or now & HIDE != HIDE:
+        return False
+    try:
+        with os.scandir(path):
+            return False  # 열렸다: 거부 권한이 없다
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
+def location(data, item):
+    """잠금 기록의 실제 폴더: 제자리 것은 그 폴더, 금고에 든 것은 금고 안 무작위 이름 폴더. 열려 있지 않으면 None."""
+    if item.get("id"):
+        return os.path.join(data["vault"], item["id"]) if data["vault_open"] else None
+    return item["path"] if item.get("open") else None
+
+
+def opened_place(path):
+    """path가 열어 둔 잠금 폴더(또는 그 아래)이면 (그 폴더의 실제 위치, 원래 위치). 아니면 ValueError.
+    잠금 파일 보기는 열어 둔 것만 보이고 연다(잠긴 것은 비밀번호로 연 뒤에)."""
+    data = load()
+    if isinstance(path, str) and path:
+        key = exclude.key(os.path.abspath(path))
+        for item in data["folders"]:
+            place = location(data, item)
+            if place and fence.inside(key, {exclude.key(place)}):
+                return place, item["path"]
+    raise ValueError("열어 둔 잠금 폴더 안이 아닙니다. 잠금 관리에서 먼저 여세요.")
+
+
+def files(path=""):
+    """잠금 파일 보기. path가 비면 잠금 폴더들 {"folders": [{"path", "label", "open"}]}, 아니면 열어 둔 잠금 폴더 안의
+    {"path", "label"(원래 위치로 쓴 경로), "parent"(""면 처음으로), "folders": [{"name", "path"}], "files": [{"name", "path", "size", "modified"}]}."""
+    if not path:
+        data = load()
+        return {"path": "", "label": "", "parent": "", "files": [],
+                "folders": [{"path": location(data, f) or "", "label": f["path"], "open": bool(location(data, f))} for f in data["folders"]]}
+    place, original = opened_place(path)
+    path = os.path.abspath(path)
+    folders, found = [], []
+    with os.scandir(path) as entries:
+        for entry in entries:
+            try:
+                if entry.is_symlink() or entry.is_junction():  # 잠금 폴더 밖을 가리킬 수 있다
+                    continue
+                if entry.is_dir(follow_symlinks=False):
+                    folders.append({"name": entry.name, "path": entry.path})
+                else:
+                    st = entry.stat(follow_symlinks=False)
+                    found.append({"name": entry.name, "path": entry.path, "size": st.st_size, "modified": st.st_mtime})
+            except OSError:
+                continue
+    by_name = lambda item: item["name"].lower()  # noqa: E731
+    same = exclude.key(path) == exclude.key(place)
+    return {"path": path, "label": original + path[len(place):], "parent": "" if same else os.path.dirname(path),
+            "folders": sorted(folders, key=by_name), "files": sorted(found, key=by_name)}
+
+
+def open_file(path):
+    """열어 둔 잠금 폴더 안의 파일을 연결된 프로그램으로 연다."""
+    opened_place(path)
+    if not os.path.isfile(path):
+        raise ValueError(f"없는 파일입니다: {path}")
+    os.startfile(path)
 
 
 def vault_info():

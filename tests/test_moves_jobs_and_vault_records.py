@@ -90,7 +90,7 @@ def test_record_stays_when_the_vault_cannot_be_sealed_again(home, client, vault,
         m.setattr(lock, "seal", fail)
         answer = client.post("/api/lock", json={"path": str(home / "모음"), "password": PASSWORD, "vault": True})
     assert answer.status_code == 400
-    assert lock.listing() == [{"path": str(home / "모음"), "open": True, "vault": True, "missing": False}]  # 기록과 열림이 남았다
+    assert lock.listing() == [{"path": str(home / "모음"), "open": True, "vault": True, "missing": False, "sealed": None}]  # 기록과 열림이 남았다
     lock.close_all()  # 다음에 켤 때처럼 다시 잠근다
     assert lock.vault_info()["open"] is False
     with pytest.raises(PermissionError):
@@ -120,7 +120,7 @@ def test_new_folder_at_a_vault_items_place_cannot_take_its_record(home, client, 
     for vault_flag in (False, True):
         answer = client.post("/api/lock", json={"path": photos, "password": PASSWORD, "vault": vault_flag})
         assert answer.status_code == 400 and "같은 원래 위치" in answer.json["error"]
-    assert lock.listing() == [{"path": photos, "open": False, "vault": True, "missing": False}]  # 금고 기록이 그대로
+    assert lock.listing() == [{"path": photos, "open": False, "vault": True, "missing": False, "sealed": True}]  # 금고 기록이 그대로
 
 
 def test_partly_moved_folder_is_indexed_where_it_went(home, client, monkeypatch):
