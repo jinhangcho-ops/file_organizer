@@ -211,6 +211,9 @@ button.li:hover span:first-child { color: var(--acc); text-decoration: underline
 .dialog-box { width: 420px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px; box-shadow: var(--shadow); }
 .dialog-title { font-weight: 600; font-size: 15px; margin: 0 0 6px; }
 .dialog-box .hint { white-space: pre-line; margin: 0; }
+.dialog-box.wide { width: 560px; }
+.dialog-box .hint.long { white-space: pre-wrap; max-height: 50vh; overflow: auto; margin-bottom: 12px; }
+.update-bar { display: flex; align-items: center; gap: 10px; padding: 5px 12px; background: var(--warnbg); color: var(--warn); font-size: 12px; flex: none; }
 .dialog-box input { margin-top: 12px; }
 .job { position: fixed; left: 50%; bottom: 44px; transform: translateX(-50%); z-index: 25; width: 420px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; box-shadow: var(--shadow); font-size: 12px; white-space: pre-line; }
 .job .bar { margin-top: 8px; height: 6px; }

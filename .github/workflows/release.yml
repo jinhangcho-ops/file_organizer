@@ -1,0 +1,77 @@
+# v* 태그를 올리면 exe·앱 파일 zip·설치 파일을 만들고 릴리스에 올린다. 릴리스 노트는 CHANGELOG.md의 그 태그 절이다.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions: {}
+
+jobs:
+  build:
+    runs-on: windows-2025
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: 부품 설치
+        run: python -m pip install -r requirements.txt pyinstaller==6.22.3 pytest
+      - name: 시험
+        run: |
+          python tests.py
+          python -m pytest -q
+      - name: exe와 앱 파일 zip
+        run: |
+          pyinstaller --noconfirm file_organizer.spec
+          python -c "import shutil; shutil.make_archive('dist/file_organizer', 'zip', 'dist/file_organizer')"
+      - name: 설치 파일
+        shell: bash
+        run: |
+          choco install innosetup --version=6.7.3 -y --no-progress
+          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "/DAppVersion=${GITHUB_REF_NAME#v}" installer.iss
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: |
+            dist/file_organizer_setup.exe
+            dist/file_organizer.zip
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: out
+      - name: 지문과 릴리스 노트
+        run: |
+          cd out
+          sha256sum file_organizer_setup.exe > file_organizer_setup.exe.sha256
+          sha256sum file_organizer.zip > file_organizer.zip.sha256
+          awk -v head="## $TAG" '$0 == head {on = 1; next} /^## v/ {on = 0} on' ../CHANGELOG.md | sed '/./,$!d' > RELEASE_NOTES.md
+          if [ ! -s RELEASE_NOTES.md ]; then echo "CHANGELOG.md에 '## $TAG' 절이 없습니다"; exit 1; fi
+          { echo "file_organizer_setup.exe SHA-256: \`$(cut -d' ' -f1 file_organizer_setup.exe.sha256)\`"; echo; cat RELEASE_NOTES.md; } > body.md
+      - name: 릴리스에 올리기
+        run: |
+          cd out
+          files="file_organizer_setup.exe file_organizer_setup.exe.sha256 file_organizer.zip file_organizer.zip.sha256 RELEASE_NOTES.md"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$TAG" $files --clobber --repo "$GITHUB_REPOSITORY"
+            gh release edit "$TAG" --draft=false --notes-file body.md --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" $files --title "$TAG" --notes-file body.md --repo "$GITHUB_REPOSITORY"
+          fi

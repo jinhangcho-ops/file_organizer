@@ -27,7 +27,7 @@ def already_running(name=MUTEX):
     descriptor = ctypes.c_void_p()
     ctypes.WinDLL("advapi32").ConvertStringSecurityDescriptorToSecurityDescriptorW("D:(A;;0x00100000;;;WD)", 1, ctypes.byref(descriptor), None)
     security = Security(ctypes.sizeof(Security), descriptor, False) if descriptor.value else None
-    kernel.CreateMutexW(ctypes.byref(security) if security else None, False, name)
+    already_running.handle = kernel.CreateMutexW(ctypes.byref(security) if security else None, False, name)  # [지금 업데이트]가 설치 전에 놓는다
     return ctypes.get_last_error() in (183, 5)  # ERROR_ALREADY_EXISTS, ERROR_ACCESS_DENIED(다른 권한으로 켠 프로그램의 뮤텍스)
 
 
@@ -82,6 +82,7 @@ import lock  # noqa: E402
 import recognize  # noqa: E402
 import server  # noqa: E402
 import settings  # noqa: E402
+import update  # noqa: E402
 
 http = make_server("127.0.0.1", 0, server.app, threaded=True)  # 0: 비어 있는 포트를 자동으로 고른다.
 threading.Thread(target=http.serve_forever, daemon=True).start()
@@ -259,6 +260,9 @@ def close_lock():
 
 
 server.window_control = control
+# [지금 업데이트]: 조용한 설치는 켜진 프로그램(AppMutex)이 있으면 멈춘다. 띄우기 전에 놓고, 설치가 바로 실패하면 다시 쥔다.
+update.release_mutex = lambda: ctypes.windll.kernel32.CloseHandle(wintypes.HANDLE(already_running.handle))
+update.take_mutex = already_running
 window.events.closed += close_lock  # 본 창을 닫으면 잠금 창도 닫는다.
 lock.close_all()  # 지난번에 창을 정상으로 닫지 못했으면(끄기·강제 종료) 열어 둔 잠금 폴더가 남아 있다.
 # 아이콘: 소스로 실행할 때는 icon.ico, exe에서는(파일이 없으므로) exe에 넣은 아이콘을 pywebview가 쓴다.

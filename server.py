@@ -2,6 +2,7 @@
 import os
 import secrets
 import subprocess
+import threading
 
 from flask import Flask, abort, jsonify, request
 from werkzeug.exceptions import HTTPException
@@ -30,6 +31,7 @@ import search
 import settings
 import tree
 import undo
+import update
 
 app = Flask(__name__, static_folder="static")
 KEY = secrets.token_urlsafe(32)  # 실행할 때마다 새로 만든다. desktop.py가 창의 첫 주소에 넣는다.
@@ -37,6 +39,7 @@ window_control = None  # 창 동작(동작, 값 → 답). desktop.py가 채운�
 lock_target = ""  # 잠금 창이 다룰 폴더(본 창의 폴더 메뉴 [잠금…]으로 연 경우). 주소에 넣지 않고 여기 둔다.
 # 제목 줄 없는 본 창의 버튼·크기 조절, lock: 잠금 창 열기(path: 다룰 폴더), refresh: 본 창의 목록·숫자 다시 읽기(잠금 창이 바꾼 뒤)
 WINDOW_ACTIONS = {"minimize", "toggle", "close", "bounds", "place", "lock", "refresh", "lock_reload"}
+FORCE_QUIT = 10  # 초. [지금 업데이트] 뒤 창이 안 닫히면 이때 프로그램을 끝낸다(설치가 파일을 바꿀 수 있게).
 CSP = "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:"
 
 
@@ -104,6 +107,22 @@ def state():
 @app.post("/api/settings")
 def save_settings():
     return jsonify(settings=settings.save(body()))
+
+
+@app.get("/api/update")
+def update_check():
+    """새 버전이 있으면 {"current", "version", "notes"}, 없으면 null. 설정 update_check를 끄면 GitHub에 묻지 않는다."""
+    return jsonify(update=update.check(settings.load()["update_check"]))
+
+
+@app.post("/api/update")
+def update_install():
+    """[지금 업데이트]: 지문이 맞는 설치 파일을 조용한 설치로 띄운다. 화면은 답을 받고 창을 닫고, 안 닫히면 10초 뒤 끝낸다."""
+    update.install(body().get("version"))
+    timer = threading.Timer(FORCE_QUIT, os._exit, (0,))
+    timer.daemon = True
+    timer.start()
+    return jsonify(ok=True)
 
 
 @app.get("/api/browse")

@@ -91,9 +91,14 @@ function toast(text) {
 }
 
 // 대화상자: 입력(value가 있으면)이나 확인. 확인하면 입력값 또는 true, 취소하면 null. secret이면 비밀번호처럼 가린다.
-function ask({title, text = "", value, secret = false}) {
+// ok·cancel: 버튼 글자. long: 긴 글(릴리스 노트)을 줄바꿈 그대로, 넘치면 스크롤. 글은 늘 textContent로 넣는다(HTML로 읽지 않는다).
+function ask({title, text = "", value, secret = false, ok = "확인", cancel = "취소", long = false}) {
   $("dialog-title").textContent = title;
+  $("dialog-ok").textContent = ok;
+  $("dialog-cancel").textContent = cancel;
   $("dialog-text").textContent = text;
+  $("dialog-text").classList.toggle("long", long);
+  $("dialog-form").classList.toggle("wide", long);
   const input = $("dialog-input");
   input.type = secret ? "password" : "text";
   input.classList.toggle("hidden", value === undefined);

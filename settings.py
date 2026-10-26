@@ -54,7 +54,8 @@ def defaults():
             # 인식: 얼굴로 같은 사람 찾기, 내 분류 모델 파일과 분류마다 보여 줄 이름·기준 점수(%)·칩으로 보기
             "face_on": True, "custom_model_path": "", "custom_labels": [],
             # 캐시 정리: 이 일수보다 오래된 것만, 체크를 끈 캐시(cache.IDS)
-            "cache_days": 7, "cache_skip": []}
+            "cache_days": 7, "cache_skip": [],
+            "update_check": True}  # 켤 때 GitHub에 새 버전이 있는지 묻기
 
 
 def dark(config=None):
@@ -165,7 +166,7 @@ def check(changes):
             if value not in ("none", "folder"):
                 raise ValueError(f"모르는 묶기 방식입니다: {value}")
             clean[name] = value
-        elif name in ("pin_installers", "show_same_name"):
+        elif name in ("pin_installers", "show_same_name", "update_check"):
             if not isinstance(value, bool):
                 raise ValueError(f"켜기·끄기 값이 잘못됐습니다: {name}")
             clean[name] = value

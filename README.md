@@ -55,6 +55,28 @@ Releases에는 파일마다 같은 이름에 `.sha256`을 붙인 지문 파일�
 - 앱 파일(`file_organizer.zip`)은 설치 프로그램이 받을 때 스스로 지문을 확인하므로 따로 하지 않아도 됩니다.
 - **한계:** 지문과 파일을 같은 Releases 페이지에서 받으므로, 저장소 계정이 털려 둘 다 바뀐 경우까지는 잡지 못합니다.
 
+### 새 버전 알림·업데이트
+
+```mermaid
+flowchart LR
+  A[앱을 엶] --> B{최신 릴리스가 새 버전?}
+  B -- 아님·인터넷 없음 --> Z[아무것도 안 띄움]
+  B -- 새 버전 --> C["위쪽: 새 버전 vX가 있어요 [업데이트]"]
+  C --> N[바뀐 것 창: 추가·개선·삭제]
+  N -- 지금 업데이트 --> D[설치 파일과 .sha256 받기]
+  D --> E{지문이 같은지}
+  E -- 다름 --> F[실행하지 않고 알림]
+  E -- 같음 --> G[조용히 설치 → 앱을 닫고 설치 뒤 다시 엶]
+```
+
+| 항목 | 내용 |
+|---|---|
+| 바깥으로 보내는 것 | 앱을 열 때 한 번 GitHub의 최신 릴리스 주소를 열어 봅니다. 새 버전이면 그 릴리스 노트(`RELEASE_NOTES.md`)를 받고, [지금 업데이트]를 누르면 설치 파일과 지문 파일을 받습니다. 파일 이름·설정 같은 내 정보는 보내지 않습니다(GitHub은 이 PC의 인터넷 주소를 압니다). |
+| 끄기 | 설정 → 새 버전 알림에서 [앱을 열 때 새 버전 확인]을 끄면 GitHub에 아무것도 묻지 않습니다. |
+| 묻지 않을 때 | 설치하지 않고 소스로 실행할 때, 태그 없이 만든 시험 빌드(0.0.0)일 때입니다. 인터넷이 없으면 조용히 넘어갑니다. |
+| [지금 업데이트] | 작업이나 색인이 돌고 있거나 설치 드라이브에 1GB가 비어 있지 않으면 하지 않습니다. 지문이 같을 때만 설치를 조용히 시작하고, 앱을 닫았다가 설치가 끝나면 다시 엽니다. 설정·색인은 그대로입니다. |
+| 바뀐 것 | 릴리스마다 [CHANGELOG.md](CHANGELOG.md)의 추가·개선·삭제를 릴리스 노트로 올립니다. |
+
 ## 시작하기
 
 1. 시작 메뉴나 바탕 화면의 **파일 정리**를 실행합니다.
@@ -555,24 +577,23 @@ exe 만들기(`dist\file_organizer\file_organizer.exe`):
 .venv\Scripts\pyinstaller file_organizer.spec
 ```
 
-설치 프로그램 만들기(`dist\file_organizer_setup.exe`, [Inno Setup 6.7](https://jrsoftware.org/isinfo.php) 필요):
+릴리스(GitHub Actions, `.github/workflows/release.yml`):
 
-1. 앱 파일을 zip으로 묶습니다. 만든 zip(`dist\file_organizer.zip`)은 Releases의 그 버전(`installer.iss`의 `AppVersion`, 예: `v1.0.1`)에 그대로 올립니다. 설치 프로그램이 컴파일할 때 그 zip의 SHA-256을 넣어 두고, 받은 파일과 비교하기 때문입니다.
+1. [CHANGELOG.md](CHANGELOG.md)에 `## v1.0.2` 절을 쓰고 `### 추가`·`### 개선`·`### 삭제` 세 칸을 채웁니다(바뀐 것이 없으면 `- 없음`). 검사가 형식을 봅니다.
+2. `v1.0.2` 같은 태그를 올리면 시험 → exe → 앱 파일 zip → 설치 파일(`/DAppVersion=1.0.2`)을 만들고, 설치 파일·zip·각각의 `.sha256`·`RELEASE_NOTES.md`를 릴리스에 올립니다. 그 절이 없으면 실패합니다. 같은 태그로 다시 돌리면 파일을 바꿔 올립니다.
+
+PC에서 직접 만들 때(`dist\file_organizer_setup.exe`, [Inno Setup 6.7](https://jrsoftware.org/isinfo.php) 필요):
+
+1. 앱 파일을 zip으로 묶습니다. 설치 프로그램은 컴파일할 때 그 zip의 SHA-256을 넣어 두고, 설치할 때 Releases의 그 버전에서 zip을 받아 비교합니다. 그래서 같은 zip을 같은 버전에 올려야 합니다.
 
 ```bash
 .venv\Scripts\python -c "import shutil; shutil.make_archive('dist/file_organizer', 'zip', 'dist/file_organizer')"
 ```
 
-2. 컴파일합니다.
+2. 버전을 넣어 컴파일합니다. 버전을 빼면 0.0.0이 되고, 그 판은 새 버전 알림을 하지 않습니다.
 
 ```bash
-"%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" installer.iss
-```
-
-3. 올릴 지문 파일(`dist\file_organizer_setup.exe.sha256`, `dist\file_organizer.zip.sha256`)을 만듭니다(PowerShell). 설치 파일·zip과 함께 Releases에 올립니다.
-
-```powershell
-Get-FileHash dist\file_organizer_setup.exe, dist\file_organizer.zip | ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" | Set-Content "$($_.Path).sha256" -Encoding ascii }
+"%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" /DAppVersion=1.0.2 installer.iss
 ```
 
 ## 검사

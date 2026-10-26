@@ -114,6 +114,28 @@ $("w-close").addEventListener("click", async () => {
   if (job?.running && job.changes && !(await ask({title: "작업이 아직 돌고 있어요. 창을 닫을까요?", text: `창은 바로 닫히고, ‘${job.name}’ 작업은 끝까지 마친 뒤 프로그램이 꺼져요.`}))) return;
   windowCall("close");
 });
+
+// 새 버전 알림: 위쪽 막대 → [업데이트]로 릴리스 노트 창 → [지금 업데이트]면 서버가 지문을 확인하고 조용한 설치를 띄운 뒤 창을 닫는다.
+let newVersion = null;
+const noteText = (notes) => notes.replace(/^#{2,3} +/gm, "■ ");  // 마크다운 머리만 글자로 바꾼다. 나머지는 그대로 글자로 보인다.
+async function checkUpdate() {
+  if (!state.settings.update_check) return;
+  newVersion = (await api("/api/update").catch(() => null))?.update || null;
+  if (!newVersion) return;
+  $("update-text").textContent = `새 버전 v${newVersion.version}이 있어요`;
+  $("update-bar").classList.remove("hidden");
+}
+$("update-open").addEventListener("click", async () => {
+  const {current, version, notes} = newVersion;
+  const text = notes ? noteText(notes) : "릴리스 노트를 받지 못했어요. GitHub Releases에서 볼 수 있어요.";
+  if (!(await ask({title: `v${current} → v${version}에서 바뀐 것`, text, ok: "지금 업데이트", cancel: "나중에", long: true}))) return;
+  try {
+    await api("/api/update", {version});
+  } catch (e) {
+    return toast(e.message);
+  }
+  windowCall("close");  // 설치가 끝나면 다시 연다(/RELAUNCH)
+});
 async function toggleMaximize() {
   const answer = await windowCall("toggle");
   if (answer) document.documentElement.classList.toggle("maximized", answer.maximized);
@@ -1615,6 +1637,7 @@ function showView() {
   document.querySelectorAll("input[name=list_group]").forEach((r) => { r.checked = r.value === state.settings.list_group; });
   $("pin_installers").checked = state.settings.pin_installers;
   $("show_same_name").checked = state.settings.show_same_name;
+  $("update_check").checked = state.settings.update_check;
 }
 
 async function saveView(changes) {
@@ -1630,6 +1653,11 @@ $("pin_installers").addEventListener("change", (e) => saveView({pin_installers: 
 $("show_same_name").addEventListener("change", async (e) => {
   await saveView({show_same_name: e.target.checked});
   if (picked && !picked.folder) document.querySelector('[data-fold="same-name"]').classList.toggle("hidden", !state.settings.show_same_name);  // 열린 상세에도 바로
+});
+
+$("update_check").addEventListener("change", async (e) => {
+  if (await saveSettings({update_check: e.target.checked}, "update-message")) say("update-message", "저장했어요.", "ok");
+  else $("update-message").className = "message error";
 });
 
 // ---------- 캐시 정리 ----------
@@ -1709,4 +1737,5 @@ $("reindex").addEventListener("click", async () => {
   const bounds = await windowCall("bounds");
   if (bounds) document.documentElement.classList.toggle("maximized", bounds.maximized);
   if (state.index.running) pollIndex();
+  checkUpdate();
 })();

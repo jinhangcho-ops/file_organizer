@@ -19,6 +19,8 @@
     </div>
   </div>
 
+  <div class="update-bar hidden" id="update-bar"><span id="update-text"></span><button class="btn s p" id="update-open">업데이트</button></div>
+
   <div class="topbar" id="topbar">
     <button class="btn ib hidden" id="back" title="파일 목록으로 (마우스 오른쪽 버튼)">←</button>
     <b id="ttl" class="ttl">파일 정리</b>
@@ -130,6 +132,12 @@
             <div class="mt6 row"><label><input type="checkbox" id="pin_installers"> 설치파일(exe·msi 등)을 맨 위에</label></div>
             <div class="mt6 row"><label><input type="checkbox" id="show_same_name"> 상세에 ‘이름이 같은 파일’ 보기</label></div>
             <p id="view-message" class="message"></p>
+          </div>
+          <div class="box">
+            <h3>새 버전 알림</h3>
+            <div class="hint">앱을 열 때 GitHub에 최신 릴리스 주소를 열어 보고, 새 버전이면 그 릴리스 노트를 받아요. 파일 이름·설정 같은 내 정보는 보내지 않아요.</div>
+            <div class="row"><label><input type="checkbox" id="update_check"> 앱을 열 때 새 버전 확인</label></div>
+            <p id="update-message" class="message"></p>
           </div>
           <div class="box">
             <h3>캐시 정리</h3>
