@@ -69,6 +69,22 @@ begin
   Result := WizardSilent and (Pos('/RELAUNCH', UpperCase(GetCmdTail)) > 0);
 end;
 
+// [지금 업데이트]: 앱은 설치를 띄운 뒤 창을 닫고 끝난다. 그때까지(뮤텍스가 없어질 때까지, 최대 30초) 기다린다.
+// InitializeSetup은 AppMutex 확인보다 먼저 돌아서, 앱이 끝난 뒤에 확인하고 파일을 바꾼다.
+function InitializeSetup: Boolean;
+var
+  I: Integer;
+begin
+  if Relaunch then
+    for I := 1 to 60 do
+    begin
+      if not CheckForMutexes('file_organizer_app') then
+        Break;
+      Sleep(500);
+    end;
+  Result := True;
+end;
+
 function InstalledBefore: Boolean;
 begin
   Result := FileExists(ExpandConstant('{app}\file_organizer.exe'));

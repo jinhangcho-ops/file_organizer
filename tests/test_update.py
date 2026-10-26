@@ -104,12 +104,12 @@ def test_off_or_offline_or_not_installed(net, monkeypatch, tmp_path):
 
 @pytest.fixture
 def setup_files(net, monkeypatch):
-    """v2.0.0의 설치 파일과 지문. started: 띄운 명령줄. mutex: 놓고 다시 쥔 기록."""
+    """v2.0.0의 설치 파일과 지문. started: 띄운 명령줄. code: 설치가 2초 안에 끝낼 때의 코드(None은 계속 돎)."""
     routes, calls = net
     base = f"{REPO}/releases/download/v2.0.0/{update.SETUP}"
     routes[base] = ("x", SETUP)
     routes[base + ".sha256"] = ("x", f"{hashlib.sha256(SETUP).hexdigest().upper()}  {update.SETUP}\n".encode())
-    started, mutex, code = [], [], {"value": None}
+    started, code = [], {"value": None}
 
     class Process:
         def __init__(self, args):
@@ -121,48 +121,47 @@ def setup_files(net, monkeypatch):
             return code["value"]
 
     monkeypatch.setattr(update.subprocess, "Popen", Process)
-    monkeypatch.setattr(update, "release_mutex", lambda: mutex.append("놓음"))
-    monkeypatch.setattr(update, "take_mutex", lambda: mutex.append("쥠"))
     monkeypatch.setattr(update.shutil, "disk_usage", lambda path: type("U", (), {"free": update.NEED})())
-    return routes, calls, base, started, mutex, code
+    monkeypatch.setattr(update, "launched", [])
+    return routes, calls, base, started, code
 
 
 def test_install_runs_exact_command(setup_files):
-    routes, calls, base, started, mutex, _ = setup_files
+    routes, calls, base, started, _ = setup_files
     path = update.install("2.0.0")
     folder = str(Path(update.sys.executable).parent)
     assert started == [[path, "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/NOCANCEL", f"/DIR={folder}", "/RELAUNCH"]]
-    assert Path(path).read_bytes() == SETUP and mutex == ["놓음"]
+    assert Path(path).read_bytes() == SETUP and update.launched == [path]
     assert calls == [base, base + ".sha256"]  # 지정 버전의 릴리스 주소
 
 
 @pytest.mark.parametrize("sums", [b"0" * 64 + b"  file_organizer_setup.exe\n", b"", b"   \n"])
 def test_wrong_or_empty_fingerprint_not_run(setup_files, sums):
-    routes, _, base, started, mutex, _ = setup_files
+    routes, _, base, started, _ = setup_files
     routes[base + ".sha256"] = ("x", sums)
     with pytest.raises(ValueError, match="지문"):
         update.install("2.0.0")
-    assert started == [] and mutex == []
+    assert started == [] and update.launched == []
 
 
 @pytest.mark.parametrize("version", ["../2.0.0", "2.0.0/x", "", None, "v2.0.0", "2.0.0 /VERYSILENT"])
 def test_bad_version_not_downloaded(setup_files, version):
-    _, calls, _, started, _, _ = setup_files
+    _, calls, _, started, _ = setup_files
     with pytest.raises(ValueError, match="버전"):
         update.install(version)
     assert calls == [] and started == []
 
 
 def test_quick_failure_keeps_app(setup_files):
-    _, _, _, started, mutex, code = setup_files
+    _, _, _, started, code = setup_files
     code["value"] = 5  # 관리자 확인 거절 등
     with pytest.raises(ValueError, match="코드 5"):
         update.install("2.0.0")
-    assert mutex == ["놓음", "쥠"] and len(started) == 1
+    assert len(started) == 1 and update.launched == []  # 다시 누를 수 있다
 
 
 def test_refused_before_download(setup_files, monkeypatch):
-    _, calls, _, started, _, _ = setup_files
+    _, calls, _, started, _ = setup_files
     monkeypatch.setitem(jobs.status, "running", True)
     with pytest.raises(ValueError, match="작업"):
         update.install("2.0.0")
@@ -211,3 +210,28 @@ def test_installer_records_version_and_relaunch():
     assert 'Filename: "{app}\\version.ini"; Section: "app"; Key: "version"; String: "{#AppVersion}"' in iss
     assert "Check: Relaunch" in iss and "'/RELAUNCH'" in iss
     assert re.search(r'^Filename: .*Check: Relaunch$', iss, flags=re.M).group(0).count("skipifsilent") == 0
+
+
+def test_redirect_elsewhere_is_not_a_tag(net):
+    """와이파이 로그인 페이지·프록시가 다른 곳(…/v2)으로 넘기면 태그로 읽지 않는다."""
+    routes, calls = net
+    routes[REPO + "/releases/latest"] = ("http://login.example.invalid/portal/v2", b"<html>")
+    assert update.check(True) is None and len(calls) == 1
+
+
+def test_second_install_refused(setup_files):
+    """[업데이트]를 두 번 눌러도 설치는 하나만 띄운다."""
+    _, _, _, started, _ = setup_files
+    update.install("2.0.0")
+    with pytest.raises(ValueError, match="이미"):
+        update.install("2.0.0")
+    assert len(started) == 1
+
+
+def test_app_keeps_mutex_and_setup_waits():
+    """앱은 끝날 때까지 뮤텍스를 쥐고(놓았다 쥐면 그사이 설치가 켜진 앱의 파일을 바꾼다), 설치가 InitializeSetup에서 기다린다.
+    InitializeSetup은 AppMutex 확인보다 먼저 돈다(Inno Setup 6.7.3에서 시험 설치 파일로 확인)."""
+    assert not hasattr(update, "release_mutex") and "release_mutex" not in (ROOT / "desktop.py").read_text(encoding="utf-8")
+    iss = (ROOT / "installer.iss").read_text(encoding="utf-8-sig")
+    setup = iss[iss.index("function InitializeSetup"):]
+    assert "if Relaunch then" in setup and "CheckForMutexes('file_organizer_app')" in setup and "Sleep(" in setup

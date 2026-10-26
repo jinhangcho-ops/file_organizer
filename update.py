@@ -21,7 +21,9 @@ LIMITS = {"notes": 50_000, "sha256": 1_000, "setup": 50_000_000}  # 받는 크�
 NEED = 1_000_000_000  # 설치 드라이브에 있어야 할 빈 공간: 앱 파일 zip(약 150MB)과 푼 것(약 360MB), 옛 판을 지우기 전까지 둘 다
 TIMEOUT = 15  # 초
 asked = {}  # 이번 실행에서 물은 답(실행마다 한 번만 묻는다)
-release_mutex = take_mutex = None  # desktop.py가 채운다: 설치가 켜진 프로그램(AppMutex)으로 보고 멈추지 않게 뮤텍스를 놓고, 실패하면 다시 쥔다
+launched = []  # 띄운 설치 파일(두 번 눌러도 하나만 띄운다)
+# 뮤텍스는 앱이 끝날 때까지 쥔다. 설치가 /RELAUNCH면 InitializeSetup에서 앱이 끝나기를 기다린다(installer.iss).
+# 놓고 띄우면 앱이 아직 켜진 동안 설치가 쓰고 있는 _internal을 지우고 덮어썼다.
 
 
 def installed():
@@ -52,7 +54,9 @@ def get(url, limit):
 def latest_tag():
     """releases/latest가 넘어간 주소(…/releases/tag/v1.2.3)의 마지막 조각. 모양이 다르면 None."""
     with urllib.request.urlopen(REPO + "/releases/latest", timeout=TIMEOUT) as answer:
-        tag = urllib.parse.unquote(answer.geturl().rstrip("/").rsplit("/", 1)[-1])
+        url = answer.geturl()
+    page = REPO + "/releases/tag/"  # 와이파이 로그인 페이지·프록시가 다른 곳으로 넘기면 태그가 아니다
+    tag = urllib.parse.unquote(url[len(page):].rstrip("/")) if url.startswith(page) else ""
     return tag if TAG.fullmatch(tag) else None
 
 
@@ -91,6 +95,8 @@ def install(version):
     """그 버전의 설치 파일을 받아 지문이 같으면 조용한 설치를 띄운다. 2초 안에 실패 코드로 끝나면 ValueError(프로그램은 켜 둔다)."""
     if not isinstance(version, str) or not numbers(version):
         raise ValueError("버전 글자가 잘못됐어요.")
+    if launched:
+        raise ValueError("이미 업데이트를 시작했어요. 잠시 뒤 프로그램이 닫혀요.")
     if reason := refuse():
         raise ValueError(reason)
     base = f"{REPO}/releases/download/v{version}/{SETUP}"
@@ -102,15 +108,14 @@ def install(version):
     path = os.path.join(folder, SETUP)
     with open(path, "wb") as out:
         out.write(setup)
-    release_mutex()
     process = subprocess.Popen([path, "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/NOCANCEL",
                                 f"/DIR={os.path.dirname(sys.executable)}", "/RELAUNCH"])
     try:
         code = process.wait(2)
     except subprocess.TimeoutExpired:
-        return path
+        code = 0  # 앱이 끝나기를 기다리는 중
     if code:
-        take_mutex()
         shutil.rmtree(folder, ignore_errors=True)
         raise ValueError(f"설치를 시작하지 못했어요(코드 {code}).")
+    launched.append(path)
     return path

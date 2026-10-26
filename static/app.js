@@ -129,9 +129,11 @@ $("update-open").addEventListener("click", async () => {
   const {current, version, notes} = newVersion;
   const text = notes ? noteText(notes) : "릴리스 노트를 받지 못했어요. GitHub Releases에서 볼 수 있어요.";
   if (!(await ask({title: `v${current} → v${version}에서 바뀐 것`, text, ok: "지금 업데이트", cancel: "나중에", long: true}))) return;
+  $("update-bar").classList.add("hidden");  // 받는 동안 다시 누르지 않게(서버도 두 번째는 거절한다)
   try {
     await api("/api/update", {version});
   } catch (e) {
+    $("update-bar").classList.remove("hidden");
     return toast(e.message);
   }
   windowCall("close");  // 설치가 끝나면 다시 연다(/RELAUNCH)
