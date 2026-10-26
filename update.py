@@ -21,7 +21,6 @@ LIMITS = {"notes": 50_000, "sha256": 1_000, "setup": 50_000_000}  # 받는 크�
 NEED = 1_000_000_000  # 설치 드라이브에 있어야 할 빈 공간: 앱 파일 zip(약 150MB)과 푼 것(약 360MB), 옛 판을 지우기 전까지 둘 다
 TIMEOUT = 15  # 초
 asked = {}  # 이번 실행에서 물은 답(실행마다 한 번만 묻는다)
-launched = []  # 띄운 설치 파일(두 번 눌러도 하나만 띄운다)
 # 뮤텍스는 앱이 끝날 때까지 쥔다. 설치가 /RELAUNCH면 InitializeSetup에서 앱이 끝나기를 기다린다(installer.iss).
 # 놓고 띄우면 앱이 아직 켜진 동안 설치가 쓰고 있는 _internal을 지우고 덮어썼다.
 
@@ -95,10 +94,21 @@ def install(version):
     """그 버전의 설치 파일을 받아 지문이 같으면 조용한 설치를 띄운다. 2초 안에 실패 코드로 끝나면 ValueError(프로그램은 켜 둔다)."""
     if not isinstance(version, str) or not numbers(version):
         raise ValueError("버전 글자가 잘못됐어요.")
-    if launched:
-        raise ValueError("이미 업데이트를 시작했어요. 잠시 뒤 프로그램이 닫혀요.")
-    if reason := refuse():
-        raise ValueError(reason)
+    # 시작한 순간부터 새 작업을 받지 않는다(jobs.closing): 받는 동안 시작한 작업은 띄운 뒤의 강제 종료에 끊긴다. 두 번째 요청도 여기서 막힌다.
+    with jobs.lock:
+        if jobs.closing:
+            raise ValueError("이미 업데이트를 시작했거나 프로그램을 닫는 중이에요.")
+        if reason := refuse():
+            raise ValueError(reason)
+        jobs.closing = True
+    try:
+        return launch(version)
+    except BaseException:
+        jobs.closing = False
+        raise
+
+
+def launch(version):
     base = f"{REPO}/releases/download/v{version}/{SETUP}"
     setup = get(base, LIMITS["setup"])
     want = get(base + ".sha256", LIMITS["sha256"]).decode("ascii", "replace").split()[:1]
@@ -117,5 +127,4 @@ def install(version):
     if code:
         shutil.rmtree(folder, ignore_errors=True)
         raise ValueError(f"설치를 시작하지 못했어요(코드 {code}).")
-    launched.append(path)
     return path

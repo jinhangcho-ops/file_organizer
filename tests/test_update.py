@@ -35,7 +35,7 @@ class Answer(io.BytesIO):
 
 @pytest.fixture
 def net(monkeypatch, tmp_path):
-    """routes: 주소 → (넘어간 주소, 내용) 또는 예외. calls: 연 주소들. 설치한 exe(버전 1.9.0)처럼 꾸민다."""
+    """routes: 주소 → (넘어간 주소, 내용), 예외, 또는 받는 동안 부를 함수. calls: 연 주소들. 설치한 exe(버전 1.9.0)처럼 꾸민다."""
     routes, calls = {}, []
 
     def urlopen(url, timeout):
@@ -43,7 +43,7 @@ def net(monkeypatch, tmp_path):
         found = routes.get(url, urllib.error.HTTPError(url, 404, "없음", None, None))
         if isinstance(found, Exception):
             raise found
-        return Answer(*found)
+        return Answer(*(found() if callable(found) else found))
 
     monkeypatch.setattr(update.urllib.request, "urlopen", urlopen)
     monkeypatch.setattr(update.sys, "frozen", True, raising=False)
@@ -122,7 +122,7 @@ def setup_files(net, monkeypatch):
 
     monkeypatch.setattr(update.subprocess, "Popen", Process)
     monkeypatch.setattr(update.shutil, "disk_usage", lambda path: type("U", (), {"free": update.NEED})())
-    monkeypatch.setattr(update, "launched", [])
+    monkeypatch.setattr(jobs, "closing", False)
     return routes, calls, base, started, code
 
 
@@ -131,7 +131,7 @@ def test_install_runs_exact_command(setup_files):
     path = update.install("2.0.0")
     folder = str(Path(update.sys.executable).parent)
     assert started == [[path, "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/NOCANCEL", f"/DIR={folder}", "/RELAUNCH"]]
-    assert Path(path).read_bytes() == SETUP and update.launched == [path]
+    assert Path(path).read_bytes() == SETUP and jobs.closing
     assert calls == [base, base + ".sha256"]  # 지정 버전의 릴리스 주소
 
 
@@ -141,7 +141,7 @@ def test_wrong_or_empty_fingerprint_not_run(setup_files, sums):
     routes[base + ".sha256"] = ("x", sums)
     with pytest.raises(ValueError, match="지문"):
         update.install("2.0.0")
-    assert started == [] and update.launched == []
+    assert started == [] and jobs.closing is False
 
 
 @pytest.mark.parametrize("version", ["../2.0.0", "2.0.0/x", "", None, "v2.0.0", "2.0.0 /VERYSILENT"])
@@ -157,7 +157,7 @@ def test_quick_failure_keeps_app(setup_files):
     code["value"] = 5  # 관리자 확인 거절 등
     with pytest.raises(ValueError, match="코드 5"):
         update.install("2.0.0")
-    assert len(started) == 1 and update.launched == []  # 다시 누를 수 있다
+    assert len(started) == 1 and jobs.closing is False  # 다시 누를 수 있다
 
 
 def test_refused_before_download(setup_files, monkeypatch):
@@ -226,6 +226,30 @@ def test_second_install_refused(setup_files):
     with pytest.raises(ValueError, match="이미"):
         update.install("2.0.0")
     assert len(started) == 1
+
+
+def test_no_new_job_while_updating(setup_files):
+    """받는 동안(느린 인터넷이면 수십 초) 시작한 작업은 설치를 띄운 10초 뒤 강제 종료에 끊긴다: 업데이트를 시작한 순간부터 새 작업을 거절한다."""
+    routes, _, base, _, _ = setup_files
+    tried = []
+
+    def during_download():
+        with pytest.raises(ValueError, match="닫는 중"):
+            jobs.start("다운로드 정리", lambda progress: None)
+        tried.append(True)
+        return ("x", SETUP)
+
+    routes[base] = during_download
+    update.install("2.0.0")
+    assert tried == [True] and jobs.closing
+
+
+def test_failed_update_allows_jobs_again(setup_files):
+    routes, _, base, _, _ = setup_files
+    routes[base + ".sha256"] = ("x", b"0" * 64)
+    with pytest.raises(ValueError, match="지문"):
+        update.install("2.0.0")
+    assert jobs.closing is False  # 다시 작업하고 다시 누를 수 있다
 
 
 def test_app_keeps_mutex_and_setup_waits():
