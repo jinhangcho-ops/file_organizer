@@ -1,7 +1,7 @@
 ﻿; 인터넷 설치 프로그램(Inno Setup 6.7): 설치할 때 앱 파일 zip을 받아 SHA-256을 확인하고 풀어 넣는다.
 ; 먼저 exe를 빌드하고 dist\file_organizer.zip을 만든 뒤 컴파일한다(README의 '설치 프로그램 만들기').
 ; 해시와 크기는 컴파일할 때 그 zip에서 읽으므로, Releases에는 같은 zip을 올려야 한다.
-#define AppVersion "1.0.0"
+#define AppVersion "1.0.1"
 #ifndef ZipUrl
   #define ZipUrl "https://github.com/jinhangcho-ops/file_organizer/releases/download/v" + AppVersion + "/file_organizer.zip"
 #endif

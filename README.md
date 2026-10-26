@@ -38,20 +38,20 @@
 
 ### 받은 설치 파일 확인하기
 
-Releases에는 설치 파일과 함께 `SHA256SUMS.txt`가 있습니다.
+Releases에는 파일마다 같은 이름에 `.sha256`을 붙인 지문 파일이 있습니다(예: `file_organizer_setup.exe.sha256`).
 
-- 파일마다 SHA-256 지문이 적혀 있습니다. 지문은 파일 내용으로 계산한 64글자입니다.
+- 지문 파일에는 SHA-256 지문과 파일 이름이 적혀 있습니다. 지문은 파일 내용으로 계산한 64글자입니다.
 - 파일이 한 글자라도 바뀌면 지문이 완전히 달라집니다. 그래서 받는 도중이나 중간에서 파일이 바뀌지 않았는지 확인할 수 있습니다.
 
-1. `file_organizer_setup.exe`와 `SHA256SUMS.txt`를 같은 폴더에 받습니다.
+1. `file_organizer_setup.exe`와 `file_organizer_setup.exe.sha256`을 같은 폴더에 받습니다.
 2. 그 폴더에서 PowerShell을 열고 아래 한 줄을 실행합니다. `True`가 나오면 만든 그 파일입니다.
 
 ```powershell
-(Get-FileHash .\file_organizer_setup.exe).Hash -eq (Select-String file_organizer_setup.exe .\SHA256SUMS.txt).Line.Split()[0]
+(Get-FileHash .\file_organizer_setup.exe).Hash -eq (Get-Content .\file_organizer_setup.exe.sha256).Split()[0]
 ```
 
 - `False`가 나오면 실행하지 말고 다시 받으세요.
-- 눈으로 비교하려면 `Get-FileHash .\file_organizer_setup.exe`를 실행하고, 나온 Hash를 `SHA256SUMS.txt`의 값과 비교합니다(대소문자는 상관없습니다).
+- 눈으로 비교하려면 `Get-FileHash .\file_organizer_setup.exe`를 실행하고, 나온 Hash를 `.sha256` 파일의 값과 비교합니다(대소문자는 상관없습니다).
 - 앱 파일(`file_organizer.zip`)은 설치 프로그램이 받을 때 스스로 지문을 확인하므로 따로 하지 않아도 됩니다.
 - **한계:** 지문과 파일을 같은 Releases 페이지에서 받으므로, 저장소 계정이 털려 둘 다 바뀐 경우까지는 잡지 못합니다.
 
@@ -557,7 +557,7 @@ exe 만들기(`dist\file_organizer\file_organizer.exe`):
 
 설치 프로그램 만들기(`dist\file_organizer_setup.exe`, [Inno Setup 6.7](https://jrsoftware.org/isinfo.php) 필요):
 
-1. 앱 파일을 zip으로 묶습니다. 만든 zip(`dist\file_organizer.zip`)은 Releases의 `v1.0.0`에 그대로 올립니다. 설치 프로그램이 컴파일할 때 그 zip의 SHA-256을 넣어 두고, 받은 파일과 비교하기 때문입니다.
+1. 앱 파일을 zip으로 묶습니다. 만든 zip(`dist\file_organizer.zip`)은 Releases의 그 버전(`installer.iss`의 `AppVersion`, 예: `v1.0.1`)에 그대로 올립니다. 설치 프로그램이 컴파일할 때 그 zip의 SHA-256을 넣어 두고, 받은 파일과 비교하기 때문입니다.
 
 ```bash
 .venv\Scripts\python -c "import shutil; shutil.make_archive('dist/file_organizer', 'zip', 'dist/file_organizer')"
@@ -569,10 +569,10 @@ exe 만들기(`dist\file_organizer\file_organizer.exe`):
 "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" installer.iss
 ```
 
-3. 올릴 지문 파일(`dist\SHA256SUMS.txt`)을 만듭니다(PowerShell). 설치 파일·zip과 함께 Releases에 올립니다.
+3. 올릴 지문 파일(`dist\file_organizer_setup.exe.sha256`, `dist\file_organizer.zip.sha256`)을 만듭니다(PowerShell). 설치 파일·zip과 함께 Releases에 올립니다.
 
 ```powershell
-Get-FileHash dist\file_organizer_setup.exe, dist\file_organizer.zip | ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } | Set-Content dist\SHA256SUMS.txt -Encoding ascii
+Get-FileHash dist\file_organizer_setup.exe, dist\file_organizer.zip | ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" | Set-Content "$($_.Path).sha256" -Encoding ascii }
 ```
 
 ## 검사
