@@ -1277,7 +1277,10 @@ function setSource(path) {
 
 $("preview").addEventListener("click", (e) => busy(e.target, "organize-message", async () => {
   clearPreview();
-  const {moves} = await api("/api/organize/preview", {source, dest});
+  const found = await api("/api/organize/preview", {source, dest});
+  const {moves} = found;
+  ({source, dest} = found);  // 저장된 실제 경로(정션이면 가리키는 곳): to를 같은 앞부분으로 자른다
+  showOrganize();
   $("preview-table").tBodies[0].replaceChildren(...moves.map((m) => el("tr", {},
     el("td", {}, el("span", {className: "ext", textContent: (extOf(baseName(m.from)).slice(1) || "?").slice(0, 5).toUpperCase()}), baseName(m.from)),
     el("td", {className: "mute", textContent: m.kind}),
@@ -1386,6 +1389,8 @@ $("archive-preview").addEventListener("click", (e) => busy(e.target, "archive-me
     : "보관할 파일이 없어요.");
   $("archive-run").disabled = !found.files;
   state.settings = (await api("/api/state")).settings;
+  archiveDest = state.settings.archive_dest;  // 저장된 실제 경로: 확인 문구와 보관 결과의 경로가 같게
+  showArchive();
 }));
 
 $("archive-run").addEventListener("click", async (e) => {

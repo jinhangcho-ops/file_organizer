@@ -92,7 +92,8 @@ def body():
 @app.get("/api/state")
 def state():
     config = settings.load()
-    return jsonify(settings=config, drives=drives.list_drives(), known=drives.known_folders(), kinds=kinds.NAMES,
+    # known은 설정의 폴더처럼 실제 경로로 보낸다(정션인 문서·다운로드도 칩이 저장된 곳과 맞게). 고르기 창의 places는 그대로.
+    return jsonify(settings=config, drives=drives.list_drives(), known={name: index.real(path) for name, path in drives.known_folders().items()}, kinds=kinds.NAMES,
                    last_access=drives.last_access_on(), undo=len(organize.last()), index=index.status, counts=search.counts(),
                    places=tree.places(), exclude=exclude.load(), blacklist=blacklist.load(), protected=protect.load(), admin=blacklist.is_admin(),
                    panes=settings.PANES,
@@ -121,8 +122,9 @@ def make_folder():
 @app.post("/api/organize/preview")
 def preview():
     data = body()
-    settings.save({"source": data.get("source"), "dest": data.get("dest")})  # 고른 곳을 기억한다(검사도 여기서).
-    return jsonify(moves=organize.plan(data["source"], data["dest"]))
+    config = settings.save({"source": data.get("source"), "dest": data.get("dest")})  # 고른 곳을 기억한다(검사도 여기서).
+    # 저장된 곳(정션이면 가리키는 실제 폴더)을 돌려준다: plan의 to도 실제 경로라 화면이 같은 앞부분을 잘라 낸다
+    return jsonify(moves=organize.plan(config["source"], config["dest"]), source=config["source"], dest=config["dest"])
 
 
 @app.post("/api/organize/run")

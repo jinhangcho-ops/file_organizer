@@ -81,8 +81,8 @@ def test_junction_target_unplugged_keeps_rows(home, tmp_path):
         os.rmdir(link)
 
 
-def test_substituted_and_network_drives_keep_drive_letter(home, monkeypatch, tmp_path):
-    """드라이브 자체가 다른 곳을 가리키면(subst S:, 네트워크 Z:) 드라이브 글자 그대로 둔다(드라이브로 고르기가 맞게)."""
+def test_substituted_drive_resolves_and_network_drive_keeps_letter(home, monkeypatch, tmp_path):
+    """subst S:는 실제 경로로 바꾸고(옛 판의 줄·차단 기록과 맞게), 네트워크 Z:는 드라이브 글자 그대로 둔다(드라이브로 고르기가 맞게)."""
     plain = os.path.realpath
     elsewhere = {"S:\\": str(tmp_path) + "\\", "Z:\\": "\\\\srv\\share\\"}
 
@@ -94,9 +94,9 @@ def test_substituted_and_network_drives_keep_drive_letter(home, monkeypatch, tmp
 
     with monkeypatch.context() as m:
         m.setattr(os.path, "realpath", fake)
-        assert index.real("S:\\문서\\a") == "S:\\문서\\a"
+        assert index.real("S:\\문서\\a") == str(tmp_path / "문서" / "a")
         m.setattr(os.path, "isdir", lambda p: True)
-        assert index.roots({"roots": ["Z:\\공유", "S:\\문서"], "dest": ""}) == ["Z:\\공유", "S:\\문서"]
+        assert index.roots({"roots": ["Z:\\공유", "S:\\문서"], "dest": ""}) == ["Z:\\공유", str(tmp_path / "문서")]
 
 
 def test_old_junction_rows_are_moved_to_real_path_with_ids(home, tmp_path, monkeypatch):

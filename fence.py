@@ -1,4 +1,5 @@
 """색인과 작업에서 빼는 폴더: 차단 폴더(blacklist)와 잠금 폴더·금고(lock). 그 폴더와 그 아래 전부를 다루지 않는다."""
+import functools
 import os
 import tempfile
 
@@ -53,12 +54,24 @@ def system_folder(path):
     parts = exclude.key(path).split(os.sep)
     if len(parts) > 1 and parts[1] in index.SKIP:
         return True
-    return inside(path, system_places()) and not inside(path, both([tempfile.gettempdir()]))
+    places, temp = system_keys()
+    return inside(path, places) and not inside(path, temp)
 
 
 def system_places():
     """환경 변수가 가리키는 Windows·프로그램 폴더의 key들."""
-    return both([os.environ[name] for name in SYSTEM_VARS if os.environ.get(name)])
+    return system_keys()[0]
+
+
+def system_keys():
+    """(Windows·프로그램 폴더의 key들, 임시 폴더의 key들)."""
+    return env_keys(tuple(os.environ.get(name) for name in SYSTEM_VARS), tempfile.gettempdir())
+
+
+@functools.cache
+def env_keys(values, temp):
+    """system_keys를 환경 변수 값마다 한 번만 만든다(부를 때마다 만들면 realpath 8번: 2,000번에 5초 넘게)."""
+    return frozenset(both([value for value in values if value])), frozenset(both([temp]))
 
 
 def refuse_system(path, game_keys=None):

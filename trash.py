@@ -45,6 +45,19 @@ def recycle_settings(path):
     return bool(values.get("NukeOnDelete")), capacity * 1024 * 1024 if capacity else None
 
 
+class QueryInfo(ctypes.Structure):
+    _fields_ = [("cbSize", ctypes.c_uint32), ("i64Size", ctypes.c_int64), ("i64NumItems", ctypes.c_int64)]  # SHQUERYRBINFO
+
+
+def bin_size(root):
+    """그 디스크 휴지통에 이미 든 크기(바이트). 읽기만 한다(SHQueryRecycleBinW). 모르면 0."""
+    info = QueryInfo(ctypes.sizeof(QueryInfo))
+    try:
+        return info.i64Size if ctypes.windll.shell32.SHQueryRecycleBinW(root, ctypes.byref(info)) == 0 else 0
+    except OSError:
+        return 0
+
+
 def policy_values(name):
     """탐색기 정책(사용자·컴퓨터) 값 name들. 읽기만 한다."""
     found = []
@@ -118,16 +131,16 @@ def disk(place):
 def problem(path, disks=None):
     """휴지통으로 보낼 수 없는 까닭(없으면 None). 영구 삭제될 수 있는 경우를 모두 막는다.
     disks: 여러 개를 보낼 때 디스크 검사(disk)를 볼륨마다 RECHECK초에 한 번만 하도록 넘기는 {볼륨 맨 위: (결과, 검사한 시각, 받은 크기 합)}.
-    받은 크기 합에 더해 휴지통 최대 크기를 넘으면 거부한다: 넘치면 Windows가 먼저 넣은 것을 말없이 영구 삭제한다."""
+    받은 크기 합(처음 볼 때 휴지통에 이미 든 크기에서 시작하고, 못 보낸 파일은 to_trash가 뺀다)에 더해 휴지통 최대 크기를 넘으면 거부한다: 넘치면 Windows가 먼저 넣은 것을 말없이 영구 삭제한다."""
     if os.path.isreserved(path):  # 끝의 점·빈칸, CON·NUL 같은 이름: Windows가 다른 파일(abc. → abc)로 읽는다
         return "Windows가 다룰 수 없는 이름입니다"
     if not os.path.lexists(path):
         return "없는 파일입니다"
     root, disks = drives.volume_root(path), {} if disks is None else disks
 
-    def bin_state():
+    def bin_state():  # 받은 크기 합은 휴지통에 이미 든 크기에서 시작해 다시 검사해도 이어 간다
         if root not in disks or time.monotonic() - disks[root][1] >= RECHECK:
-            disks[root] = disk(path), time.monotonic(), disks.get(root, (0, 0, 0))[2]
+            disks[root] = disk(path), time.monotonic(), disks[root][2] if root in disks else bin_size(root)
         return disks[root][0]
 
     reason, _ = bin_state()  # 휴지통이 없는 디스크는 세기 전에 바로 거부한다
@@ -144,8 +157,10 @@ def problem(path, disks=None):
     head = BIN_PREFIX + width(os.path.splitext(path)[1]) + width(root) - 3
     if longest >= MAX_PATH or longest - width(os.path.abspath(path)) + head >= MAX_PATH:
         return "경로가 너무 길어(260자 이상) 휴지통에 넣을 수 없습니다"
-    if size + disks[root][2] > capacity:
+    if size > capacity:
         return "휴지통 최대 크기보다 큽니다"
+    if size + disks[root][2] > capacity:  # 이것만으로는 들어가지만, 휴지통에 든 것·앞서 보낸 것과 합치면 넘친다
+        return "휴지통에 자리가 모자랍니다(휴지통을 비우거나 최대 크기를 늘리세요)"
     disks[root] = (*disks[root][:2], disks[root][2] + size)
     return None
 
@@ -160,11 +175,17 @@ def to_trash(paths, disks=None):
             continue
         try:
             send(path)
+            reason = "휴지통으로 보내지 못했습니다" if os.path.lexists(path) else None
         except OSError as e:
-            refused.append((path, e.strerror or str(e)))
-            continue
-        if os.path.lexists(path):
-            refused.append((path, "휴지통으로 보내지 못했습니다"))
-        else:
+            reason = e.strerror or str(e)
+        if not reason:
             sent.append(path)
+            continue
+        refused.append((path, reason))
+        root = drives.volume_root(path)
+        try:  # 못 간 파일은 problem이 더한 크기를 뺀다(폴더는 일부가 갔을 수 있고, 사라졌으면 갔을 수 있어 그대로 센다)
+            if not os.path.isdir(path):
+                disks[root] = (*disks[root][:2], disks[root][2] - os.lstat(path).st_size)
+        except OSError:
+            pass
     return sent, refused

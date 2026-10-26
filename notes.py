@@ -15,9 +15,14 @@ def load():
     if not isinstance(data, dict):
         return {}
 
-    def convert(data):
-        paths = [exclude.real(v["path"], os.path.isdir(v["path"])) for v in data.values()]
-        return {exclude.key(p): {**v, "path": p} for p, v in zip(paths, data.values())}
+    def convert(data):  # 정션 경로의 메모와 실제 경로의 메모가 한 곳으로 모이면 둘을 이어 붙인다(MAX자까지)
+        out = {}
+        for v in data.values():
+            path = exclude.real(v["path"], os.path.isdir(v["path"]))
+            text = out.get(exclude.key(path), {}).get("text")
+            text = v["text"] if text in (None, v["text"]) else (text + "\n" + v["text"])[:MAX]
+            out[exclude.key(path)] = {**v, "path": path, "text": text}
+        return out
     return exclude.once(FILE, data, convert)
 
 

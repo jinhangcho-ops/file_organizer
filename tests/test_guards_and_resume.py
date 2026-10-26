@@ -98,11 +98,13 @@ def test_huge_picture_and_broken_document_do_not_stop_the_steps(tmp_path, monkey
     monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 100)  # 400×300이 '아주 큰 사진'이 되게
     assert media.image_hash(str(picture)) is None
     stub = types.SimpleNamespace(np=numpy, custom=None, faces=False, kinds=lambda v: [], image_vector=lambda image: None)
-    row = {"id": 1, "path": str(picture), "stamp": os.stat(picture).st_mtime_ns, "ext": ".png"}
     db = index.connect()
     try:
+        index.save_file(db, str(picture), os.stat(picture))  # 색인에 있는 파일이어야 기록한다(그사이 지운 파일은 기록하지 않는다)
+        found = db.execute("select id from files where key = ?", (index.exclude.key(str(picture)),)).fetchone()[0]
+        row = {"id": found, "path": str(picture), "stamp": os.stat(picture).st_mtime_ns, "ext": ".png"}
         recognize.recognize_one(db, stub, row, {"video_interval": 30}, None)  # 멈추지 않고 빈 결과로 표시
-        assert db.execute("select count(*) from recognized where id = 1").fetchone()[0] == 1
+        assert db.execute("select count(*) from recognized where id = ?", (found,)).fetchone()[0] == 1
     finally:
         db.close()
     doc = tmp_path / "깨진 문서.docx"

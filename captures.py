@@ -31,10 +31,12 @@ UNKNOWN = "알 수 없는 게임"
 
 
 def folders():
-    """찾을 곳과 둘 곳의 바탕: 사진·동영상 폴더(Windows 알려진 폴더)와 Steam 폴더. 검사는 이것을 바꾼다."""
-    return {"pictures": drives.known_folder(PICTURES_ID) or str(Path.home() / "Pictures"),
-            "videos": drives.known_folder(VIDEOS_ID) or str(Path.home() / "Videos"),
-            "steam": games.value(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam", "SteamPath")}
+    """찾을 곳과 둘 곳의 바탕: 사진·동영상 폴더(Windows 알려진 폴더)와 Steam 폴더. 검사는 이것을 바꾼다.
+    실제 경로로 한다(index.real): 정션 경로 그대로면 실제 경로로 적힌 차단·잠금 폴더를 글자로 비켜 가 그 안으로 옮긴다."""
+    steam = games.value(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam", "SteamPath")
+    return {"pictures": index.real(drives.known_folder(PICTURES_ID) or str(Path.home() / "Pictures")),
+            "videos": index.real(drives.known_folder(VIDEOS_ID) or str(Path.home() / "Videos")),
+            "steam": steam and index.real(steam)}
 
 
 def safe_name(game):

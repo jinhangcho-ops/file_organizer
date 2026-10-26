@@ -181,7 +181,7 @@ def test_items_together_bigger_than_recycle_bin_are_refused(tmp_path, monkeypatc
     paths = [write(tmp_path / n, "x" * 600) for n in "ab"]
     monkeypatch.setattr(trash, "disk", lambda place: (None, 1000))  # 휴지통 최대 1,000바이트(지어낸 값)
     sent, refused = trash.to_trash(paths, {})
-    assert sent == [paths[0]] and refused == [(paths[1], "휴지통 최대 크기보다 큽니다")]
+    assert sent == [paths[0]] and refused == [(paths[1], "휴지통에 자리가 모자랍니다(휴지통을 비우거나 최대 크기를 늘리세요)")]
     assert trash.problem(paths[1]) is None  # 혼자면 들어간다
 
 

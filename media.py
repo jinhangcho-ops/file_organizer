@@ -187,6 +187,8 @@ def fingerprint(db, row, interval):
         frames = frame_hashes(row["path"], frame_times(length, interval)) if length else []
     for table, column in (("media", "id"), ("media_todo", "id"), ("media_pair", "a"), ("media_pair", "b")):
         db.execute(f"delete from {table} where {column} = ?", (row["id"],))
+    if not index.kept(db, row["id"]):  # 읽는 동안 휴지통으로 보냈다: 지문을 남기지 않는다(짝으로 나오지 않게)
+        return
     if row["ext"] in IMAGE_EXTS:
         db.execute("insert into media(id, kind, duration, frames, made, interval) values(?, 'image', null, ?, ?, null)",
                    (row["id"], encode([h]) if h is not None else "", row["stamp"]))

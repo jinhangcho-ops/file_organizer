@@ -323,6 +323,8 @@ def recognize_one(db, engine, row, config, centers):
         tags, faces = [], []  # 깨진 EXIF·끊긴 HEIC·아주 큰 사진 등 파일 문제. 모델 오류는 위로 올려 단계를 멈추고 알린다.
     for table in ("tags", "faces", "recognized"):
         db.execute(f"delete from {table} where id = ?", (row["id"],))
+    if not index.kept(db, row["id"]):  # 읽는 동안 휴지통으로 보냈다: 기록을 남기지 않는다
+        return False
     if faces:
         assign(db, row["id"], faces, centers)
     db.executemany("insert into tags(id, kind, label, score) values(?, ?, ?, ?)", [(row["id"], *t) for t in tags])

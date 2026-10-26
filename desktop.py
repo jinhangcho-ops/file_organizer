@@ -88,8 +88,22 @@ threading.Thread(target=http.serve_forever, daemon=True).start()
 # 열쇠를 아는 이 창만 화면을 열 수 있다(브라우저로 주소만 열면 거부된다).
 # 제목 줄은 화면(index.html)이 그린다. 끌기는 pywebview의 drag region, 버튼과 가장자리 크기 조절은 /api/window → control.
 BACKGROUND = {True: "#0F151B", False: "#E9ECE7"}  # 화면이 뜨기 전 창의 바탕(app.css의 --bg, 다크·라이트)
-MIN_SIZE = (1160, 660)  # 창의 가장 작은 크기. 가장자리 끌기(화면)도 bounds로 받아 같은 값으로 막는다.
-window = webview.create_window("파일 정리", f"http://127.0.0.1:{http.server_port}/?key={server.KEY}", width=1400, height=900,
+SCREEN_MARGIN = 40  # 논리 픽셀. 첫 화면의 작업 영역에서 이만큼 남긴다.
+
+
+def fit(size, work, margin=SCREEN_MARGIN):
+    """(가로, 세로)를 작업 영역(논리 픽셀)에 들어가게 줄인다. pywebview는 크기에 화면 배율을 곱하므로
+    150%의 1920x1080에서 1400x900이 화면보다 커지고, 125%의 1366x768에서는 가장 작은 크기도 넘친다(□ ✕가 화면 밖)."""
+    return tuple(max(1, min(want, room - margin)) for want, room in zip(size, work))
+
+
+# shortcut: 첫 화면의 작업 영역만 본다(창은 첫 화면 가운데에 뜬다). 다른 화면으로 옮긴 뒤의 크기는 사용자가 맞춘다.
+# 창을 띄우기 전이라 프로세스가 아직 DPI를 모르는 상태여서 작업 영역이 논리 픽셀로 온다(pywebview가 start에서 DPI를 켠다).
+first = webview.screens[0]
+WORK = (first.frame.Width, first.frame.Height) if first.frame is not None else (first.width, first.height)
+MIN_SIZE = fit((1160, 660), WORK)  # 창의 가장 작은 크기. 가장자리 끌기(화면)도 bounds로 받아 같은 값으로 막는다.
+SIZE = fit((1400, 900), WORK)
+window = webview.create_window("파일 정리", f"http://127.0.0.1:{http.server_port}/?key={server.KEY}", width=SIZE[0], height=SIZE[1],
                                frameless=True, easy_drag=False, min_size=MIN_SIZE, background_color=BACKGROUND[settings.dark()])
 maximized = [None]  # 최대화했을 때 되돌아갈 창의 실제 픽셀 사각형(RECT). 최대화가 아니면 None.
 user32 = ctypes.windll.user32

@@ -39,6 +39,12 @@ def clean_temp(tmp_path_factory):
     shutil.rmtree(SAFE, ignore_errors=True)
 
 
+@pytest.fixture(autouse=True)
+def empty_bin(monkeypatch):
+    """이 PC의 휴지통에 이미 든 크기(trash.bin_size)를 0으로: 검사가 지어낸 작은 최대 크기에 실제 휴지통이 섞이지 않게."""
+    monkeypatch.setattr(trash, "bin_size", lambda root: 0)
+
+
 @pytest.fixture
 def home(tmp_path, monkeypatch):
     """임시 설정 폴더와 색인할 폴더 하나(root). 놓을 곳은 비워 둔다.

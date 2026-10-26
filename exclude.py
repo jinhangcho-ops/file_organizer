@@ -14,9 +14,11 @@ def key(path):
     return os.path.normcase(os.path.abspath(path))
 
 
-def real(path, folder):
-    """색인에 적히는 모양(index.real): 폴더는 그 자신까지, 파일은 든 폴더만 따라간다(파일 링크는 따라가지 않게, index.moved와 같다)."""
-    return index.real(path) if folder else os.path.join(index.real(os.path.dirname(path)), os.path.basename(path))
+def real(path, folder, find=None):
+    """색인에 적히는 모양(index.real): 폴더는 그 자신까지, 파일은 든 폴더만 따라간다(파일 링크는 따라가지 않게, index.moved와 같다).
+    find: 많이 볼 때 부르는 쪽이 한 번의 일 동안만 기억하게 넘기는 functools.cache(index.real)(정션은 대상이 바뀔 수 있어 오래 기억하지 않는다)."""
+    find = find or index.real
+    return find(path) if folder else os.path.join(find(os.path.dirname(path)), os.path.basename(path))
 
 
 def once(name, data, convert):
@@ -49,6 +51,19 @@ def remove(path):
     rules = [rule for rule in load() if key(rule["path"]) != key(path)]
     settings.write(FILE, rules)
     return rules
+
+
+def moved(pairs):
+    """옮기거나 이름을 바꾼 (전, 후) 경로 안(또는 그 자신)의 예외 위치를 고친다(notes.moved와 같다)."""
+    rules, changed = load(), False
+    for before, after in pairs:
+        old = key(before)
+        for rule in rules:
+            if key(rule["path"]) == old or key(rule["path"]).startswith(os.path.join(old, "")):
+                rule["path"] = after + rule["path"][len(before):]
+                changed = True
+    if changed:
+        settings.write(FILE, rules)
 
 
 def where(rules):
