@@ -87,6 +87,48 @@ http = make_server("127.0.0.1", 0, server.app, threaded=True)  # 0: 비어 있�
 threading.Thread(target=http.serve_forever, daemon=True).start()
 # 열쇠를 아는 이 창만 화면을 열 수 있다(브라우저로 주소만 열면 거부된다).
 # 제목 줄은 화면(index.html)이 그린다. 끌기는 pywebview의 drag region, 버튼과 가장자리 크기 조절은 /api/window → control.
+ORIGIN = f"http://127.0.0.1:{http.server_port}/"
+
+
+def inside_app(url):
+    """이 앱의 서버 주소인지. 끝의 /까지 맞춰 포트가 앞자리만 같은 곳(…:4059/ 와 …:40598/)이나 127.0.0.1:포트@다른곳을 받지 않는다."""
+    return url.startswith(ORIGIN)
+
+
+def keep_inside(view):
+    """창(view)이 이 앱의 서버 밖 주소로 넘어가거나 요청을 보내지 않게 한다. 다른 포트로 가도 열쇠 쿠키가 따라간다(쿠키는 포트를 가리지 않는다).
+    이동 취소(NavigationStarting)만으로는 요청이 이미 나가 쿠키가 샜다(실제 창에서 확인): 요청 단계(WebResourceRequested)에서
+    밖으로 가는 것은 네트워크로 보내지 않고 403을 바로 돌려준다. data:·blob:은 네트워크로 가지 않아 둔다."""
+    def starting(sender, args):
+        if not inside_app(str(args.Uri)):
+            args.Cancel = True
+
+    def requested(sender, args):
+        uri = str(args.Request.Uri)
+        if not inside_app(uri) and not uri.startswith(("data:", "blob:")):
+            args.Response = sender.Environment.CreateWebResourceResponse(None, 403, "Blocked", "")
+
+    blocking = []  # 화면 엔진(CoreWebView2)에 한 번만 붙인다
+
+    def block(core):
+        if core is not None and not blocking:
+            blocking.append(core)
+            core.WebResourceRequested += requested
+
+    def attach():  # 화면 스레드에서(WebView2는 다른 스레드에서 만지면 오류)
+        control = view.native.browser.webview
+        control.NavigationStarting += starting
+        control.CoreWebView2InitializationCompleted += lambda sender, args: block(sender.CoreWebView2)  # pywebview가 첫 주소를 넣은 바로 뒤, 요청 전
+        block(control.CoreWebView2)  # 이미 준비된 엔진
+
+    if view.native is None:  # 본 창(webview.start 전에 만든다): before_show는 창을 만든 직후 화면 스레드에서 차례로 불린다
+        view.events.before_show += attach
+    else:  # 잠금 창: start 뒤에 만든 창. 화면 스레드에서 붙인다(창을 만든 요청 스레드가 아니라).
+        from System import Action
+
+        view.native.Invoke(Action(attach))
+
+
 BACKGROUND = {True: "#0F151B", False: "#E9ECE7"}  # 화면이 뜨기 전 창의 바탕(app.css의 --bg, 다크·라이트)
 SCREEN_MARGIN = 40  # 논리 픽셀. 첫 화면의 작업 영역에서 이만큼 남긴다.
 
@@ -100,11 +142,18 @@ def fit(size, work, margin=SCREEN_MARGIN):
 # shortcut: 첫 화면의 작업 영역만 본다(창은 첫 화면 가운데에 뜬다). 다른 화면으로 옮긴 뒤의 크기는 사용자가 맞춘다.
 # 창을 띄우기 전이라 프로세스가 아직 DPI를 모르는 상태여서 작업 영역이 논리 픽셀로 온다(pywebview가 start에서 DPI를 켠다).
 first = webview.screens[0]
-WORK = (first.frame.Width, first.frame.Height) if first.frame is not None else (first.width, first.height)
+# 새 창 요청(window.open·target=_blank)은 버린다(이 앱은 새 창을 쓰지 않는다). pywebview는 기본 브라우저로 넘기거나(file:// 주소면 그 파일이 실행된다)
+# 같은 창에 그 주소를 직접 넣는데, 앱이 넣는 이동은 keep_inside의 막기를 거치지 않아 열쇠 쿠키가 다른 포트로 샜다(실제 창에서 확인).
+# 화면 엔진 모듈은 webview.screens에서 이미 올라와 있다.
+import webview.platforms.edgechromium  # noqa: E402
+
+webview.platforms.edgechromium.EdgeChrome.on_new_window_request = lambda self, sender, args: args.set_Handled(True)
+WORK =(first.frame.Width, first.frame.Height) if first.frame is not None else (first.width, first.height)
 MIN_SIZE = fit((1160, 660), WORK)  # 창의 가장 작은 크기. 가장자리 끌기(화면)도 bounds로 받아 같은 값으로 막는다.
 SIZE = fit((1400, 900), WORK)
-window = webview.create_window("파일 정리", f"http://127.0.0.1:{http.server_port}/?key={server.KEY}", width=SIZE[0], height=SIZE[1],
+window = webview.create_window("파일 정리", f"{ORIGIN}?key={server.KEY}", width=SIZE[0], height=SIZE[1],
                                frameless=True, easy_drag=False, min_size=MIN_SIZE, background_color=BACKGROUND[settings.dark()])
+keep_inside(window)
 maximized = [None]  # 최대화했을 때 되돌아갈 창의 실제 픽셀 사각형(RECT). 최대화가 아니면 None.
 user32 = ctypes.windll.user32
 user32.MonitorFromWindow.restype = wintypes.HANDLE
@@ -187,11 +236,12 @@ def open_lock(path):
 
 
 def create_lock():
-    url = f"http://127.0.0.1:{http.server_port}/lock?key={server.KEY}"
+    url = f"{ORIGIN}lock?key={server.KEY}"
     # 숨긴 채 만든다(pywebview는 투명하게 한 번 보였다 숨겨 창 핸들을 만든다). pywebview의 창 이벤트는 따로 도는 스레드라
     # before_show에서 걸면 실제로 보이는 것과 앞뒤가 엇갈려, 보이는 창에 캡처 제외가 빠진 적이 있다(10번에 1번쯤).
     # WinForms의 Shown은 그 투명한 Show 때 한 번만 와서, 실제로 보일 때의 확인은 reveal이 show() 바로 뒤에 한다.
     lock = webview.create_window("잠금", url, width=760, height=640, min_size=(560, 480), background_color=BACKGROUND[settings.dark()], hidden=True)
+    keep_inside(lock)
     lock.revealed = False
     ended = []  # refuse·give_up이 한 번만(알림·닫기가 두 번 되지 않게)
 

@@ -12,6 +12,7 @@ import os
 import secrets
 import subprocess
 import threading
+import time
 from ctypes import wintypes
 
 import drives
@@ -25,7 +26,8 @@ FILE = "lock.dat"
 OLD_FILE = "lock.json"  # 예전에 암호화하지 않고 두던 곳. 읽으면 lock.dat으로 옮기고 지운다.
 VAULT = ".vault"
 ROUNDS = 200_000
-MIN_LENGTH = 4
+MIN_LENGTH = 8  # 새로 정하는 비밀번호만(예전에 정한 4자 이상 비밀번호는 그대로 맞춘다)
+WRONG_WAIT = 1  # 초. 비밀번호가 틀리면 이만큼 기다린다(잠금 창에서 하나씩 넣어 맞춰 보기를 느리게)
 DENY = "(OI)(CI)(RD,WD,AD,X,DC,D)"
 HIDE = 0x2 | 0x4  # 숨김 | 시스템
 sid = [None]  # 지금 사용자의 SID(한 번 묻고 기억한다)
@@ -175,12 +177,12 @@ def files(path=""):
             "folders": sorted(folders, key=by_name), "files": sorted(found, key=by_name)}
 
 
-def open_file(path):
-    """열어 둔 잠금 폴더 안의 파일을 연결된 프로그램으로 연다."""
+def opened_file(path):
+    """열어 둔 잠금 폴더 안의 파일이면 그 경로(여는 것은 server.start_file). 아니면 ValueError."""
     opened_place(path)
     if not os.path.isfile(path):
         raise ValueError(f"없는 파일입니다: {path}")
-    os.startfile(path)
+    return path
 
 
 def vault_info():
@@ -201,6 +203,7 @@ def verify(password):
     if not data["hash"]:
         raise ValueError("먼저 잠금 비밀번호를 정하세요.")
     if not isinstance(password, str) or not hmac.compare_digest(digest(password, data["salt"]), data["hash"]):
+        time.sleep(WRONG_WAIT)  # guard 안에서 기다려 다른 시도도 차례를 기다린다
         raise ValueError("비밀번호가 맞지 않습니다.")
 
 

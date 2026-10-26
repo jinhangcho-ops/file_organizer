@@ -1186,7 +1186,8 @@ document.addEventListener("scroll", hideMenu, true);
 
 async function openPath(path, reveal) {
   try {
-    await api("/api/open", {path, reveal});
+    const {note} = await api("/api/open", {path, reveal});
+    if (note) toast(note);
   } catch (e) {
     toast(e.message);
   }

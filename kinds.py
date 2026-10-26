@@ -11,6 +11,9 @@ KINDS = {
     "압축": ".zip .7z .rar .tar .gz .bz2 .xz .alz .egg",
     "설치파일": ".exe .msi .msix .appx .apk .iso .dmg",
 }
+# 연결된 프로그램으로 '열면' 실행되는 종류(os.startfile). 앱의 [열기]는 이것을 실행하지 않고 탐색기에서 골라 보여 준다.
+RUNNABLE = set(".exe .msi .msix .msixbundle .appx .appxbundle .com .bat .cmd .scr .pif .cpl .lnk .url .js .jse .vbs .vbe .wsf .wsh "
+               ".hta .ps1 .psm1 .reg .jar .msc .application .appref-ms .settingcontent-ms".split())
 OTHER = "기타"
 NAMES = list(KINDS) + [OTHER]
 BY_EXT = {ext: name for name, exts in KINDS.items() for ext in exts.split()}

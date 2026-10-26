@@ -99,7 +99,8 @@ function folderRow(item) {
 function fileRow(item) {
   const row = pickerRow(item.name, `${size(item.size)} · ${new Date(item.modified * 1000).toLocaleDateString()}`, true);
   row.title = "두 번 누르면 열어요";
-  row.addEventListener("dblclick", () => api("/api/lock/open_file", {path: item.path}).catch((e) => say("files-message", e.message, "error")));
+  row.addEventListener("dblclick", () => api("/api/lock/open_file", {path: item.path})
+    .then(({note}) => say("files-message", note, "ok")).catch((e) => say("files-message", e.message, "error")));
   return row;
 }
 
@@ -145,7 +146,7 @@ $("lock-password").addEventListener("click", async () => {
     old = await password("지금 비밀번호");
     if (old === null) return;
   }
-  const next = await password("새 비밀번호", "4자 이상. 잊으면 README의 ‘비밀번호를 잊었을 때’ 명령으로 풀어요.");
+  const next = await password("새 비밀번호", "8자 이상. 잊으면 README의 ‘비밀번호를 잊었을 때’ 명령으로 풀어요.");
   if (next === null) return;
   if (await password("새 비밀번호 확인") !== next) return say("lock-message", "두 번 넣은 비밀번호가 달라요.", "error");
   await lockCall("/api/lock/password", {old, new: next}, "비밀번호를 정했어요.");

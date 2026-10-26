@@ -123,6 +123,7 @@ def setup_files(net, monkeypatch):
     monkeypatch.setattr(update.subprocess, "Popen", Process)
     monkeypatch.setattr(update.shutil, "disk_usage", lambda path: type("U", (), {"free": update.NEED})())
     monkeypatch.setattr(jobs, "closing", False)
+    monkeypatch.setattr(update, "asked", {"answer": {"current": "1.9.0", "version": "2.0.0", "notes": None}})  # check가 찾은 새 버전
     return routes, calls, base, started, code
 
 
@@ -150,6 +151,16 @@ def test_bad_version_not_downloaded(setup_files, version):
     with pytest.raises(ValueError, match="버전"):
         update.install(version)
     assert calls == [] and started == []
+
+
+@pytest.mark.parametrize("asked", [{"answer": {"current": "1.9.0", "version": "2.0.0", "notes": None}}, {"answer": None}, {}])
+def test_only_the_checked_new_version(setup_files, monkeypatch, asked):
+    """화면이 보낸 버전이 이번 실행에서 확인한 새 버전과 다르면(옛 판으로 되돌리기, 확인 전) 받지 않는다."""
+    _, calls, _, started, _ = setup_files
+    monkeypatch.setattr(update, "asked", asked)
+    with pytest.raises(ValueError, match="확인한 새 버전"):
+        update.install("1.0.0")
+    assert calls == [] and started == [] and jobs.closing is False
 
 
 def test_quick_failure_keeps_app(setup_files):

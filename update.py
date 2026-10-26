@@ -14,7 +14,9 @@ import urllib.request
 import index
 import jobs
 
-REPO = os.environ.get("FILE_ORGANIZER_UPDATE_REPO") or "https://github.com/jinhangcho-ops/file_organizer"  # 화면 확인은 가짜 주소를 쓴다
+REPO = "https://github.com/jinhangcho-ops/file_organizer"
+if not getattr(sys, "frozen", False):  # 화면 확인(소스 실행)만 가짜 주소를 쓴다. 설치한 exe는 환경 변수로 받는 곳을 바꿀 수 없다.
+    REPO = os.environ.get("FILE_ORGANIZER_UPDATE_REPO") or REPO
 SETUP = "file_organizer_setup.exe"
 TAG = re.compile(r"v[0-9A-Za-z.+-]+")
 LIMITS = {"notes": 50_000, "sha256": 1_000, "setup": 50_000_000}  # 받는 크기 상한(바이트)
@@ -94,6 +96,8 @@ def install(version):
     """그 버전의 설치 파일을 받아 지문이 같으면 조용한 설치를 띄운다. 2초 안에 실패 코드로 끝나면 ValueError(프로그램은 켜 둔다)."""
     if not isinstance(version, str) or not numbers(version):
         raise ValueError("버전 글자가 잘못됐어요.")
+    if version != (asked.get("answer") or {}).get("version"):  # 이번 실행에서 확인한 새 버전만(옛 판으로 되돌리기 막기)
+        raise ValueError("확인한 새 버전만 설치할 수 있어요.")
     # 시작한 순간부터 새 작업을 받지 않는다(jobs.closing): 받는 동안 시작한 작업은 띄운 뒤의 강제 종료에 끊긴다. 두 번째 요청도 여기서 막힌다.
     with jobs.lock:
         if jobs.closing:

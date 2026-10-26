@@ -54,6 +54,7 @@ def only_window():
 @app.after_request
 def headers(response):
     response.headers["Content-Security-Policy"] = CSP
+    response.headers["Referrer-Policy"] = "no-referrer"  # 다른 곳으로 가는 요청에 이 앱의 주소(첫 주소의 ?key=)를 붙이지 않게
     return response
 
 
@@ -595,8 +596,7 @@ def lock_files():
 
 @app.post("/api/lock/open_file")
 def lock_open_file():
-    lock.open_file(body().get("path"))
-    return jsonify(ok=True)
+    return jsonify(note=start_file(lock.opened_file(body().get("path"))))
 
 
 @app.post("/api/lock/take_out")
@@ -627,10 +627,14 @@ def lock_release():
 @app.post("/api/open")
 def open_path():
     """색인에 있는 파일·폴더만 연다. reveal이면 탐색기에서 그 파일을 골라 보여 준다."""
-    data = body()
-    path = indexed_path()
-    if data.get("reveal"):
+    return jsonify(note=start_file(indexed_path(), body().get("reveal")))
+
+
+def start_file(path, reveal=False):
+    """파일·폴더를 연결된 프로그램으로 연다. reveal이거나 실행되는 종류(kinds.RUNNABLE)의 파일이면 탐색기에서 골라 보여 준다.
+    받은 파일 '견적서.pdf.lnk'를 두 번 눌러 실행하지 않게. 돌려준 글은 화면이 알린다."""
+    if reveal or (os.path.isfile(path) and os.path.splitext(path)[1].lower() in kinds.RUNNABLE):
         subprocess.Popen(["explorer", "/select,", os.path.normpath(path)])
-    else:
-        os.startfile(path)
-    return jsonify(ok=True)
+        return "" if reveal else "실행되는 파일이라 열지 않고 탐색기에서 보여 줘요."
+    os.startfile(path)
+    return ""

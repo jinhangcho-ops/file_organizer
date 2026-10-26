@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 import actions
+import drives
 import exclude
 import fence
 import protect
@@ -34,14 +35,16 @@ SKIP = 0x2 | 0x4 | 0x400  # 숨김, 시스템, 링크·정션(reparse point)
 
 def folders(patterns):
     """캐시 폴더들(있는 진짜 폴더만). 환경 변수가 없는 패턴은 건너뛴다.
-    드라이브 맨 위이거나 사용자 폴더를 품은 곳은 뺀다(TEMP가 C:\\ 나 C:\\Users\\나 를 가리키면 그 아래 전부가 '캐시'가 된다)."""
+    드라이브 맨 위이거나 사용자 폴더를 품은 곳은 뺀다(TEMP가 C:\\ 나 C:\\Users\\나 를 가리키면 그 아래 전부가 '캐시'가 된다).
+    다운로드·문서·바탕 화면과 겹치는 곳(그 안이거나 그것을 품은 곳)도 뺀다(TEMP를 바탕 화면 안으로 바꿔 두면 그 파일이 '캐시'가 된다)."""
     home = {exclude.key(str(Path.home()))}
+    known = fence.both(drives.known_folders().values())
     found = []
     for pattern in patterns:
         expanded = os.path.expandvars(pattern)
         if "%" not in expanded:
             found += [p for p in glob.glob(expanded) if os.path.isdir(p) and not os.path.islink(p)
-                      and os.path.dirname(os.path.abspath(p)) != os.path.abspath(p) and not fence.holds(p, home)]
+                      and os.path.dirname(os.path.abspath(p)) != os.path.abspath(p) and not fence.holds(p, home) and not fence.overlaps(p, known)]
     return found
 
 
