@@ -633,13 +633,20 @@ def prefix(path):
 
 
 def move_folder_rows(db, before, after):
-    """폴더 before(와 그 아래 전부)를 after로 옮긴 것을 반영한다. 내용·지문은 그대로 두고 경로만 바꾼다."""
+    """폴더 before(와 그 아래 전부)를 after로 옮긴 것을 반영한다. 내용·지문은 그대로 두고 경로만 바꾼다.
+    GONE_CHUNK씩 바꾸고 저장한다(save_now): 수십만 줄을 한 번에 바꾸면 그동안 쓰기 잠금을 쥐어 다른 반영·색인이 30초 기다리다 실패한다.
+    중간에 꺼지면 일부만 옮긴 채 남지만, 다음 색인이 맞춘다(못 옮긴 줄은 사라짐으로 지우고 새 경로를 새로 넣는다)."""
     where, values = below(before)
-    folders = db.execute(f"select key, path from folders where {where}", values).fetchall()
-    paths = [(swap(row["path"], before, after), row["key"]) for row in folders]
-    db.executemany("update folders set key = ?, path = ?, parent = ?, name = ? where key = ?",
-                   [(exclude.key(path), path, exclude.key(os.path.dirname(path)), os.path.basename(path) or path, key) for path, key in paths])
-    move_files(db, [(row["id"], swap(row["path"], before, after)) for row in db.execute(f"select id, path from files where {where}", values)])
+    folders = [(swap(row["path"], before, after), row["key"]) for row in db.execute(f"select key, path from folders where {where}", values).fetchall()]
+    files = [(row["id"], swap(row["path"], before, after)) for row in db.execute(f"select id, path from files where {where}", values).fetchall()]
+    for start in range(0, len(folders), GONE_CHUNK):
+        db.executemany("update folders set key = ?, path = ?, parent = ?, name = ? where key = ?",
+                       [(exclude.key(path), path, exclude.key(os.path.dirname(path)), os.path.basename(path) or path, key)
+                        for path, key in folders[start:start + GONE_CHUNK]])
+        save_now(db)
+    for start in range(0, len(files), GONE_CHUNK):
+        move_files(db, files[start:start + GONE_CHUNK])
+        save_now(db)
 
 
 def move_files(db, moves):
@@ -710,6 +717,7 @@ def add_tree(db, path):
                 save_file(db, entry.path, os.stat(entry.path))
             except OSError:
                 continue
+        save_now(db)  # 폴더를 훑는 동안(큰 폴더는 수십 초) 쓰기 잠금을 쥐고 있지 않게
 
 
 def drop_ids(db, ids):
@@ -726,10 +734,14 @@ def below(path):
 
 
 def forget(db, path):
-    """파일 path, 또는 폴더 path와 그 아래 전부를 색인에서 뺀다."""
+    """파일 path, 또는 폴더 path와 그 아래 전부를 색인에서 뺀다. 큰 폴더는 GONE_CHUNK씩 지우고 저장한다(move_folder_rows와 같은 까닭)."""
     where, values = below(path)
-    drop_ids(db, [row[0] for row in db.execute(f"select id from files where {where}", values)])
-    db.execute(f"delete from files where {where}", values)
+    ids = [row[0] for row in db.execute(f"select id from files where {where}", values).fetchall()]
+    for start in range(0, len(ids), GONE_CHUNK):
+        chunk = ids[start:start + GONE_CHUNK]
+        drop_ids(db, chunk)
+        db.executemany("delete from files where id = ?", [(i,) for i in chunk])
+        save_now(db)
     db.execute(f"delete from folders where {where}", values)
 
 
