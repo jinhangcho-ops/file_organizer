@@ -258,4 +258,6 @@ def test_app_keeps_mutex_and_setup_waits():
     assert not hasattr(update, "release_mutex") and "release_mutex" not in (ROOT / "desktop.py").read_text(encoding="utf-8")
     iss = (ROOT / "installer.iss").read_text(encoding="utf-8-sig")
     setup = iss[iss.index("function InitializeSetup"):]
-    assert "if Relaunch then" in setup and "CheckForMutexes('file_organizer_app')" in setup and "Sleep(" in setup
+    assert "if Relaunch then" in setup and "CheckForMutexes('file_organizer_app') and not ExeInUse" in setup and "Sleep(" in setup
+    # v1.0.2 앱은 뮤텍스를 먼저 놓고 설치를 띄운다: 그 앱에서 올 때도 exe가 풀릴 때까지 기다린다(앱이 넘긴 /DIR의 exe를 쓰기로 열어 본다)
+    assert "{param:DIR}" in iss and "'file_organizer.exe'" in iss and "CreateFileW@kernel32.dll stdcall" in iss

@@ -69,8 +69,30 @@ begin
   Result := WizardSilent and (Pos('/RELAUNCH', UpperCase(GetCmdTail)) > 0);
 end;
 
-// [지금 업데이트]: 앱은 설치를 띄운 뒤 창을 닫고 끝난다. 그때까지(뮤텍스가 없어질 때까지, 최대 30초) 기다린다.
-// InitializeSetup은 AppMutex 확인보다 먼저 돌아서, 앱이 끝난 뒤에 확인하고 파일을 바꾼다.
+function CreateFileW(Name: String; Access, Share, Security, Disposition, Flags, Template: Cardinal): THandle;
+  external 'CreateFileW@kernel32.dll stdcall';
+function CloseHandle(Handle: THandle): Boolean;
+  external 'CloseHandle@kernel32.dll stdcall';
+
+// 앱의 exe가 아직 쓰이는지: 도는 exe(본 창·인식 프로세스)는 쓰기로 열 수 없다. {app}은 아직 없어 앱이 넘긴 /DIR=를 본다.
+function ExeInUse: Boolean;
+var
+  Exe: String;
+  Handle: THandle;
+begin
+  Result := False;
+  Exe := AddBackslash(ExpandConstant('{param:DIR}')) + 'file_organizer.exe';
+  if not FileExists(Exe) then
+    Exit;
+  Handle := CreateFileW(Exe, $40000000, 0, 0, 3, 0, 0);  // GENERIC_WRITE, 함께 쓰기 없음, OPEN_EXISTING
+  if Handle = THandle(-1) then
+    Result := True
+  else
+    CloseHandle(Handle);
+end;
+
+// [지금 업데이트]: 앱은 설치를 띄운 뒤 창을 닫고 끝난다. 뮤텍스가 없어지고 exe가 풀릴 때까지(최대 30초) 기다린다.
+// InitializeSetup은 AppMutex 확인보다 먼저 돈다. exe도 보는 것은 v1.0.2 앱이 뮤텍스를 먼저 놓고 설치를 띄우기 때문이다.
 function InitializeSetup: Boolean;
 var
   I: Integer;
@@ -78,7 +100,7 @@ begin
   if Relaunch then
     for I := 1 to 60 do
     begin
-      if not CheckForMutexes('file_organizer_app') then
+      if not CheckForMutexes('file_organizer_app') and not ExeInUse then
         Break;
       Sleep(500);
     end;
