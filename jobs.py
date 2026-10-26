@@ -6,7 +6,7 @@ import time
 CUTTABLE = {"캐시 살펴보기", "게임 크기 세기", "모델 받기"}
 status = {"running": False, "changes": False, "name": "", "done": 0, "total": 0, "current": "", "error": "", "result": None, "number": 0, "last": None}
 lock = threading.Lock()
-closing = False  # 창을 닫았다(desktop.py가 lock 안에서 켠다). 그 뒤의 start는 거부한다.
+closing = False  # 창을 닫았거나 업데이트를 시작했다(desktop.py·update.install이 lock 안에서 켠다). 그 뒤의 start는 거부한다.
 
 
 def progress(done, total=None, current=""):
