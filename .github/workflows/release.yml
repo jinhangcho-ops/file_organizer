@@ -34,7 +34,7 @@ jobs:
       - name: 설치 파일
         shell: bash
         run: |
-          choco install innosetup --version=6.7.3 -y --no-progress
+          choco install innosetup --version=6.7.1 -y --no-progress  # Chocolatey에 있는 6.7의 가장 새 판
           "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "/DAppVersion=${GITHUB_REF_NAME#v}" installer.iss
       - uses: actions/upload-artifact@v4
         with:
