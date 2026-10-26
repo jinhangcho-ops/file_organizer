@@ -202,7 +202,7 @@ def test_workflow_uses_changelog_notes():
     flow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     assert "--generate-notes" not in flow
     assert "CHANGELOG.md" in flow and "RELEASE_NOTES.md" in flow and "--clobber" in flow
-    assert "/DAppVersion=${GITHUB_REF_NAME#v}" in flow and "windows-latest" not in flow
+    assert '"/DAppVersion=$($env:GITHUB_REF_NAME.Substring(1))"' in flow and "windows-latest" not in flow
     assert flow.count("persist-credentials: false") == 2
 
 
