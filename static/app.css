@@ -100,7 +100,9 @@ html.pane-dragging, html.pane-dragging * { cursor: col-resize !important; user-s
 .fl-empty { padding: 14px 16px; color: var(--mute); display: grid; gap: 8px; justify-items: start; }
 .pill.link { cursor: pointer; border: none; font: inherit; }
 .pill.link:hover { text-decoration: underline; }
-.tag-item { display: inline-flex; align-items: center; margin-right: 4px; }
+.tags { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; }
+.tag-item { display: inline-flex; align-items: center; }
+.tag-edit { margin-left: auto; align-self: flex-end; font-size: 12px; }
 .pill-x { border: none; background: none; font: inherit; cursor: pointer; color: var(--mute); padding: 0 2px; }
 .pill-x:hover { color: var(--warn); }
 #detail-rows input[type=text] { width: 9em; font-size: 12px; }

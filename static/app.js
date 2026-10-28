@@ -1067,32 +1067,40 @@ async function showProvenance(row, ticket) {
   }
 }
 
-// 상세의 내 태그(#코딩): 칩을 누르면 그 태그의 파일 검색, ×로 지우기, 입력 칸 Enter로 달기. 여러 파일을 골랐으면 고른 것 모두에 달고 지운다.
+// 상세의 내 태그(#코딩): 칩을 누르면 그 태그의 파일 검색. [+]를 누르면 입력 칸이 나오고 Enter로 달기. [수정하기]를 누르면 칩에 ×가 나와 지운다.
+// 여러 파일을 골랐으면 고른 것 모두에 달고 지운다.
 async function showTags(row, ticket) {
   const {tags} = await api("/api/tags?path=" + encodeURIComponent(row.path)).catch(() => ({tags: []}));
   if (picked !== row || ticket !== detailTicket) return;
-  const box = el("div");
-  const draw = (list) => {
+  const box = el("div", {className: "tags"});
+  const draw = (list, editing = false, adding = false) => {
     const n = selectedPaths().length;
-    const input = el("input", {type: "text", maxLength: 50, placeholder: n > 1 ? `고른 ${n.toLocaleString()}개 모두에 #태그 추가` : "#태그 추가"});
     const send = async (path, body) => {
       try {
-        draw((await api(path, {paths: selectedPaths(), ...body})).tags);
+        draw((await api(path, {paths: selectedPaths(), ...body})).tags, editing);
       } catch (e) {
         say("detail-message", e.message, "error");
       }
     };
-    input.addEventListener("keydown", (e) => {
-      e.stopPropagation();
-      if (e.key === "Enter" && !e.isComposing && input.value.trim()) send("/api/tags", {label: input.value});
-    });
-    box.replaceChildren(...list.map((label) => {
+    const chips = list.map((label) => {
       const chip = el("button", {className: "pill link", textContent: "#" + label});
       chip.addEventListener("click", () => openScope({all: true, tag: "user:" + label, name: "#" + label}));
       const x = el("button", {className: "pill-x", textContent: "×", title: "이 태그 지우기"});
       x.addEventListener("click", () => send("/api/tags/remove", {label}));
-      return el("span", {className: "tag-item"}, chip, x);
-    }), input);
+      return el("span", {className: "tag-item"}, chip, ...(editing ? [x] : []));
+    });
+    const plus = el("button", {className: "pill-x", textContent: "+", title: n > 1 ? `고른 ${n.toLocaleString()}개 모두에 태그 추가` : "태그 추가"});
+    plus.addEventListener("click", () => draw(list, editing, true));
+    const input = el("input", {type: "text", maxLength: 50, placeholder: n > 1 ? `고른 ${n.toLocaleString()}개 모두에 #태그 추가` : "#태그 추가"});
+    input.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (e.key === "Enter" && !e.isComposing && input.value.trim()) send("/api/tags", {label: input.value});
+      if (e.key === "Escape") draw(list, editing);
+    });
+    const edit = el("button", {className: "crumb tag-edit", textContent: editing ? "완료" : "수정하기"});
+    edit.addEventListener("click", () => draw(list, !editing));
+    box.replaceChildren(...chips, adding ? input : plus, ...(list.length ? [edit] : []));
+    if (adding) input.focus();
   };
   draw(tags);
   $("detail-rows").append(el("span", {textContent: "태그"}), box);

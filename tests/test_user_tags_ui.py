@@ -27,6 +27,8 @@ def test_tag_paths_and_placeholder():
         assert path in tags
     assert "#태그 추가" in tags and "maxLength: 50" in tags
     assert "selectedPaths()" in tags and "stopPropagation" in tags
+    assert 'editing ? "완료" : "수정하기"' in tags and "editing ? [x] : []" in tags  # ×는 [수정하기]를 눌렀을 때만
+    assert "adding ? input : plus" in tags  # 입력 칸은 [+]를 눌렀을 때만
 
 
 def test_tag_name_user_branch_splits_on_first_colon():
