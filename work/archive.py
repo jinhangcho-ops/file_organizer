@@ -11,16 +11,16 @@ import sqlite3
 import time
 import zipfile
 
-import exclude
-import fence
-import filetime
-import games
-import index
-import kinds
-import organize
-import protect
-import settings
-import trash
+from guard import exclude
+from guard import fence
+from app import filetime
+from guard import games
+from catalog import index
+from app import kinds
+from work import organize
+from guard import protect
+from app import settings
+from work import trash
 
 DAY = 86400
 SKIP_KINDS = {"설치파일"}

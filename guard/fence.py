@@ -3,13 +3,13 @@ import functools
 import os
 import tempfile
 
-import blacklist
-import drives
-import exclude
-import games
-import index
-import lock
-import protect
+from guard import blacklist
+from app import drives
+from guard import exclude
+from guard import games
+from catalog import index
+from guard import lock
+from guard import protect
 
 
 def keys():

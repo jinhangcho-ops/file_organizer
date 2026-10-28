@@ -14,11 +14,11 @@ import subprocess
 import sys
 import threading
 
-import filetime
-import index
-import media
-import models
-import settings
+from app import filetime
+from catalog import index
+from catalog import media
+from catalog import models
+from app import settings
 
 GROUPS = [("animal", "동물", "a photo of an animal"), ("food", "음식", "a photo of food"),
           ("landscape", "풍경", "a photo of a landscape or scenery"), ("people", "사람", "a photo of a person or people"),
@@ -338,7 +338,7 @@ def child_command():
     """인식 프로세스를 띄우는 명령. exe면 같은 exe, 소스면 파이썬으로 desktop.py."""
     if getattr(sys, "frozen", False):
         return [sys.executable, "--recognize"]
-    return [sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "desktop.py"), "--recognize"]
+    return [sys.executable, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "desktop.py"), "--recognize"]
 
 
 running = [None]  # 지금(또는 마지막으로) 띄운 인식 프로세스. 창을 닫을 때 남아 있으면 desktop.py가 끝낸다.

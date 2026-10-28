@@ -2,8 +2,8 @@
 폴더를 예외로 하면 그 아래 전부, 파일을 예외로 하면 그 파일 하나만."""
 import os
 
-import index
-import settings
+from catalog import index
+from app import settings
 
 FILE = "exclude.json"
 fixed = set()  # 옛 판이 정션 경로로 적어 둔 것을 실제 경로로 바꿔 둔 설정 폴더들(한 번만 본다)

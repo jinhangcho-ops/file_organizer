@@ -10,15 +10,15 @@ import shutil
 import sqlite3
 import stat
 
-import captures
-import drives
-import exclude
-import fence
-import filetime
-import index
-import kinds
-import settings
-import undo as undo_log  # 이 파일에는 [마지막 정리 되돌리기]의 undo 함수가 있어 이름이 겹친다.
+from work import captures
+from app import drives
+from guard import exclude
+from guard import fence
+from app import filetime
+from catalog import index
+from app import kinds
+from app import settings
+from work import undo as undo_log  # 이 파일에는 [마지막 정리 되돌리기]의 undo 함수가 있어 이름이 겹친다.
 
 class Partial(OSError):
     """폴더를 다른 디스크로 옮겼지만 그동안 생기거나 바뀐 파일은 원래 폴더에 남겼다(사본은 옮긴 곳에 있다)."""

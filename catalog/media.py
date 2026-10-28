@@ -12,9 +12,9 @@ import time
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
-import filetime
-import index
-import settings
+from app import filetime
+from catalog import index
+from app import settings
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tif", ".tiff", ".heic", ".heif"}
 VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".wmv", ".webm", ".flv", ".m4v", ".ts"}

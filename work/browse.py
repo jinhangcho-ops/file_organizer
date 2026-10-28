@@ -2,10 +2,10 @@
 숨김·시스템 폴더, 링크·정션, 차단·잠금 폴더(와 그 아래)는 보여 주지도 들어가지도 않는다."""
 import os
 
-import actions
-import drives
-import fence
-import index
+from work import actions
+from app import drives
+from guard import fence
+from catalog import index
 
 
 def places():

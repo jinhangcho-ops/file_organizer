@@ -11,8 +11,8 @@ from ctypes import wintypes
 from urllib.parse import urlsplit, urlunsplit
 from xml.etree import ElementTree
 
-import filetime
-import index
+from app import filetime
+from catalog import index
 
 OFFICE = (".docx", ".xlsx", ".xlsm", ".pptx")
 CORE_MAX = 1024 * 1024  # 문서 정보 파일이 이보다 크면 읽지 않는다(이상한 파일).

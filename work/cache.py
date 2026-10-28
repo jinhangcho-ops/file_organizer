@@ -9,11 +9,11 @@ import subprocess
 import time
 from pathlib import Path
 
-import actions
-import drives
-import exclude
-import fence
-import protect
+from work import actions
+from app import drives
+from guard import exclude
+from guard import fence
+from guard import protect
 
 DAY = 86400
 GROUPS = {"temp": "Windows 임시 폴더", "browser": "브라우저 캐시", "app": "앱 캐시"}

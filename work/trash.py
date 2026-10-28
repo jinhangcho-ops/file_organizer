@@ -9,7 +9,7 @@ import winreg
 
 from send2trash import send2trash
 
-import drives
+from app import drives
 
 FIXED = 3  # GetDriveTypeW: 고정 디스크
 RECHECK = 2  # 디스크 검사를 이 초마다 다시 한다: 작업 중에 휴지통을 끄거나 정책이 들어오면 남은 것이 영구 삭제된다

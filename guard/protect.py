@@ -5,10 +5,10 @@
 목록은 차단 폴더와 같은 곳(%ProgramData%\\file_organizer\\protected.json)에 두고 관리자 권한으로 실행했을 때만 바꾼다."""
 import os
 
-import blacklist
-import exclude
-import fence
-import index
+from guard import blacklist
+from guard import exclude
+from guard import fence
+from catalog import index
 
 FILE = "protected.json"
 

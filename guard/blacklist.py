@@ -7,9 +7,9 @@ import os
 import subprocess
 from pathlib import Path
 
-import exclude
-import fence
-import index
+from guard import exclude
+from guard import fence
+from catalog import index
 
 FILE = "blacklist.json"
 ADMINS, SYSTEM, USERS = "*S-1-5-32-544", "*S-1-5-18", "*S-1-5-32-545"

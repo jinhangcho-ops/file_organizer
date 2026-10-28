@@ -4,15 +4,15 @@ import functools
 import os
 import sqlite3
 
-import drives
-import exclude
-import fence
-import index
-import lock
-import notes
-import organize
-import trash
-import undo
+from app import drives
+from guard import exclude
+from guard import fence
+from catalog import index
+from guard import lock
+from catalog import notes
+from work import organize
+from work import trash
+from work import undo
 
 BAD = set('\\/:*?"<>|')  # 파일 이름에 쓸 수 없는 글자
 

@@ -15,12 +15,12 @@ import threading
 import time
 from ctypes import wintypes
 
-import drives
-import exclude
-import fence
-import index
-import organize
-import settings
+from app import drives
+from guard import exclude
+from guard import fence
+from catalog import index
+from work import organize
+from app import settings
 
 FILE = "lock.dat"
 OLD_FILE = "lock.json"  # 예전에 암호화하지 않고 두던 곳. 읽으면 lock.dat으로 옮기고 지운다.

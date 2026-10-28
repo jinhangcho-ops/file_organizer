@@ -18,15 +18,15 @@ import time
 import zipfile
 from pathlib import Path
 
-import blacklist
-import drives
-import exclude
-import extract
-import fence
-import filetime
-import games
-import kinds
-import settings
+from guard import blacklist
+from app import drives
+from guard import exclude
+from catalog import extract
+from guard import fence
+from app import filetime
+from guard import games
+from app import kinds
+from app import settings
 
 SKIP = {"windows", "program files", "program files (x86)", "programdata", "appdata", "$recycle.bin", "system volume information",
         "recovery", "config.msi", "$windows.~bt", "$windows.~ws", "$winreagent"}  # 들어가지 않는 폴더 이름(소문자)
@@ -270,10 +270,10 @@ def totals(db):
 def step_work(name):
     """단계 이름 → 그 단계를 하는 함수(db). 사진·동영상 단계는 그때 불러온다(무거운 라이브러리를 켤 때 올리지 않게)."""
     if name == "media":
-        import media
+        from catalog import media
         return media.run
     if name == "recognize":
-        import recognize
+        from catalog import recognize
         return recognize.run
     return {"hash": fingerprints, "text": read_texts, "doc": documents}[name]
 

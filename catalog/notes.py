@@ -2,9 +2,9 @@
 앱 안에서 옮기거나 이름을 바꾸면 따라가고(moved), 휴지통으로 보내면 지운다(removed). 앱 밖(탐색기)에서 옮긴 것은 따라가지 못한다."""
 import os
 
-import exclude
-import fence
-import settings
+from guard import exclude
+from guard import fence
+from app import settings
 
 FILE = "notes.json"
 MAX = 500  # 메모 한 개의 최대 글자 수

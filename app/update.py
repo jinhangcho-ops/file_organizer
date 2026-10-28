@@ -11,8 +11,8 @@ import tempfile
 import urllib.parse
 import urllib.request
 
-import index
-import jobs
+from catalog import index
+from app import jobs
 
 REPO = "https://github.com/jinhangcho-ops/file_organizer"
 if not getattr(sys, "frozen", False):  # 화면 확인(소스 실행)만 가짜 주소를 쓴다. 설치한 exe는 환경 변수로 받는 곳을 바꿀 수 없다.

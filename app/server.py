@@ -7,33 +7,34 @@ import threading
 from flask import Flask, abort, jsonify, request
 from werkzeug.exceptions import HTTPException
 
-import actions
-import archive
-import blacklist
-import browse
-import cache
-import captures
-import drives
-import exclude
-import fence
-import games
-import index
-import jobs
-import kinds
-import lock
-import models
-import notes
-import organize
-import protect
-import provenance
-import recognize
-import search
-import settings
-import tree
-import undo
-import update
+from work import actions
+from work import archive
+from guard import blacklist
+from work import browse
+from work import cache
+from work import captures
+from app import drives
+from guard import exclude
+from guard import fence
+from guard import games
+from catalog import index
+from app import jobs
+from app import kinds
+from guard import lock
+from catalog import models
+from catalog import notes
+from work import organize
+from guard import protect
+from catalog import provenance
+from catalog import recognize
+from catalog import search
+from app import settings
+from catalog import tree
+from work import undo
+from app import update
 
-app = Flask(__name__, static_folder="static")
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # static은 app/ 폴더가 아니라 맨 위(exe는 _internal)에 있다
+app = Flask(__name__, root_path=ROOT, static_folder="static")
 KEY = secrets.token_urlsafe(32)  # 실행할 때마다 새로 만든다. desktop.py가 창의 첫 주소에 넣는다.
 window_control = None  # 창 동작(동작, 값 → 답). desktop.py가 채운다.
 lock_target = ""  # 잠금 창이 다룰 폴더(본 창의 폴더 메뉴 [잠금…]으로 연 경우). 주소에 넣지 않고 여기 둔다.

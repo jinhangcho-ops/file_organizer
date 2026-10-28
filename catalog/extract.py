@@ -84,7 +84,7 @@ def text(path, ext):
     """파일의 글자. 파일을 열거나 읽지 못하면(잠시 잠김, 클라우드 전용 등) None이라 색인이 다음에 다시 읽는다.
     내용이 깨진 파일과 늘 열 수 없는 파일(권한 없음)은 빈 글자(다시 읽어도 같으므로 읽은 것으로 둔다).
     먼저 한 번 열어 본다: PDFium·python-docx 등은 열지 못한 것을 제 오류(PdfiumError 등)로 바꿔 깨진 파일과 구별할 수 없다."""
-    import media  # media가 index를 거쳐 이 파일을 불러오므로 여기서
+    from catalog import media  # media가 index를 거쳐 이 파일을 불러오므로 여기서
 
     try:
         if not media.openable(path):

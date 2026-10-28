@@ -11,15 +11,15 @@ import re
 import winreg
 from pathlib import Path
 
-import blacklist
-import drives
-import exclude
-import fence
-import games
-import index
-import kinds
-import organize
-import undo
+from guard import blacklist
+from app import drives
+from guard import exclude
+from guard import fence
+from guard import games
+from catalog import index
+from app import kinds
+from work import organize
+from work import undo
 
 PICTURES_ID = "33E28130-4E1E-4676-835A-98395C3BC3BB"
 VIDEOS_ID = "18989B1D-99B5-455B-841C-AB7C74E4DDFC"

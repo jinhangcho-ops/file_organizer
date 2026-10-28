@@ -603,6 +603,17 @@ python -m venv .venv
 .venv\Scripts\python desktop.py
 ```
 
+소스 폴더:
+
+| 폴더 | 안에 든 것 |
+|---|---|
+| `desktop.py` | 시작 파일(창을 열고 서버를 띄움) |
+| `app/` | 서버, 설정, 새 버전 알림, 뒤의 작업, 디스크·알려진 폴더, 파일 시각, 파일 종류 |
+| `catalog/` | 색인, 내용 읽기, 사진·동영상 비교·인식, 검색, 폴더 나무, 받은 곳, 폴더 메모 |
+| `guard/` | 차단 폴더, 구조 보호 폴더, 잠금 폴더, 예외, 게임 폴더 |
+| `work/` | 옮기기·이름 바꾸기·휴지통, 다운로드 정리, 보관, 캐시 정리, 게임 캡처 정리, 되돌리기, 고르기 창 |
+| `static/` | 화면(HTML·JS·CSS) |
+
 exe 만들기(`dist\file_organizer\file_organizer.exe`):
 
 ```bash

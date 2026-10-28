@@ -7,10 +7,10 @@ import re
 import time
 import winreg
 
-import blacklist
-import exclude
-import fence
-import index
+from guard import blacklist
+from guard import exclude
+from guard import fence
+from catalog import index
 
 # 게임 폴더에만 있는 파일(소문자): Steam·Epic·GOG·Ubisoft의 연동 라이브러리, Unity 엔진.
 MARKERS = {"steam_api.dll", "steam_api64.dll", "steam_appid.txt", "unityplayer.dll", "gameassembly.dll", "eossdk-win64-shipping.dll",

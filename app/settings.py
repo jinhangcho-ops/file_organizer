@@ -5,11 +5,11 @@ import re
 import winreg
 from pathlib import Path
 
-import cache
-import drives
-import fence
-import index
-import kinds
+from work import cache
+from app import drives
+from guard import fence
+from catalog import index
+from app import kinds
 
 DAYS = (1, 3650)  # 모아 보기 기간(일)의 범위
 # 왼쪽 폴더 목록·오른쪽 상세 칸의 너비(px) 범위와 기본값. 0을 저장하면 기본으로 돌아간다. 화면은 /api/state의 panes로 받는다.

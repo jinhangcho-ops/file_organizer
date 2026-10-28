@@ -2,10 +2,10 @@
 고른 파일·폴더까지의 경로(맨 위 폴더부터). 색인을 읽는다. 폴더를 펼칠 때 그 폴더의 바로 아래 폴더만 읽는다."""
 import os
 
-import exclude
-import index
-import search
-import settings
+from guard import exclude
+from catalog import index
+from catalog import search
+from app import settings
 
 FOLDER = "path, name, files, size, exists(select 1 from folders c where c.parent = folders.key) has_children"
 

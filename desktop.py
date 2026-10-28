@@ -6,7 +6,7 @@ import threading
 from ctypes import wintypes
 
 if "--recognize" in sys.argv:  # 사진·동영상 인식 프로세스: 창 없이 인식만 하고 끝난다(recognize.run이 띄운다).
-    import recognize
+    from catalog import recognize
 
     recognize.child_main()
     sys.exit(0)
@@ -76,12 +76,12 @@ if already_running():
 import webview  # noqa: E402
 from werkzeug.serving import make_server  # noqa: E402
 
-import index  # noqa: E402
-import jobs  # noqa: E402
-import lock  # noqa: E402
-import recognize  # noqa: E402
-import server  # noqa: E402
-import settings  # noqa: E402
+from catalog import index  # noqa: E402
+from app import jobs  # noqa: E402
+from guard import lock  # noqa: E402
+from catalog import recognize  # noqa: E402
+from app import server  # noqa: E402
+from app import settings  # noqa: E402
 
 http = make_server("127.0.0.1", 0, server.app, threaded=True)  # 0: 비어 있는 포트를 자동으로 고른다.
 threading.Thread(target=http.serve_forever, daemon=True).start()
