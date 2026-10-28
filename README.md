@@ -634,18 +634,7 @@ PC에서 직접 만들 때(`dist\file_organizer_setup.exe`, [Inno Setup 6.7](htt
 
 ## 검사
 
-```bash
-.venv\Scripts\python tests.py
-```
-
-```bash
-.venv\Scripts\python -m pytest
-```
-
-- pytest는 개발용이라 `requirements.txt`에 없습니다(`pip install pytest`).
-- 둘 다 임시 폴더에 만든 파일로만 확인하며 실제 설정과 파일, 실제 휴지통은 건드리지 않습니다.
-- 잠금 폴더 검사는 임시 폴더에 실제 Windows 권한을 걸었다 풉니다.
-- 다른 디스크로 옮기는 것까지 확인하려면 `OTHER_DRIVE` 환경 변수에 디스크(예: `D:\`)를 줍니다.
+검사 스크립트는 저장소에 올리지 않습니다. 릴리스 워크플로는 검사 없이 빌드·설치 파일 만들기·올리기만 합니다.
 
 ## 라이선스
 
