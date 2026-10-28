@@ -267,6 +267,40 @@ def recognized():
     return jsonify(search.recognized(checked(request.args.get("path", ""))))
 
 
+def no_folder(path):
+    """태그는 파일에만 단다."""
+    if os.path.isdir(path):
+        raise ValueError("폴더에는 태그를 달 수 없어요.")
+    return path
+
+
+@app.get("/api/tags")
+def user_tags():
+    """상세의 내가 단 태그들(가나다 순)."""
+    key = exclude.key(no_folder(checked(request.args.get("path", ""))))
+    db = index.connect()
+    try:
+        return jsonify(tags=search.tags_of(db, key))
+    finally:
+        db.close()
+
+
+@app.post("/api/tags")
+@app.post("/api/tags/remove")
+def change_tags():
+    """고른 파일들(paths) 모두에 태그(label)를 달거나(/api/tags) 뗀다(/api/tags/remove). 마지막 파일의 태그들을 돌려준다."""
+    keys = [exclude.key(no_folder(path)) for path in indexed_paths(movable=False)]
+    label = search.clean_label(body().get("label"))
+    sql = "delete from user_tags where key = ? and label = ?" if request.path.endswith("/remove") else "insert or ignore into user_tags values(?, ?)"
+    db = index.connect()
+    try:
+        with db:
+            db.executemany(sql, [(key, label) for key in keys])
+        return jsonify(tags=search.tags_of(db, keys[-1]))
+    finally:
+        db.close()
+
+
 @app.post("/api/models/download")
 def download_models():
     """인식 모델을 받는다(groups: models.FILES의 이름들). 뒤의 작업으로 돌리고 진행은 /api/job으로 본다."""

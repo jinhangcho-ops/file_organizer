@@ -540,7 +540,7 @@ function chips(box, items, current, onPick) {
 }
 
 function showFiles(found, chain, dirs = []) {
-  $("title").textContent = scope.same ? `같은 파일: ${scope.name}` : scope.tag ? `추정: ${scope.name}` : scope.folder ? scope.name
+  $("title").textContent = scope.same ? `같은 파일: ${scope.name}` : scope.tag ? (scope.tag.startsWith("user:") ? scope.name : `추정: ${scope.name}`) : scope.folder ? scope.name
     : chosenDrive() ? `모든 파일 · ${chosenDrive()}` : "모든 파일";
   const where = chain.length ? chain.map((f) => f.name).join(" › ") + " · " : "";
   $("summary").textContent = `${where}${dirs.length ? `폴더 ${dirs.length.toLocaleString()}개 · ` : ""}파일 ${found.total.toLocaleString()}개 · ${size(found.bytes)}`
@@ -614,7 +614,9 @@ async function enterFolder(row) {
 
 // 추정 칩의 이름: 종류는 서버의 분류표(recognize.LABELS), 사람은 번호, 내 분류 모델은 설정에서 붙인 이름.
 function tagName(value) {
-  const [kindName, label] = value.split(":");
+  const cut = value.indexOf(":");  // 내 태그는 라벨 안에 ':'가 있을 수 있어 첫 ':'에서만 나눈다
+  const kindName = value.slice(0, cut), label = value.slice(cut + 1);
+  if (kindName === "user") return "#" + label;
   if (kindName === "person") return `사람 ${label}`;
   if (kindName === "custom") return state.settings.custom_labels[Number(label)]?.name || `분류 ${Number(label) + 1}`;
   return state.labels[kindName]?.[label] || label;
@@ -716,7 +718,7 @@ function showSelection() {
     ? [el("b", {textContent: `${n.toLocaleString()}개 선택됨 · ${size(bytes)}`}), el("span", {textContent: "위쪽 휴지통이나 왼쪽 폴더에 끌어다 놓을 수 있어요"})]
     : [el("span", {textContent: "파일을 누르면 상세 정보가 열리고, 빈 곳을 누르면 닫혀요. 빈 곳을 오른쪽 클릭하면 이전 폴더로 돌아가요."})]));
   $("detail-multi").classList.toggle("hidden", n < 2);
-  $("detail-multi").textContent = `${n.toLocaleString()}개 선택됨 · ${size(bytes)} · 옮기기와 휴지통은 고른 것 모두에 해요.`;
+  $("detail-multi").textContent = `${n.toLocaleString()}개 선택됨 · ${size(bytes)} · 옮기기와 휴지통, 태그 달기는 고른 것 모두에 해요.`;
   $("act-rename").disabled = n > 1;
 }
 
@@ -972,6 +974,7 @@ async function showDetail(row) {
   $("detail-preview").textContent = preview.text || (preview.readable ? "아직 내용을 읽지 않았거나 글자가 없어요." : "이 형식은 내용을 읽지 않아요(사진·동영상·hwp 등).");
   showFacts([["종류", row.kind], ["크기", size(row.size)], ["위치", crumbs(chain.folders)], ["마지막 수정", fullDate(row.modified)]]);
   showSame("same-content", "내용이 같은 파일", same.content, "내용이 같은 파일이 없어요.");
+  showTags(row, ticket);
   showGuess(row, ticket);
   showProvenance(row, ticket);
   showSame("same-name", "이름이 같은 파일", same.name, "이름이 같은 파일이 없어요.");
@@ -1062,6 +1065,37 @@ async function showProvenance(row, ticket) {
   for (const [label, value] of lines.filter(([, v]) => v)) {
     $("detail-rows").append(el("span", {textContent: label}), el("div", {className: "mono", textContent: value, title: value}));
   }
+}
+
+// 상세의 내 태그(#코딩): 칩을 누르면 그 태그의 파일 검색, ×로 지우기, 입력 칸 Enter로 달기. 여러 파일을 골랐으면 고른 것 모두에 달고 지운다.
+async function showTags(row, ticket) {
+  const {tags} = await api("/api/tags?path=" + encodeURIComponent(row.path)).catch(() => ({tags: []}));
+  if (picked !== row || ticket !== detailTicket) return;
+  const box = el("div");
+  const draw = (list) => {
+    const n = selectedPaths().length;
+    const input = el("input", {type: "text", maxLength: 50, placeholder: n > 1 ? `고른 ${n.toLocaleString()}개 모두에 #태그 추가` : "#태그 추가"});
+    const send = async (path, body) => {
+      try {
+        draw((await api(path, {paths: selectedPaths(), ...body})).tags);
+      } catch (e) {
+        say("detail-message", e.message, "error");
+      }
+    };
+    input.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (e.key === "Enter" && !e.isComposing && input.value.trim()) send("/api/tags", {label: input.value});
+    });
+    box.replaceChildren(...list.map((label) => {
+      const chip = el("button", {className: "pill link", textContent: "#" + label});
+      chip.addEventListener("click", () => openScope({all: true, tag: "user:" + label, name: "#" + label}));
+      const x = el("button", {className: "pill-x", textContent: "×", title: "이 태그 지우기"});
+      x.addEventListener("click", () => send("/api/tags/remove", {label}));
+      return el("span", {className: "tag-item"}, chip, x);
+    }), input);
+  };
+  draw(tags);
+  $("detail-rows").append(el("span", {textContent: "태그"}), box);
 }
 
 // 상세의 추정(사진·동영상 인식 결과): 칩을 누르면 그 추정의 파일들을 모두 본다.

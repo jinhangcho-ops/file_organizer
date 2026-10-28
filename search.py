@@ -146,7 +146,12 @@ def conditions(query, config, files=None):
         part, more = tag_condition(query["tag"], config)
         parts.append(part)
         values += more
-    if (query.get("name") or "").strip():  # 파일 이름이나 그 파일이 바로 든 폴더의 이름(위 폴더 경로 전체가 아니라)
+    if (query.get("name") or "").strip().startswith("#"):  # #태그: 이름 대신 내가 단 태그로 찾는다(#만이면 조건 없음)
+        if query["name"].strip("# \t\r\n"):
+            part, more = tag_condition("user:" + clean_label(query["name"]), config)
+            parts.append(part)
+            values += more
+    elif (query.get("name") or "").strip():  # 파일 이름이나 그 파일이 바로 든 폴더의 이름(위 폴더 경로 전체가 아니라)
         # 대소문자: SQLite lower()는 영문만 낮추므로, key(os.path.normcase)에서 이름 부분을 잘라 낮춘 찾는 말과 견준다.
         parts.append("(instr(substr(f.key, length(f.key) - length(f.name) + 1), ?) > 0"
                      " or f.folder in (select key from folders where instr(substr(key, length(key) - length(name) + 1), ?) > 0))")
@@ -174,8 +179,11 @@ def conditions(query, config, files=None):
 
 
 def tag_condition(tag, config):
-    """추정 칩 → 조건. 'group:animal'·'animal:dog'·'food:pizza'(인식한 종류), 'person:3'(같은 사람), 'custom:0'(내 분류 모델, 기준 점수 이상)."""
+    """추정 칩 → 조건. 'group:animal'·'animal:dog'·'food:pizza'(인식한 종류), 'person:3'(같은 사람), 'custom:0'(내 분류 모델, 기준 점수 이상).
+    'user:코딩'(내가 단 태그, user_tags 표의 key로 잇는다)."""
     kind, _, label = str(tag).partition(":")
+    if kind == "user" and label:
+        return "f.key in (select key from user_tags where label = ?)", [label]
     if kind == "person" and label.isdigit():
         return "f.id in (select id from faces where person = ?)", [int(label)]
     if kind == "custom" and label.isdigit():
@@ -185,6 +193,19 @@ def tag_condition(tag, config):
     if kind in ("group", "animal", "food") and label:
         return "f.id in (select id from tags where kind = ? and label = ?)", [kind, label]
     raise ValueError(f"모르는 추정 칩입니다: {tag}")
+
+
+def clean_label(text):
+    """내가 다는 태그의 이름: 앞의 #와 앞뒤 공백을 뗀다. 비었거나 50자를 넘거나 줄바꿈이 있으면 ValueError."""
+    label = str(text or "").strip().removeprefix("#").strip()
+    if not label or len(label) > 50 or "\n" in label or "\r" in label:
+        raise ValueError("태그는 1~50자의 한 줄로 적어요.")
+    return label
+
+
+def tags_of(db, key):
+    """key(exclude.key) 파일에 내가 단 태그들(가나다 순)."""
+    return [row[0] for row in db.execute("select label from user_tags where key = ? order by label", (key,))]
 
 
 def tag_counts(db, parts, values, config):

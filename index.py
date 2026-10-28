@@ -80,6 +80,9 @@ create table if not exists faces(id integer, n integer, person integer, vec blob
 create table if not exists games(key text primary key, path text, size integer);
 create index if not exists faces_id on faces(id);
 create index if not exists faces_person on faces(person);
+-- 내가 단 태그: id가 아니라 key로 잇는다(files.id는 다시 쓰일 수 있고, 다시 인식·drop_ids가 id째 지운다). 옮기면 move_files·moved가 key를 바꾼다.
+create table if not exists user_tags(key text, label text, primary key(key, label));
+create index if not exists user_tags_label on user_tags(label);
 """
 # 예전 색인 파일에 없는 칸. dochash: 문서 비교 지문(dochashed: 만든 때의 stamp), texthash: 글자 지문(''은 만들지 않음).
 ADDED = {"hash": "text", "hashed": "integer", "textstamp": "integer", "dochash": "text", "dochashed": "integer", "texthash": "text"}
@@ -650,7 +653,9 @@ def move_folder_rows(db, before, after):
 
 
 def move_files(db, moves):
-    """파일 줄들을 (id, 새 경로)대로 옮긴다(내용·지문은 그대로)."""
+    """파일 줄들을 (id, 새 경로)대로 옮긴다(내용·지문은 그대로). 내가 단 태그(user_tags)도 새 key로 옮긴다."""
+    db.executemany("update or replace user_tags set key = ? where key = (select key from files where id = ?)",
+                   [(exclude.key(path), id_) for id_, path in moves])
     db.executemany("update files set path = ?, key = ?, folder = ? where id = ?",
                    [(path, exclude.key(path), os.path.dirname(exclude.key(path)), id_) for id_, path in moves])
 
@@ -691,6 +696,7 @@ def moved(pairs):
             if row:  # 내용은 그대로 두고 위치·이름만 바꾼다.
                 key = exclude.key(after)
                 ext = os.path.splitext(after)[1].lower()
+                db.execute("update or replace user_tags set key = ? where key = ?", (key, exclude.key(before)))
                 db.execute("update files set path = ?, key = ?, folder = ?, name = ?, ext = ?, kind = ? where id = ?",
                            (after, key, os.path.dirname(key), os.path.basename(after), ext, kinds.of(ext), row["id"]))
             else:  # 색인에 없던 파일이 들어왔다(정리 등): 몇 개뿐이니 내용까지 바로 읽는다.
